@@ -1,0 +1,61 @@
+"use client";
+
+import Link from "next/link";
+import { useState } from "react";
+import {
+  ArrowLeft,
+  BookOpenCheck,
+  Camera,
+  Check,
+  ChevronDown,
+  CircleAlert,
+  CloudSun,
+  Download,
+  FileCheck2,
+  FileStack,
+  Image,
+  KeyRound,
+  Lightbulb,
+  ListChecks,
+  LockKeyhole,
+  ScanLine,
+  ShieldCheck,
+  Sparkles,
+  UploadCloud,
+  UserCheck,
+} from "lucide-react";
+
+const faqs = [
+  { question: "آیا نمره از OCR جداگانه استفاده می‌کند؟", answer: "نه. در این نسخه عکس یا PDF مستقیم به مدل چندوجهی داده می‌شود. مدل دست‌خط، شکل و صفحه را می‌بیند و رونوشت و ارزیابی می‌دهد. بنابراین به سرویس OCR مستقلی نیاز نیست؛ بااین‌حال خطای خواندن همیشه ممکن است و رونوشت باید در موارد مبهم با تصویر اصلی مقایسه شود." },
+  { question: "آیا می‌توان دقت تصحیح را صددرصد تضمین کرد؟", answer: "نه. هیچ مدل چندوجهی‌ای برای همهٔ دست‌خط‌ها و سؤال‌ها صددرصد قابل تضمین نیست. نمره برای کاهش خطا از کلید و بارم دقیق، خروجی ساختاریافته، محاسبهٔ مجدد نمرات، تطبیق قطعی تستی‌ها، هشدار ابهام و ممیزی دوم استفاده می‌کند. برای آزمون مهم، تأیید معلم و کالیبراسیون با نمونهٔ واقعی ضروری است." },
+  { question: "API Key من کجا ذخیره می‌شود؟", answer: "کلید فقط در SessionStorage همان تب مرورگر نگه‌داری می‌شود، وارد LocalStorage یا دادهٔ آزمون نمی‌شود و در کد برنامه نوشته نشده است. هنگام اجرا به API داخلی نمره فرستاده می‌شود و سرور آن را برای اتصال به Provider استفاده می‌کند. برای استقرار عمومی باید HTTPS و سیاست امنیتی سرور نیز بررسی شود." },
+  { question: "برای چند صفحه یا چند عکس از یک دانش‌آموز چه کنم؟", answer: "ابتدا دانش‌آموز را جدا اضافه کنید و سپس با دکمهٔ «افزودن صفحه / فایل» همهٔ عکس‌ها یا PDFهای همان دانش‌آموز را به کارت او بدهید. در بارگذاری گروهی، هر فایل به‌صورت پیش‌فرض یک دانش‌آموز جدید می‌شود؛ یک PDF چندصفحه‌ای برای یک نفر مناسب است." },
+  { question: "اگر مدل دست‌خط را نفهمد چه اتفاقی می‌افتد؟", answer: "دستور موتور تصحیح این است که از [ناخوانا] استفاده کند و هشدار illegible ثبت کند، نه اینکه متن را حدس بزند یا ناخوانا را خودکار صفر کند. برگه در صف بازبینی ظاهر می‌شود و معلم می‌تواند تصویر اصلی را ببیند، نمره را اصلاح کند و هشدار را بررسی‌شده علامت بزند." },
+  { question: "هزینه و زمان تصحیح به چه چیزی بستگی دارد؟", answer: "به مدل، تعداد و وضوح صفحات، تعداد سؤال‌ها و طول خروجی بستگی دارد. حالت دقیق برای موارد پرچم‌دار یک درخواست ممیزی اضافه می‌کند و هزینهٔ بیشتری دارد. تصویر واضح با اندازهٔ متعارف، بارم کوتاه و دسته‌های دانش‌آموزمحور به کنترل هزینه کمک می‌کند." },
+];
+
+export function HelpPage() {
+  const [openFaq, setOpenFaq] = useState(0);
+  return (
+    <div className="help-page">
+      <section className="help-hero card"><div><span className="help-hero-badge"><Sparkles size={14} />راهنمای تصحیح قابل اتکا</span><h2>از یک برگهٔ کاغذی تا نمرهٔ قابل دفاع</h2><p>نمره کار تکراری خواندن و ارزیابی را تسریع می‌کند؛ شما با شواهد، معیارها و حق تصمیم نهایی در مرکز فرایند هستید.</p><div className="help-hero-actions"><Link href="/grading" className="btn btn-primary">شروع تصحیح <ArrowLeft size={16} /></Link><a href="/master-plan.fa.md" download className="btn btn-secondary"><Download size={16} />دریافت مسترپلن</a></div></div><div className="help-flow-visual"><div><FileStack size={22} /><span>سؤال و بارم</span></div><i /><div><ScanLine size={22} /><span>خواندن تصویر</span></div><i /><div><ListChecks size={22} /><span>ارزیابی با شاهد</span></div><i /><div><UserCheck size={22} /><span>تأیید معلم</span></div></div></section>
+
+      <section className="help-section"><div className="help-section-title"><span>۰۱</span><div><h3>شروع سریع در چهار گام</h3><p>اولین آزمون واقعی را با همین مسیر بسازید.</p></div></div><div className="help-steps-grid">{[
+        { icon: BookOpenCheck, title: "مشخصات و سیاست", text: "درس، کلاس، حد قبولی و حالت دقت را تعیین کنید. برای آزمون رسمی، حالت دقیق و تأیید معلم پیشنهاد می‌شود." },
+        { icon: ListChecks, title: "کلید و بارم ریز", text: "پاسخ مرجع، پاسخ جایگزین و امتیاز هر گام را بنویسید. جمع معیارها باید دقیقاً با نمرهٔ سؤال برابر باشد." },
+        { icon: UploadCloud, title: "بارگذاری و تطبیق", text: "فایل هر نفر را به کارت خودش بدهید. نام فایل، تعداد صفحات و خوانایی پیش‌نمایش را پیش از اجرا ببینید." },
+        { icon: UserCheck, title: "بازبینی و انتشار", text: "هشدارها را از روی برگهٔ اصلی بررسی، در صورت نیاز نمره را اصلاح و سپس تأیید نهایی و خروجی بگیرید." },
+      ].map((item, index) => { const Icon = item.icon; return <article className="card help-step-card" key={item.title}><span className="help-step-number">{index + 1}</span><Icon size={22} /><h4>{item.title}</h4><p>{item.text}</p></article>; })}</div></section>
+
+      <section className="help-two-columns">
+        <article className="card scan-guide-card"><div className="help-card-heading"><span className="settings-heading-icon"><Camera size={21} /></span><div><h3>عکس بهتر، خواندن دقیق‌تر</h3><p>کیفیت ورودی مهم‌ترین اصلاح بدون هزینه است.</p></div></div><div className="scan-guide-body"><div className="scan-do"><h4><Check size={16} />این کارها را بکنید</h4><ul><li>صفحه را صاف، کامل و عمود بر دوربین بگیرید.</li><li>نور یکنواخت و بدون سایهٔ دست یا گوشی داشته باشید.</li><li>کناره‌ها و شمارهٔ سؤال‌ها داخل کادر باشند.</li><li>هر صفحه جدا و با وضوح کافی ذخیره شود.</li></ul></div><div className="scan-dont"><h4><CircleAlert size={16} />از این موارد پرهیز کنید</h4><ul><li>عکس تار، تیره، برش‌خورده یا از زاویهٔ شدید</li><li>فشرده‌سازی شدید و ارسال دوباره در پیام‌رسان</li><li>مخلوط‌کردن برگهٔ دو دانش‌آموز در یک فایل</li><li>پنهان‌کردن بخش خط‌خورده با برش تصویر</li></ul></div></div><div className="scan-formats"><span><Image size={15} />JPG · PNG · WebP</span><span><FileCheck2 size={15} />PDF چندصفحه‌ای</span><span><CloudSun size={15} />حداکثر ۱۵MB هر فایل</span></div></article>
+
+        <article className="card rubric-guide-card"><div className="help-card-heading"><span className="settings-heading-icon amber"><Lightbulb size={21} /></span><div><h3>یک بارم خوب چه شکلی است؟</h3><p>به‌جای «پاسخ صحیح را نمره بده»، معیار قابل مشاهده بنویسید.</p></div></div><div className="rubric-example"><span className="rubric-example-label">نمونه برای یک سؤال ۵ نمره‌ای</span><div><span><b>۱٫۵</b> انتخاب رابطهٔ درست</span><small>رابطه متناسب با صورت سؤال نوشته شده باشد.</small></div><div><span><b>۲</b> جایگذاری و محاسبه</span><small>عددها درست جایگذاری و حاصل محاسبه شود.</small></div><div><span><b>۱٫۵</b> واحد و نتیجه‌گیری</span><small>واحد صحیح و پاسخ نهایی روشن باشد.</small></div></div><div className="notice notice-success"><ShieldCheck size={17} /><span>در محاسبات، «خطای انتقالی» را فعال کنید تا یک اشتباه اولیه در همهٔ گام‌ها دوباره جریمه نشود.</span></div></article>
+      </section>
+
+      <section className="help-section faq-section"><div className="help-section-title"><span>۰۲</span><div><h3>پرسش‌های مهم پیش از استفاده</h3><p>شفاف دربارهٔ دقت، داده، هزینه و محدودیت‌ها.</p></div></div><div className="faq-list card">{faqs.map((faq, index) => <article className={`faq-item ${openFaq === index ? "open" : ""}`} key={faq.question}><button onClick={() => setOpenFaq(openFaq === index ? -1 : index)} aria-expanded={openFaq === index}><span>{faq.question}</span><ChevronDown size={18} /></button>{openFaq === index && <p>{faq.answer}</p>}</article>)}</div></section>
+
+      <section className="help-bottom-cta"><span><KeyRound size={22} /></span><div><h3>آمادهٔ اتصال و تصحیح هستید؟</h3><p>ابتدا کلید را آزمایش کنید، سپس با چند برگهٔ نمونه دقت بارم را بسنجید.</p></div><Link href="/settings" className="btn btn-secondary">تنظیم API</Link><Link href="/grading" className="btn btn-primary">ساخت آزمون <ArrowLeft size={15} /></Link></section>
+    </div>
+  );
+}
