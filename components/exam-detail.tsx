@@ -27,13 +27,13 @@ import { faDate, faNumber, getInitials, rubricScore, totalExamScore } from "../l
 import { ConfidenceBar, ExamStatusBadge, SubmissionStatusBadge } from "./ui/primitives";
 
 export function ExamDetail({ examId }: { examId: string }) {
-  const { exams, notify } = useApp();
+  const { exams, notify, user } = useApp();
   const [tab, setTab] = useState<"submissions" | "questions" | "settings">("submissions");
   const [openQuestion, setOpenQuestion] = useState<string | null>(null);
   const exam = exams.find((item) => item.id === examId);
 
   if (!exam) {
-    return <section className="card empty-state"><span className="empty-icon"><FileQuestion size={27} /></span><h3>این آزمون پیدا نشد</h3><p>ممکن است حذف شده باشد یا در فضای محلی این مرورگر موجود نباشد.</p><Link href="/exams" className="btn btn-primary">بازگشت به آزمون‌ها</Link></section>;
+    return <section className="card empty-state"><span className="empty-icon"><FileQuestion size={27} /></span><h3>این آزمون پیدا نشد</h3><p>ممکن است حذف شده باشد یا در فضای کاری این حساب موجود نباشد.</p><Link href="/exams" className="btn btn-primary">بازگشت به آزمون‌ها</Link></section>;
   }
 
   const approved = exam.submissions.filter((submission) => submission.status === "approved").length;
@@ -44,7 +44,7 @@ export function ExamDetail({ examId }: { examId: string }) {
       <section className="card exam-detail-hero">
         <div className="exam-detail-main">
           <div className="exam-detail-icon"><FileQuestion size={26} /></div>
-          <div><div className="exam-detail-title"><h2>{exam.title}</h2><ExamStatusBadge status={exam.status} />{exam.isDemo && <span className="badge demo-badge">نمونه</span>}</div><p>{exam.subject} · {exam.className}</p><div className="exam-detail-meta"><span><CalendarDays size={14} />{faDate(exam.date)}</span><span><Clock3 size={14} />{faNumber(exam.duration)} دقیقه</span><span><ListChecks size={14} />{faNumber(exam.questions.length)} سؤال</span></div></div>
+          <div><div className="exam-detail-title"><h2>{exam.title}</h2><ExamStatusBadge status={exam.status} />{exam.isDemo && <span className="badge demo-badge">نمونه</span>}</div><p>{exam.subject} · {exam.className}{exam.code && <span dir="ltr"> · {exam.code}</span>}</p><div className="exam-detail-meta"><span><CalendarDays size={14} />{faDate(exam.date)}</span><span><Clock3 size={14} />{faNumber(exam.duration)} دقیقه</span><span><ListChecks size={14} />{faNumber(exam.questions.length)} سؤال</span></div></div>
         </div>
         <div className="exam-detail-actions">
           {exam.submissions.length > 0 && <button className="btn btn-secondary" onClick={() => { exportExamCsv(exam); notify({ title: "فایل CSV ساخته شد", variant: "success" }); }}><Download size={17} /> خروجی CSV</button>}
@@ -53,7 +53,7 @@ export function ExamDetail({ examId }: { examId: string }) {
         <div className="exam-detail-stats">
           <div><span>نمرهٔ کل</span><strong>{faNumber(totalExamScore(exam))}</strong></div>
           <div><span>حد قبولی</span><strong>{faNumber(exam.passScore)}</strong></div>
-          <div><span>برگه‌ها</span><strong>{faNumber(exam.submissions.length)}</strong></div>
+          <div><span>ردیف کارنامه</span><strong>{faNumber(exam.submissions.length)}</strong></div>
           <div><span>تأیید نهایی</span><strong>{faNumber(approved)} <small>از {faNumber(exam.submissions.length)}</small></strong></div>
         </div>
       </section>
@@ -72,13 +72,13 @@ export function ExamDetail({ examId }: { examId: string }) {
               {exam.submissions.map((submission) => (
                 <tr key={submission.id}>
                   <td><div className="student-cell"><span className="student-avatar">{getInitials(submission.studentName)}</span><span><strong>{submission.studentName}</strong><small>{submission.studentCode || "بدون کد"}</small></span></div></td>
-                  <td><span className="text-muted">{submission.files.length ? `${faNumber(submission.files.length)} فایل` : "نمونه"}</span></td>
+                  <td><span className="text-muted">{submission.files.length ? `${faNumber(submission.files.length)} فایل` : exam.isDemo ? "نمونه" : "مفقود"}</span></td>
                   <td><span className="score-number">{submission.result ? faNumber(submission.result.totalScore) : "—"} <span className="score-total">/ {faNumber(totalExamScore(exam))}</span></span></td>
                   <td>{submission.result ? `${faNumber(submission.result.percentage)}٪` : "—"}</td>
                   <td>{submission.result ? <ConfidenceBar value={submission.result.overallConfidence} /> : "—"}</td>
-                  <td>{submission.result?.flags.length ? <span className="badge badge-warning">{faNumber(submission.result.flags.length)} مورد</span> : <span className="badge badge-success"><CheckCircle2 size={12} />بدون هشدار</span>}</td>
-                  <td><SubmissionStatusBadge status={submission.status} /></td>
-                  <td>{submission.result ? <Link className="row-action" href={`/review?exam=${exam.id}&submission=${submission.id}`} aria-label="باز کردن برگه"><ArrowUpLeft size={17} /></Link> : <Link className="btn btn-soft btn-sm" href={`/grading?exam=${exam.id}`}>تصحیح</Link>}</td>
+                  <td>{!submission.result && !submission.files.length ? <span className="badge badge-danger">برگه مفقود</span> : ["ambiguous", "unmatched", "missing"].includes(submission.identityStatus || "") ? <span className="badge badge-warning">هویت نیازمند بررسی</span> : submission.result?.flags.length ? <span className="badge badge-warning">{faNumber(submission.result.flags.length)} مورد</span> : <span className="badge badge-success"><CheckCircle2 size={12} />بدون هشدار</span>}</td>
+                  <td>{!submission.result && !submission.files.length ? <span className="badge badge-warning">منتظر برگه</span> : <SubmissionStatusBadge status={submission.status} />}</td>
+                  <td>{submission.result ? <Link className="row-action" href={`/review?exam=${exam.id}&submission=${submission.id}`} aria-label="باز کردن برگه"><ArrowUpLeft size={17} /></Link> : <Link className="btn btn-soft btn-sm" href={`/grading?exam=${exam.id}`}>{submission.files.length ? "تصحیح" : "بارگذاری"}</Link>}</td>
                 </tr>
               ))}
             </tbody></table></div>
@@ -113,7 +113,7 @@ export function ExamDetail({ examId }: { examId: string }) {
           <article className="card settings-summary-card"><div className="settings-summary-icon"><Sparkles size={22} /></div><h3>حالت تصحیح</h3><strong>{{ fast: "سریع · یک مرحله", balanced: "متعادل · ممیزی موارد بحرانی", precise: "دقیق · ممیزی همهٔ موارد پرچم‌دار" }[exam.settings.gradingMode]}</strong><p>در ممیزی دوم، مدل نتیجهٔ اول را با مراجعهٔ دوباره به تصویر بررسی و در صورت نیاز اصلاح می‌کند.</p></article>
           <article className="card settings-summary-card"><div className="settings-summary-icon blue"><ShieldCheck size={22} /></div><h3>آستانهٔ بازبینی</h3><strong>{faNumber(exam.settings.reviewThreshold * 100, 0)}٪ اعتماد مدل</strong><p>اعتماد کمتر از این مقدار و نمرهٔ نزدیک مرز قبولی به‌صورت خودکار برای معلم پرچم می‌شود.</p></article>
           <article className="card settings-summary-card"><div className="settings-summary-icon violet"><LockKeyhole size={22} /></div><h3>حریم خصوصی و انتشار</h3><strong>{exam.settings.anonymize ? "تصحیح ناشناس فعال" : "تطبیق هویت فعال"} · {exam.settings.requireApproval ? "تأیید معلم الزامی" : "تأیید اختیاری"}</strong><p>{exam.settings.instructions || "دستور تکمیلی برای این آزمون ثبت نشده است."}</p></article>
-          <div className="notice notice-info exam-settings-notice"><KeyRound size={19} /><div><strong>اتصال API در تنظیمات کلی</strong><p>Provider و API Key از تنظیمات کلی خوانده می‌شود. کلید در آزمون یا نتایج ذخیره نمی‌شود.</p></div><Link href="/settings" className="card-link">تنظیم اتصال</Link></div>
+          <div className="notice notice-info exam-settings-notice"><KeyRound size={19} /><div><strong>اتصال متمرکز و محفوظ نزد مدیر</strong><p>کلید فقط روی سرور و هنگام اجرا خوانده می‌شود؛ در آزمون، نتایج یا دسترس معلم ذخیره نمی‌شود.</p></div>{user.role === "admin" && <Link href="/admin" className="card-link">مدیریت اتصال</Link>}</div>
         </section>
       )}
     </div>

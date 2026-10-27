@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { SettingsPage } from "../../components/settings-page";
+import { SettingsPage } from "@/components/settings-page";
 
 export const metadata: Metadata = { title: "تنظیمات و اتصال" };
 

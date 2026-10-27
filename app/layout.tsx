@@ -1,12 +1,11 @@
 import type { Metadata, Viewport } from "next";
 import "@fontsource-variable/vazirmatn";
 import "./globals.css";
-import { AppProvider } from "../lib/app-context";
-import { AppShell } from "../components/app-shell";
+import "./features.css";
 
 export const metadata: Metadata = {
   title: { default: "نمره | دستیار تصحیح آزمون", template: "%s | نمره" },
-  description: "تصحیح هوشمند برگه‌های امتحانی با بارم دقیق، بازبینی انسانی و اتصال مستقیم به API مدل‌های چندوجهی.",
+  description: "تصحیح هوشمند برگه‌های امتحانی با حساب معلم، کلاس‌بندی، بارم دقیق و بازبینی انسانی.",
   icons: { icon: "/nomreh-mark.svg" },
 };
 
@@ -19,11 +18,7 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="fa" dir="rtl">
-      <body>
-        <AppProvider>
-          <AppShell>{children}</AppShell>
-        </AppProvider>
-      </body>
+      <body>{children}</body>
     </html>
   );
 }

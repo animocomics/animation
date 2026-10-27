@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
-import { ReviewWorkspace } from "../../components/review/review-workspace";
+import { ReviewWorkspace } from "@/components/review/review-workspace";
 
 export const metadata: Metadata = { title: "بازبینی نمرات" };
 

@@ -1,25 +1,34 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { AuthError, requireAdmin } from "@/lib/server/auth";
+import { getProviderConfig } from "@/lib/server/provider-config";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
 const schema = z.object({
-  provider: z.enum(["openai", "gemini"]),
+  provider: z.enum(["openai", "gemini", "deepseek"]),
   model: z.string().min(2).max(120),
-  apiKey: z.string().min(8).max(500),
+  apiKey: z.string().max(500).optional(),
 });
 
 export async function POST(request: Request) {
   try {
-    const { provider, model, apiKey } = schema.parse(await request.json());
-    const url = provider === "openai"
-      ? `https://api.openai.com/v1/models/${encodeURIComponent(model)}`
-      : `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}`;
+    await requireAdmin();
+    const input = schema.parse(await request.json());
+    let apiKey = input.apiKey?.trim() || "";
+    if (!apiKey) {
+      const stored = getProviderConfig();
+      if (stored.provider !== input.provider || stored.model !== input.model) throw new Error("برای مدل جدید، کلید را دوباره وارد کنید یا ابتدا تنظیمات را ذخیره کنید.");
+      apiKey = stored.apiKey;
+    }
+    const url = input.provider === "openai"
+      ? `https://api.openai.com/v1/models/${encodeURIComponent(input.model)}`
+      : input.provider === "deepseek"
+        ? "https://api.deepseek.com/models"
+        : `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(input.model)}`;
     const response = await fetch(url, {
-      headers: provider === "openai"
-        ? { Authorization: `Bearer ${apiKey}` }
-        : { "x-goog-api-key": apiKey },
+      headers: input.provider === "gemini" ? { "x-goog-api-key": apiKey } : { Authorization: `Bearer ${apiKey}` },
       signal: AbortSignal.timeout(20_000),
       cache: "no-store",
     });
@@ -34,15 +43,19 @@ export async function POST(request: Request) {
             : "بررسی اتصال ناموفق بود؛ کمی بعد دوباره تلاش کنید.";
       return NextResponse.json({ error: message }, { status: response.status === 404 ? 400 : response.status });
     }
-    await response.arrayBuffer();
+    if (input.provider === "deepseek") {
+      const payload = await response.json() as { data?: Array<{ id?: string }> };
+      if (!payload.data?.some((item) => item.id === input.model)) {
+        return NextResponse.json({ error: "کلید معتبر است اما این مدل در فهرست مدل‌های حساب DeepSeek دیده نمی‌شود." }, { status: 400 });
+      }
+    } else await response.arrayBuffer();
     return NextResponse.json({ ok: true, message: "اتصال برقرار است و مدل در دسترس شماست." });
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      return NextResponse.json({ error: "Provider، مدل و API Key را کامل وارد کنید." }, { status: 400 });
-    }
+    if (error instanceof z.ZodError) return NextResponse.json({ error: "Provider و مدل را کامل وارد کنید." }, { status: 400 });
+    if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.status });
     const message = error instanceof Error && error.name === "TimeoutError"
       ? "بررسی اتصال بیش از حد طول کشید."
-      : "ارتباط با سرویس‌دهنده برقرار نشد؛ اتصال اینترنت سرور را بررسی کنید.";
+      : error instanceof Error && !error.message.includes("fetch") ? error.message : "ارتباط با سرویس‌دهنده برقرار نشد؛ اتصال اینترنت سرور را بررسی کنید.";
     return NextResponse.json({ error: message }, { status: 502 });
   }
 }

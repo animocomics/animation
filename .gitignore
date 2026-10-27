@@ -9,3 +9,7 @@ out/
 .vercel
 coverage/
 *.tsbuildinfo
+data/
+*.db
+*.db-shm
+*.db-wal

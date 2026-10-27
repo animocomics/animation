@@ -5,6 +5,7 @@ import type {
   QuestionResult,
   ReviewFlag,
   Submission,
+  WorkspaceData,
   WorkspaceSettings,
 } from "./types";
 
@@ -152,6 +153,8 @@ function makeResult(
     percentage,
     overallConfidence: flags.length ? 0.72 : 0.94,
     detectedStudentName: "",
+    detectedClassName: "",
+    identityConfidence: 0.96,
     summary: flags.length
       ? "تصحیح اولیه انجام شد؛ موارد مشخص‌شده پیش از نهایی‌کردن به بازبینی معلم نیاز دارند."
       : "پاسخ‌ها با بارم ارزیابی شدند و مورد ابهام مهمی مشاهده نشد.",
@@ -177,6 +180,8 @@ function makeSubmission(
 ): Submission {
   const total = scores.reduce((sum, score) => sum + score, 0);
   const result = makeResult(biologyQuestions, scores, (total / 20) * 100, flags);
+  result.detectedStudentName = studentName;
+  result.detectedClassName = "یازدهم تجربی · گروه الف";
   if (status === "approved") {
     result.approvedAt = "2026-10-26T11:20:00.000Z";
     result.teacherFeedback = "پاسخ‌ها بازبینی و نمره تأیید شد.";
@@ -283,6 +288,38 @@ export function createDemoExams(): Exam[] {
       isDemo: true,
     },
   ];
+}
+
+export function createDemoWorkspace(): WorkspaceData {
+  const exams = createDemoExams();
+  const classes: WorkspaceData["classes"] = [];
+  const now = new Date().toISOString();
+  exams.forEach((exam, examIndex) => {
+    let schoolClass = classes.find((item) => item.name === exam.className);
+    if (!schoolClass) {
+      schoolClass = {
+        id: `class-demo-${classes.length + 1}`,
+        name: exam.className,
+        grade: exam.className.split(" ")[0] || "",
+        subject: exam.subject,
+        academicYear: "۱۴۰۵–۱۴۰۶",
+        students: [],
+        createdAt: now,
+        updatedAt: now,
+      };
+      classes.push(schoolClass);
+    }
+    exam.classId = schoolClass.id;
+    exam.code = `DEMO-${String(examIndex + 1).padStart(3, "0")}`;
+    exam.submissions = exam.submissions.map((submission, studentIndex) => {
+      const studentId = submission.studentId || `student-demo-${examIndex + 1}-${studentIndex + 1}`;
+      if (!schoolClass.students.some((student) => student.id === studentId)) {
+        schoolClass.students.push({ id: studentId, name: submission.studentName, code: submission.studentCode, active: true });
+      }
+      return { ...submission, studentId, identityStatus: "matched" as const, identitySource: "demo" as const };
+    });
+  });
+  return { exams, classes, settings: { ...DEFAULT_WORKSPACE_SETTINGS } };
 }
 
 export const DEFAULT_WORKSPACE_SETTINGS: WorkspaceSettings = {

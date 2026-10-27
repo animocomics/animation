@@ -1,4 +1,43 @@
-export type ProviderId = "openai" | "gemini";
+export type ProviderId = "openai" | "gemini" | "deepseek";
+export type UserRole = "admin" | "teacher" | "reviewer";
+
+export interface AuthUser {
+  id: string;
+  username: string;
+  displayName: string;
+  role: UserRole;
+  active: boolean;
+  createdAt?: string;
+  lastLoginAt?: string;
+}
+
+export interface Student {
+  id: string;
+  name: string;
+  code: string;
+  externalRef?: string;
+  active: boolean;
+}
+
+export interface SchoolClass {
+  id: string;
+  name: string;
+  grade: string;
+  subject: string;
+  academicYear: string;
+  students: Student[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProviderPublicStatus {
+  configured: boolean;
+  provider: ProviderId;
+  model: string;
+  providerLabel: string;
+  keyHint?: string;
+  updatedAt?: string;
+}
 
 export type QuestionType =
   | "multiple_choice"
@@ -112,6 +151,8 @@ export interface GradingResult {
   percentage: number;
   overallConfidence: number;
   detectedStudentName: string;
+  detectedClassName: string;
+  identityConfidence: number;
   summary: string;
   strengths: string[];
   improvements: string[];
@@ -139,9 +180,14 @@ export interface AuditEntry {
 
 export interface Submission {
   id: string;
+  studentId?: string;
   studentName: string;
   studentCode: string;
+  identityStatus?: "matched" | "ambiguous" | "unmatched" | "manual" | "missing";
+  identityMessage?: string;
   files: FileMeta[];
+  identitySource?: "manual" | "filename" | "roster" | "ai" | "demo";
+  detectedClassName?: string;
   status: SubmissionStatus;
   result?: GradingResult;
   error?: string;
@@ -151,7 +197,9 @@ export interface Submission {
 export interface Exam {
   id: string;
   title: string;
+  code?: string;
   subject: string;
+  classId?: string;
   className: string;
   date: string;
   passScore: number;
@@ -181,10 +229,15 @@ export interface ToastMessage {
   variant: "success" | "error" | "info";
 }
 
+export interface WorkspaceData {
+  exams: Exam[];
+  classes: SchoolClass[];
+  settings: WorkspaceSettings;
+}
+
 export interface GradeApiRequest {
-  provider: ProviderId;
-  model: string;
-  apiKey: string;
+  examId: string;
+  submissionId?: string;
   exam: {
     title: string;
     subject: string;

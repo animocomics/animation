@@ -33,9 +33,9 @@ import {
 } from "lucide-react";
 import { useApp } from "../../lib/app-context";
 import { readStoredFileAsBase64 } from "../../lib/file-store";
+import { applyIdentityMatch, populateRosterSubmissions } from "../../lib/roster";
 import type { Exam, ExamSettings, GradingResult, Submission } from "../../lib/types";
 import { faNumber, rubricScore, totalExamScore, uid } from "../../lib/utils";
-import { ApiConnection } from "../api-connection";
 import { makeQuestion, QuestionEditor } from "./question-editor";
 import { SubmissionUploader } from "./submission-uploader";
 
@@ -51,7 +51,9 @@ function createEmptyExam(settings: ExamSettings): Exam {
   return {
     id: uid("exam"),
     title: "",
+    code: `EX-${Date.now().toString(36).toUpperCase()}`,
     subject: "",
+    classId: "",
     className: "",
     date: `${now.toISOString().slice(0, 10)}T08:00:00.000Z`,
     passScore: 10,
@@ -71,7 +73,7 @@ function resultNeedsReview(result: GradingResult): boolean {
 }
 
 export function GradingWizard() {
-  const { exams, settings: workspaceSettings, apiKey, saveExam, updateSubmission, notify, storageReady } = useApp();
+  const { exams, classes, settings: workspaceSettings, providerStatus, user, saveExam, updateSubmission, syncWorkspace, notify, storageReady } = useApp();
   const searchParams = useSearchParams();
   const router = useRouter();
   const existingExamId = searchParams.get("exam");
@@ -134,8 +136,12 @@ export function GradingWizard() {
 
   const validateStep = (currentStep: number): boolean => {
     if (currentStep === 1) {
-      if (!draft.title.trim() || !draft.subject.trim() || !draft.className.trim()) {
-        notify({ title: "مشخصات آزمون کامل نیست", description: "عنوان، درس و کلاس الزامی هستند.", variant: "error" });
+      if (!draft.title.trim() || !draft.subject.trim() || !draft.classId || !draft.code?.trim()) {
+        notify({ title: "مشخصات آزمون کامل نیست", description: "عنوان، درس، کد یکتا و کلاس الزامی هستند.", variant: "error" });
+        return false;
+      }
+      if (exams.some((exam) => exam.id !== draft.id && exam.code?.trim().toLowerCase() === draft.code?.trim().toLowerCase())) {
+        notify({ title: "کد آزمون تکراری است", description: "برای جلوگیری از اشتباه در کارنامه، کد یکتایی وارد کنید.", variant: "error" });
         return false;
       }
     }
@@ -154,14 +160,14 @@ export function GradingWizard() {
       }
     }
     if (currentStep === 3) {
-      const runnable = draft.submissions.filter((submission) => submission.studentName.trim() && submission.files.length);
+      const runnable = draft.submissions.filter((submission) => submission.files.length);
       if (!runnable.length) {
-        notify({ title: "حداقل یک برگهٔ کامل لازم است", description: "نام دانش‌آموز و حداقل یک عکس یا PDF را اضافه کنید.", variant: "error" });
+        notify({ title: "حداقل یک برگه لازم است", description: "عکس یا PDF برگه را اضافه کنید؛ نام و کلاس روی برگه توسط مدل خوانده و با فهرست تطبیق داده می‌شود.", variant: "error" });
         return false;
       }
-      const incomplete = draft.submissions.find((submission) => !submission.result && (!submission.studentName.trim() || !submission.files.length));
+      const incomplete = draft.submissions.find((submission) => !submission.result && !submission.files.length && submission.identitySource !== "roster");
       if (incomplete) {
-        notify({ title: "یک ردیف ناقص در فهرست است", description: "برای همهٔ دانش‌آموزان نام و فایل وارد کنید یا ردیف اضافی را حذف کنید.", variant: "error" });
+        notify({ title: "یک ردیف دستی بدون برگه است", description: "برای ردیف دستی فایل وارد کنید یا آن را حذف کنید. ردیف‌های فهرست کلاس می‌توانند به‌عنوان برگهٔ مفقود باقی بمانند.", variant: "error" });
         return false;
       }
       if (!selectedIds.length) setSelectedIds(runnable.filter((submission) => submission.status !== "approved").map((submission) => submission.id));
@@ -190,10 +196,11 @@ export function GradingWizard() {
 
   const startGrading = async () => {
     if (running) return;
-    if (!apiKey) {
-      notify({ title: "API Key لازم است", description: "کلید را در بخش اتصال همین صفحه وارد کنید.", variant: "error" });
+    if (!providerStatus.configured) {
+      notify({ title: "سرویس تصحیح فعال نیست", description: user.role === "admin" ? "از بخش مدیریت سامانه، اتصال مدل را پیکربندی کنید." : "برای فعال‌کردن اتصال مدل با مدیر سامانه هماهنگ کنید.", variant: "error" });
       return;
     }
+    await syncWorkspace();
     if (!selectedSubmissions.length) {
       notify({ title: "برگه‌ای برای تصحیح انتخاب نشده", variant: "error" });
       return;
@@ -239,9 +246,8 @@ export function GradingWizard() {
             headers: { "Content-Type": "application/json" },
             signal: controller.signal,
             body: JSON.stringify({
-              provider: workspaceSettings.provider,
-              model: workspaceSettings.model,
-              apiKey,
+              examId: draft.id,
+              submissionId: submission.id,
               exam: {
                 title: draft.title,
                 subject: draft.subject,
@@ -256,17 +262,16 @@ export function GradingWizard() {
           const payload = await response.json() as { result?: GradingResult; error?: string };
           if (!response.ok || !payload.result) throw new Error(payload.error || "نتیجهٔ معتبر از سرور دریافت نشد.");
           const result = payload.result;
-          const needsReview = resultNeedsReview(result);
+          const schoolClass = classes.find((item) => item.id === draft.classId);
+          const identityPatched = applyIdentityMatch(submission, result, schoolClass);
           applyUpdate(submission.id, {
-            status: needsReview ? "needs_review" : "graded",
-            result,
-            error: undefined,
+            ...identityPatched,
             audit: [...submission.audit, {
               id: uid("audit"),
               at: new Date().toISOString(),
               actor: "ai",
               action: result.verification === "corrected" ? "تصحیح و اصلاح در ممیزی دوم" : result.verification === "verified" ? "تصحیح و ممیزی دوم" : "تصحیح اولیه",
-              details: `${result.model} · ${faNumber(result.questions.length)} سؤال · ${faNumber(result.flags.length)} هشدار`,
+              details: `${result.model} · ${faNumber(result.questions.length)} سؤال · ${faNumber(result.flags.length)} هشدار · ${identityPatched.identityMessage || "هویت بررسی شد"}`,
             }],
           });
           failedIds.current.delete(submission.id);
@@ -343,8 +348,9 @@ export function GradingWizard() {
               <div className="form-field"><label htmlFor="exam-title">عنوان آزمون <span>*</span></label><input id="exam-title" className="input" value={draft.title} onChange={(event) => updateDraft({ title: event.target.value })} placeholder="مثلاً میان‌ترم زیست‌شناسی" /></div>
               <div className="form-grid">
                 <div className="form-field"><label htmlFor="exam-subject">درس <span>*</span></label><input id="exam-subject" className="input" value={draft.subject} onChange={(event) => updateDraft({ subject: event.target.value })} placeholder="مثلاً زیست‌شناسی" /></div>
-                <div className="form-field"><label htmlFor="exam-class">کلاس / گروه <span>*</span></label><input id="exam-class" className="input" value={draft.className} onChange={(event) => updateDraft({ className: event.target.value })} placeholder="مثلاً یازدهم تجربی · الف" /></div>
+                <div className="form-field"><label htmlFor="exam-code">کد آزمون <span>*</span></label><input id="exam-code" className="input" dir="ltr" value={draft.code || ""} onChange={(event) => updateDraft({ code: event.target.value })} placeholder="BIO-1405-01" /><span className="form-hint">کد یکتا در کارنامه و خروجی‌ها ثبت می‌شود.</span></div>
               </div>
+              <div className="form-field"><label htmlFor="exam-class">کلاس / گروه <span>*</span></label><div className="class-select-row"><select id="exam-class" className="select" value={draft.classId || ""} onChange={(event) => { const schoolClass = classes.find((item) => item.id === event.target.value); if (schoolClass) updateDraft({ classId: schoolClass.id, className: schoolClass.name, submissions: populateRosterSubmissions(draft, schoolClass) }); }}><option value="">انتخاب کلاس…</option>{classes.map((schoolClass) => <option key={schoolClass.id} value={schoolClass.id}>{schoolClass.name} · {faNumber(schoolClass.students.filter((student) => student.active).length)} دانش‌آموز</option>)}</select><Link href="/classes" className="btn btn-secondary">مدیریت کلاس‌ها</Link></div><span className="form-hint">با انتخاب کلاس، ردیف همهٔ دانش‌آموزان ساخته می‌شود؛ برگه‌های مفقود با هشدار باقی می‌مانند.</span></div>
               <div className="form-grid-3">
                 <div className="form-field"><label htmlFor="exam-date">تاریخ آزمون</label><input id="exam-date" className="input" type="date" value={draft.date.slice(0, 10)} onChange={(event) => updateDraft({ date: `${event.target.value}T08:00:00.000Z` })} /></div>
                 <div className="form-field"><label htmlFor="exam-duration">مدت (دقیقه)</label><input id="exam-duration" className="input" type="number" min="1" value={draft.duration} onChange={(event) => updateDraft({ duration: Math.max(1, Number(event.target.value)) })} /></div>
@@ -381,7 +387,7 @@ export function GradingWizard() {
         </section>}
 
         {step === 3 && <section className="card upload-wizard-card">
-          <div className="wizard-section-heading"><span className="section-heading-icon"><FileStack size={21} /></span><div><h3>برگه‌های دانش‌آموزان</h3><p>فایل‌ها در IndexedDB مرورگر نگه‌داری می‌شوند و فقط هنگام اجرا برای دانش‌آموز مربوط ارسال خواهند شد.</p></div><span className="badge badge-info">بدون OCR جداگانه</span></div>
+          <div className="wizard-section-heading"><span className="section-heading-icon"><FileStack size={21} /></span><div><h3>برگه‌های دانش‌آموزان</h3><p>فایل‌ها در فضای امن همین حساب روی سرور نگه‌داری می‌شوند و فقط هنگام اجرا برای دانش‌آموز مربوط به مدل ارسال خواهند شد.</p></div><span className="badge badge-info">بدون OCR جداگانه</span></div>
           <div className="upload-wizard-body"><SubmissionUploader submissions={draft.submissions} onChange={(submissions) => { updateDraft({ submissions }); setSelectedIds([]); setHasRun(false); }} /></div>
         </section>}
 
@@ -390,7 +396,7 @@ export function GradingWizard() {
             <section className="card run-summary-card">
               <div className="wizard-section-heading"><span className="section-heading-icon"><ClipboardCheck size={21} /></span><div><h3>پیش از شروع، همه‌چیز را بررسی کنید</h3><p>پس از اجرا، نتیجهٔ هر دانش‌آموز مستقل ذخیره می‌شود.</p></div>{!running && !hasRun && <span className="badge badge-success"><CheckCircle2 size={13} />آمادهٔ اجرا</span>}</div>
               <div className="run-summary-grid">
-                <button onClick={() => goToStep(1)} disabled={running}><BookOpenCheck size={18} /><span><small>آزمون</small><strong>{draft.title}</strong><em>{draft.subject} · {draft.className}</em></span><ChevronLeft size={15} /></button>
+                <button onClick={() => goToStep(1)} disabled={running}><BookOpenCheck size={18} /><span><small>آزمون</small><strong>{draft.title}</strong><em>{draft.subject} · {draft.className} · <span dir="ltr">{draft.code}</span></em></span><ChevronLeft size={15} /></button>
                 <button onClick={() => goToStep(2)} disabled={running}><ListChecks size={18} /><span><small>سؤال‌ها و بارم</small><strong>{faNumber(draft.questions.length)} سؤال · {faNumber(totalExamScore(draft))} نمره</strong><em>{faNumber(draft.questions.reduce((sum, question) => sum + question.rubric.length, 0))} معیار ارزیابی</em></span><ChevronLeft size={15} /></button>
                 <button onClick={() => goToStep(3)} disabled={running}><UsersRound size={18} /><span><small>برگه‌ها</small><strong>{faNumber(eligibleSubmissions.length)} دانش‌آموز</strong><em>{faNumber(eligibleSubmissions.reduce((sum, submission) => sum + submission.files.length, 0))} فایل آماده</em></span><ChevronLeft size={15} /></button>
                 <button onClick={() => goToStep(1)} disabled={running}><ShieldCheck size={18} /><span><small>سیاست تصحیح</small><strong>{{ fast: "سریع", balanced: "متعادل", precise: "دقیق" }[draft.settings.gradingMode]} · آستانهٔ {faNumber(draft.settings.reviewThreshold * 100, 0)}٪</strong><em>{draft.settings.anonymize ? "تصحیح ناشناس" : "تطبیق هویت"}</em></span><ChevronLeft size={15} /></button>
@@ -415,7 +421,7 @@ export function GradingWizard() {
           </div>
 
           <aside className="run-side-column">
-            <section className="card api-run-card"><div className="card-header"><div><h3 className="card-title">اتصال مدل</h3><p className="card-subtitle">تصحیح با اعتبار API خودتان</p></div><KeyRound size={18} className="text-brand" /></div><div className="api-run-body"><ApiConnection compact /></div></section>
+            <section className="card api-run-card"><div className="card-header"><div><h3 className="card-title">سرویس تصحیح</h3><p className="card-subtitle">اتصال متمرکز و محفوظ نزد مدیر</p></div><KeyRound size={18} className="text-brand" /></div><div className="api-run-body"><div className={`server-provider-status ${providerStatus.configured ? "connected" : "disconnected"}`}><span>{providerStatus.configured ? <CheckCircle2 size={21} /> : <CircleAlert size={21} />}</span><div><strong>{providerStatus.configured ? `${providerStatus.providerLabel} آمادهٔ تصحیح است` : "اتصال هوش مصنوعی فعال نیست"}</strong><p>{providerStatus.configured ? `${providerStatus.model} · کلید API فقط روی سرور خوانده می‌شود.` : user.role === "admin" ? "برای فعال‌سازی به مدیریت سامانه بروید." : "مدیر سامانه باید سرویس را پیکربندی کند."}</p></div></div>{user.role === "admin" && <Link href="/admin" className="btn btn-secondary full-width">مدیریت اتصال <ChevronLeft size={15} /></Link>}<div className="privacy-mini"><LockKeyhole size={15} /><span>نام و کلاس روی برگه استخراج و با فهرست کلاس تطبیق داده می‌شود؛ عدم تطبیق به بازبینی می‌رود.</span></div></div></section>
             <section className="card accuracy-reminder"><WandSparkles size={21} /><h3>چه چیزی برگردانده می‌شود؟</h3><ul><li>رونوشت و پاسخ هر سؤال</li><li>نمرهٔ هر معیار با دلیل و شاهد</li><li>هشدار دست‌خط ناخوانا و تصویر مبهم</li><li>ممیزی دوم در موارد تعیین‌شده</li></ul><p>اعتماد مدل تضمین درستی نیست؛ نمرهٔ نهایی با تأیید شما مشخص می‌شود.</p></section>
           </aside>
         </div>}
@@ -424,9 +430,9 @@ export function GradingWizard() {
       <footer className="wizard-footer">
         <div>{step > 1 ? <button className="btn btn-secondary" onClick={() => goToStep(step - 1)} disabled={running}><ArrowRight size={16} />مرحلهٔ قبل</button> : <Link href="/exams" className="btn btn-ghost">انصراف</Link>}</div>
         <div className="wizard-footer-status">{dirty ? <><LoaderCircle size={14} className="spin-icon" />در حال ذخیرهٔ خودکار…</> : <><Check size={14} />تغییرات ذخیره شده است</>}</div>
-        <div>{step < 4 ? <button className="btn btn-primary btn-lg" onClick={nextStep} disabled={running}>ذخیره و ادامه <ArrowLeft size={17} /></button> : running ? <button className="btn btn-danger-soft btn-lg" onClick={cancelGrading}><Square size={15} />توقف اجرا</button> : (!hasRun || selectedIds.length > 0) && <button className="btn btn-primary btn-lg" onClick={startGrading} disabled={!selectedSubmissions.length || !apiKey}><Play size={17} />{hasRun ? `تلاش مجدد (${faNumber(selectedSubmissions.length)} برگه)` : `شروع تصحیح ${faNumber(selectedSubmissions.length)} برگه`}</button>}</div>
+        <div>{step < 4 ? <button className="btn btn-primary btn-lg" onClick={nextStep} disabled={running}>ذخیره و ادامه <ArrowLeft size={17} /></button> : running ? <button className="btn btn-danger-soft btn-lg" onClick={cancelGrading}><Square size={15} />توقف اجرا</button> : (!hasRun || selectedIds.length > 0) && <button className="btn btn-primary btn-lg" onClick={startGrading} disabled={!selectedSubmissions.length || !providerStatus.configured}><Play size={17} />{hasRun ? `تلاش مجدد (${faNumber(selectedSubmissions.length)} برگه)` : `شروع تصحیح ${faNumber(selectedSubmissions.length)} برگه`}</button>}</div>
       </footer>
-      {step === 4 && !apiKey && <div className="wizard-fixed-hint"><KeyRound size={15} />برای فعال‌شدن دکمهٔ تصحیح، API Key را در کارت «اتصال مدل» وارد کنید.</div>}
+      {step === 4 && !providerStatus.configured && <div className="wizard-fixed-hint"><KeyRound size={15} />{user.role === "admin" ? "برای فعال‌شدن تصحیح، اتصال را در مدیریت سامانه پیکربندی کنید." : "سرویس تصحیح هنوز توسط مدیر سامانه فعال نشده است."}</div>}
     </div>
   );
 }

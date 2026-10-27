@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
-import { GradingWizard } from "../../components/grading/grading-wizard";
+import { GradingWizard } from "@/components/grading/grading-wizard";
 
 export const metadata: Metadata = { title: "تصحیح جدید" };
 

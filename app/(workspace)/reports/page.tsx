@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
-import { ReportsDashboard } from "../../components/reports-dashboard";
+import { ReportsDashboard } from "@/components/reports-dashboard";
 
 export const metadata: Metadata = { title: "گزارش و تحلیل" };
 

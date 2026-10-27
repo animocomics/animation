@@ -16,6 +16,7 @@ import {
   UsersRound,
 } from "lucide-react";
 import { useApp } from "../lib/app-context";
+import { deleteStoredFile } from "../lib/file-store";
 import type { Exam } from "../lib/types";
 import { examAverage, faDate, faNumber, totalExamScore, uid } from "../lib/utils";
 import { ExamStatusBadge, Modal } from "./ui/primitives";
@@ -27,7 +28,7 @@ export function ExamsList() {
   const [deleteTarget, setDeleteTarget] = useState<Exam | null>(null);
 
   const filtered = useMemo(() => exams.filter((exam) => {
-    const matchesQuery = `${exam.title} ${exam.subject} ${exam.className}`.includes(query.trim());
+    const matchesQuery = `${exam.title} ${exam.subject} ${exam.className} ${exam.code || ""}`.includes(query.trim());
     const matchesFilter = filter === "all" || exam.status === filter;
     return matchesQuery && matchesFilter;
   }), [exams, query, filter]);
@@ -47,6 +48,7 @@ export function ExamsList() {
       ...exam,
       id: uid("exam"),
       title: `${exam.title} · نسخهٔ کپی`,
+      code: `${exam.code || "EX"}-COPY-${Date.now().toString(36).slice(-4).toUpperCase()}`,
       status: "draft",
       submissions: [],
       questions,
@@ -55,6 +57,14 @@ export function ExamsList() {
       updatedAt: new Date().toISOString(),
     });
     notify({ title: "کپی آزمون ساخته شد", description: "سؤال‌ها و بارم کپی شدند؛ برگه‌ها کپی نمی‌شوند.", variant: "success" });
+  };
+
+  const removeExam = async () => {
+    if (!deleteTarget) return;
+    await Promise.allSettled(deleteTarget.submissions.flatMap((submission) => submission.files.map((file) => deleteStoredFile(file.storedId))));
+    deleteExam(deleteTarget.id);
+    setDeleteTarget(null);
+    notify({ title: "آزمون و فایل‌هایش حذف شد", variant: "success" });
   };
 
   return (
@@ -79,6 +89,8 @@ export function ExamsList() {
           {filtered.map((exam) => {
             const graded = exam.submissions.filter((submission) => submission.result).length;
             const approved = exam.submissions.filter((submission) => submission.status === "approved").length;
+            const paperCount = exam.submissions.filter((submission) => submission.files.length > 0 || submission.result).length;
+            const missingCount = exam.submissions.length - paperCount;
             const progress = exam.submissions.length ? (approved / exam.submissions.length) * 100 : 0;
             return (
               <article className="card exam-card" key={exam.id}>
@@ -88,11 +100,11 @@ export function ExamsList() {
                   <div className="exam-card-badges"><ExamStatusBadge status={exam.status} />{exam.isDemo && <span className="badge demo-badge">دادهٔ نمایشی</span>}</div>
                   <div className="exam-card-menu"><MoreHorizontal size={19} /></div>
                 </div>
-                <Link href={`/exams/${exam.id}`} className="exam-card-title"><h3>{exam.title}</h3><p>{exam.subject} · {exam.className}</p></Link>
+                <Link href={`/exams/${exam.id}`} className="exam-card-title"><h3>{exam.title}</h3><p>{exam.subject} · {exam.className}{exam.code && <span dir="ltr"> · {exam.code}</span>}</p></Link>
                 <div className="exam-card-meta">
                   <span><CalendarDays size={15} />{faDate(exam.date, { day: "numeric", month: "long" })}</span>
                   <span><FileQuestion size={15} />{faNumber(exam.questions.length)} سؤال · {faNumber(totalExamScore(exam))} نمره</span>
-                  <span><UsersRound size={15} />{faNumber(exam.submissions.length)} برگه</span>
+                  <span><UsersRound size={15} />{faNumber(paperCount)} برگه{missingCount > 0 && <span className="text-warning"> · {faNumber(missingCount)} مفقود</span>}</span>
                 </div>
                 {exam.submissions.length > 0 ? (
                   <div className="exam-card-progress">
@@ -124,8 +136,8 @@ export function ExamsList() {
       )}
 
       {deleteTarget && (
-        <Modal title="حذف آزمون" description="این کار قابل بازگشت نیست." onClose={() => setDeleteTarget(null)} footer={<><button className="btn btn-secondary" onClick={() => setDeleteTarget(null)}>انصراف</button><button className="btn btn-danger-soft" onClick={() => { deleteExam(deleteTarget.id); setDeleteTarget(null); notify({ title: "آزمون حذف شد", variant: "success" }); }}><Trash2 size={16} /> حذف آزمون</button></>}>
-          <div className="notice notice-danger"><Trash2 size={19} /><div><strong>{deleteTarget.title}</strong><p>سؤال‌ها، بارم و نتایج ثبت‌شدهٔ این آزمون از فضای محلی حذف می‌شوند. فایل‌های ارسال‌شده به Provider از طریق این بخش حذف نمی‌شوند.</p></div></div>
+        <Modal title="حذف آزمون" description="این کار قابل بازگشت نیست." onClose={() => setDeleteTarget(null)} footer={<><button className="btn btn-secondary" onClick={() => setDeleteTarget(null)}>انصراف</button><button className="btn btn-danger-soft" onClick={() => void removeExam()}><Trash2 size={16} /> حذف آزمون</button></>}>
+          <div className="notice notice-danger"><Trash2 size={19} /><div><strong>{deleteTarget.title}</strong><p>سؤال‌ها، بارم و نتایج ثبت‌شدهٔ این آزمون از فضای کاری این حساب حذف می‌شوند. فایل‌های ارسال‌شده به Provider از طریق این بخش حذف نمی‌شوند.</p></div></div>
         </Modal>
       )}
     </div>

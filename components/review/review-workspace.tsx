@@ -44,7 +44,7 @@ type ReviewFilter = "all" | "needs_review" | "approved";
 type PanelTab = "scores" | "feedback" | "audit";
 
 export function ReviewWorkspace() {
-  const { exams, updateSubmission, notify } = useApp();
+  const { exams, classes, updateSubmission, notify } = useApp();
   const searchParams = useSearchParams();
   const examParam = searchParams.get("exam");
   const submissionParam = searchParams.get("submission");
@@ -89,7 +89,9 @@ export function ReviewWorkspace() {
   const currentExam = activeExam;
   const currentSubmission = selectedSubmission;
   const currentResult = result;
-  const unresolvedCount = currentResult.questions.filter((question) => question.needsReview).length + currentResult.flags.filter((flag) => !flag.questionId && flag.severity !== "info").length;
+  const schoolClass = classes.find((item) => item.id === currentExam.classId) || classes.find((item) => item.name === currentExam.className);
+  const identityNeedsReview = ["ambiguous", "unmatched", "missing"].includes(currentSubmission.identityStatus || "");
+  const unresolvedCount = currentResult.questions.filter((question) => question.needsReview).length + currentResult.flags.filter((flag) => !flag.questionId && flag.severity !== "info").length + (identityNeedsReview ? 1 : 0);
 
   const updateResult = (nextResult: GradingResult, status: Submission["status"] = currentSubmission.status, audit?: { action: string; details: string }) => {
     updateSubmission(currentExam.id, currentSubmission.id, {
@@ -139,7 +141,39 @@ export function ReviewWorkspace() {
     notify({ title: "بازخورد ذخیره شد", variant: "success" });
   };
 
+  const assignIdentity = (studentId?: string) => {
+    const id = studentId || currentSubmission.studentId;
+    const student = schoolClass?.students.find((item) => item.id === id);
+    if (!student) {
+      notify({ title: "دانش‌آموز را از فهرست کلاس انتخاب کنید", variant: "error" });
+      return;
+    }
+    const duplicate = currentExam.submissions.find((submission) => submission.id !== currentSubmission.id && submission.studentId === student.id && submission.result);
+    if (duplicate) {
+      notify({ title: "این دانش‌آموز قبلاً برگه دارد", description: "برگهٔ تکراری را حذف یا با برگهٔ اصلی ادغام کنید؛ نمره دوم جایگزین خودکار نمی‌شود.", variant: "error" });
+      return;
+    }
+    const otherReview = currentResult.questions.some((question) => question.needsReview) || currentResult.flags.some((flag) => flag.severity !== "info");
+    updateSubmission(currentExam.id, currentSubmission.id, {
+      studentId: student.id,
+      studentName: student.name,
+      studentCode: student.code,
+      identityStatus: "matched",
+      identitySource: "manual",
+      identityMessage: "انتساب هویت توسط معلم تأیید شد.",
+      status: currentSubmission.status === "approved" ? "approved" : otherReview ? "needs_review" : "graded",
+      audit: [...currentSubmission.audit, { id: uid("audit"), at: new Date().toISOString(), actor: "teacher", action: "تأیید هویت و انتساب", details: `برگه به ${student.name} (${student.code || "بدون کد"}) در ${schoolClass!.name} متصل شد.` }],
+    });
+    notify({ title: "هویت برگه تأیید شد", description: `نمره در ردیف ${student.name} قرار گرفت.`, variant: "success" });
+  };
+
   const approve = () => {
+    if (identityNeedsReview && schoolClass) {
+      notify({ title: "ابتدا هویت برگه را تأیید کنید", description: "دانش‌آموز درست را از کارت تطبیق هویت انتخاب کنید؛ تأیید نمره به‌تنهایی انتساب مبهم را نهایی نمی‌کند.", variant: "error" });
+      setApprovalOpen(false);
+      setPanelTab("scores");
+      return;
+    }
     const approvedAt = new Date().toISOString();
     updateResult({
       ...currentResult,
@@ -205,6 +239,11 @@ export function ReviewWorkspace() {
           <div className="grading-panel-tabs"><button className={panelTab === "scores" ? "active" : ""} onClick={() => setPanelTab("scores")}><ListChecksIcon />نمره‌ها</button><button className={panelTab === "feedback" ? "active" : ""} onClick={() => setPanelTab("feedback")}><MessageSquareText size={15} />بازخورد</button><button className={panelTab === "audit" ? "active" : ""} onClick={() => setPanelTab("audit")}><History size={15} />تاریخچه</button></div>
 
           {panelTab === "scores" && <div className="grading-scores-panel">
+            <div className={`identity-match-card ${identityNeedsReview ? "needs-attention" : ""}`}>
+              <div className="identity-match-heading"><span>{identityNeedsReview ? <AlertTriangle size={17} /> : <UserCheck size={17} />}</span><div><strong>{identityNeedsReview ? "انتساب هویت نیازمند تأیید است" : "هویت و ردیف کارنامه"}</strong><small>{currentSubmission.identityMessage || "هویت این برگه برای ثبت در کارنامه بررسی شده است."}</small></div><span className={`badge ${identityNeedsReview ? "badge-warning" : "badge-success"}`}>{identityNeedsReview ? "توقف انتساب" : "تطبیق‌شده"}</span></div>
+              <div className="identity-detection-meta"><span>روی برگه: <strong>{currentResult.detectedStudentName || "نام خوانده نشد"}</strong></span><span>کلاس: <strong>{currentResult.detectedClassName || currentSubmission.detectedClassName || "خوانده نشد"}</strong></span><span>اطمینان هویت: <strong>{faNumber((currentResult.identityConfidence ?? 0) * 100, 0)}٪</strong></span></div>
+              {schoolClass ? <div className="identity-assign-row"><select className="select" aria-label="انتساب به دانش‌آموز کلاس" value={currentSubmission.studentId || ""} onChange={(event) => assignIdentity(event.target.value)}><option value="">انتخاب دانش‌آموز از {schoolClass.name}…</option>{schoolClass.students.filter((student) => student.active).map((student) => <option key={student.id} value={student.id}>{student.name} · {student.code || "بدون کد"}</option>)}</select>{identityNeedsReview && currentSubmission.studentId && <button className="btn btn-secondary btn-sm" onClick={() => assignIdentity()}><Check size={14} /> تأیید انتساب فعلی</button>}</div> : <Link href="/classes" className="btn btn-secondary btn-sm">ساخت و اتصال فهرست کلاس <ChevronLeft size={14} /></Link>}
+            </div>
             {currentResult.flags.length > 0 && <div className="review-flags-box"><div className="review-flags-title"><TriangleAlert size={16} /><strong>{faNumber(currentResult.flags.length)} نکته برای توجه شما</strong></div>{currentResult.flags.slice(0, 4).map((flag) => <button key={flag.id} onClick={() => goToEvidence(flag)}><span className={`flag-severity ${flag.severity}`} /><span><strong>{FLAG_LABELS[flag.type]}</strong><small>{flag.message}</small></span><ChevronLeft size={14} /></button>)}</div>}
             <div className="question-result-list">{currentExam.questions.map((question) => {
               const questionResult = currentResult.questions.find((item) => item.questionId === question.id);
@@ -236,7 +275,7 @@ export function ReviewWorkspace() {
             <button className="btn btn-primary" onClick={saveFeedback}><Check size={15} />ذخیرهٔ بازخورد</button>
           </div>}
 
-          {panelTab === "audit" && <div className="audit-panel"><div className="audit-model-card"><Bot size={19} /><div><strong>{currentResult.provider === "openai" ? "OpenAI" : "Gemini"} · {currentResult.model}</strong><span>{faNumber(currentResult.usage.inputTokens + currentResult.usage.outputTokens)} توکن ثبت‌شده · {faDate(currentResult.gradedAt, { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}</span></div></div><div className="audit-timeline">{[...currentSubmission.audit].reverse().map((entry) => <div className="audit-entry" key={entry.id}><span className={`audit-actor ${entry.actor}`}>{entry.actor === "teacher" ? <UserRound size={14} /> : entry.actor === "ai" ? <Bot size={14} /> : <CircleAlert size={14} />}</span><div><strong>{entry.action}</strong><p>{entry.details}</p><small>{faDate(entry.at, { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}</small></div></div>)}</div></div>}
+          {panelTab === "audit" && <div className="audit-panel"><div className="audit-model-card"><Bot size={19} /><div><strong>{currentResult.provider === "openai" ? "OpenAI" : currentResult.provider === "gemini" ? "Gemini" : "DeepSeek"} · {currentResult.model}</strong><span>{faNumber(currentResult.usage.inputTokens + currentResult.usage.outputTokens)} توکن ثبت‌شده · {faDate(currentResult.gradedAt, { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}</span></div></div><div className="audit-timeline">{[...currentSubmission.audit].reverse().map((entry) => <div className="audit-entry" key={entry.id}><span className={`audit-actor ${entry.actor}`}>{entry.actor === "teacher" ? <UserRound size={14} /> : entry.actor === "ai" ? <Bot size={14} /> : <CircleAlert size={14} />}</span><div><strong>{entry.action}</strong><p>{entry.details}</p><small>{faDate(entry.at, { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}</small></div></div>)}</div></div>}
 
           <div className="grading-panel-footer"><button className="btn btn-secondary btn-sm" onClick={() => exportStudentJson(currentExam, currentSubmission)}><Download size={14} />JSON</button>{currentSubmission.status === "approved" ? <span className="approved-stamp"><CheckCheck size={15} />تأیید شده توسط معلم</span> : <button className="btn btn-primary btn-sm" onClick={() => unresolvedCount ? setApprovalOpen(true) : approve()}>تأیید و برگهٔ بعدی<ChevronLeft size={14} /></button>}</div>
         </aside>

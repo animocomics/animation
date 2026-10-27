@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { ExamDetail } from "../../../components/exam-detail";
+import { ExamDetail } from "@/components/exam-detail";
 
 export const metadata: Metadata = { title: "جزئیات آزمون" };
 

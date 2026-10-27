@@ -67,7 +67,7 @@ export function FilePreview({ files, studentName, requestedPage = 1 }: {
       </div>
       {files.length > 1 && <div className="preview-file-tabs">{files.map((file, index) => <button className={index === currentIndex ? "active" : ""} onClick={() => setCurrentIndex(index)} key={file.id}>{file.type === "application/pdf" ? <FileText size={14} /> : <FileImage size={14} />}فایل {faNumber(index + 1)}<span>{file.name}</span></button>)}</div>}
       <div className="paper-viewport">
-        {!files.length ? <DemoPaper studentName={studentName} /> : loading ? <div className="preview-loading"><span className="spinner" /><p>در حال بازکردن برگه…</p></div> : missing || !objectUrl ? <div className="preview-missing"><AlertTriangle size={27} /><strong>فایل اصلی در این مرورگر موجود نیست</strong><p>از بخش «افزودن و تصحیح برگه» فایل را دوباره اضافه کنید. نتیجهٔ قبلی حذف نمی‌شود.</p></div> : currentFile.type === "application/pdf" ? (
+        {!files.length ? <DemoPaper studentName={studentName} /> : loading ? <div className="preview-loading"><span className="spinner" /><p>در حال بازکردن برگه…</p></div> : missing || !objectUrl ? <div className="preview-missing"><AlertTriangle size={27} /><strong>فایل اصلی روی سرور موجود نیست</strong><p>از بخش «افزودن و تصحیح برگه» فایل را دوباره اضافه کنید. نتیجهٔ قبلی حذف نمی‌شود.</p></div> : currentFile.type === "application/pdf" ? (
           <iframe className="pdf-preview" src={`${objectUrl}#page=${requestedPage}&zoom=${Math.round(zoom * 100)}`} title={`برگهٔ ${studentName}`} />
         ) : (
           <div className="image-preview-scroll"><img src={objectUrl} alt={`برگهٔ امتحانی ${studentName}`} style={{ transform: `scale(${zoom}) rotate(${rotation}deg)` }} /></div>

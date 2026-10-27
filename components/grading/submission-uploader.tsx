@@ -64,6 +64,8 @@ export function SubmissionUploader({ submissions, onChange }: {
       studentCode: studentCode.trim(),
       files: [],
       status: "uploaded",
+      identitySource: "manual",
+      identityStatus: "manual",
       audit: [{ id: uid("audit"), at: new Date().toISOString(), actor: "teacher", action: "افزودن دانش‌آموز", details: "دانش‌آموز به فهرست تصحیح اضافه شد." }],
     };
     onChange([...submissions, submission]);
@@ -116,12 +118,13 @@ export function SubmissionUploader({ submissions, onChange }: {
             studentCode: "",
             files: [{ id, storedId: id, name: file.name, type, size: file.size }],
             status: "uploaded",
+            identitySource: "filename",
             audit: [{ id: uid("audit"), at: new Date().toISOString(), actor: "teacher", action: "بارگذاری برگه", details: `فایل ${file.name} بارگذاری شد.` }],
           });
         }
         onChange([...submissions, ...newSubmissions]);
       }
-      if (validFiles.length) notify({ title: "برگه‌ها آماده شد", description: `${faNumber(validFiles.length)} فایل در حافظهٔ امن مرورگر ذخیره شد.`, variant: "success" });
+      if (validFiles.length) notify({ title: "برگه‌ها آماده شد", description: `${faNumber(validFiles.length)} فایل در فضای امن حساب شما روی سرور ذخیره شد.`, variant: "success" });
     } catch (error) {
       notify({ title: "ذخیرهٔ فایل ناموفق بود", description: error instanceof Error ? error.message : "لطفاً دوباره تلاش کنید.", variant: "error" });
     } finally {
@@ -138,7 +141,8 @@ export function SubmissionUploader({ submissions, onChange }: {
   };
 
   const updateStudent = (id: string, patch: Partial<Submission>) => {
-    onChange(submissions.map((submission) => submission.id === id ? { ...submission, ...patch } : submission));
+    const identityEdited = "studentName" in patch || "studentCode" in patch;
+    onChange(submissions.map((submission) => submission.id === id ? { ...submission, ...patch, ...(identityEdited ? { studentId: undefined, identitySource: "manual" as const, identityStatus: "manual" as const, identityMessage: "انتساب دستی؛ پس از تصحیح با نام روی برگه کنترل می‌شود." } : {}) } : submission));
   };
 
   const removeSubmission = async (submission: Submission) => {
@@ -156,7 +160,7 @@ export function SubmissionUploader({ submissions, onChange }: {
   const previewFile = async (file: FileMeta) => {
     const stored = await getStoredFile(file.storedId);
     if (!stored) {
-      notify({ title: "فایل در این مرورگر پیدا نشد", description: "دوباره آن را بارگذاری کنید.", variant: "error" });
+      notify({ title: "فایل روی سرور پیدا نشد", description: "دوباره آن را بارگذاری کنید.", variant: "error" });
       return;
     }
     const url = URL.createObjectURL(stored.blob);
@@ -178,7 +182,7 @@ export function SubmissionUploader({ submissions, onChange }: {
           <h3>برگه‌ها را اینجا رها کنید</h3>
           <p>عکس JPG، PNG، WebP یا PDF · حداکثر ۱۵ مگابایت برای هر فایل</p>
           <button className="btn btn-primary" disabled={busy} onClick={() => bulkInput.current?.click()}>{busy ? <LoaderCircle className="spin-icon" size={17} /> : <FilePlus2 size={17} />}{busy ? "در حال ذخیره…" : "انتخاب فایل‌ها"}</button>
-          <span className="bulk-upload-note">در بارگذاری گروهی، هر فایل یک دانش‌آموز جدید می‌شود و نامش از نام فایل گرفته می‌شود.</span>
+          <span className="bulk-upload-note">در بارگذاری گروهی هر فایل یک برگه می‌شود؛ نام و کلاس هنگام تصحیح از روی برگه خوانده و با فهرست تطبیق داده خواهد شد.</span>
         </div>
         <aside className="add-student-panel">
           <span className="add-student-icon"><UserPlus size={22} /></span>
@@ -209,7 +213,7 @@ export function SubmissionUploader({ submissions, onChange }: {
               </div>)}
               <label className="add-page-button"><Paperclip size={15} /><span>{submission.files.length ? "افزودن صفحه / فایل" : "انتخاب برگه"}</span><input type="file" hidden multiple accept=".jpg,.jpeg,.png,.webp,.pdf" onChange={(event) => { processFiles(Array.from(event.target.files ?? []), submission.id); event.target.value = ""; }} /></label>
             </div>
-            <div className="submission-card-status">{submission.result ? <span className="badge badge-success">تصحیح‌شده</span> : submission.files.length ? <span className="badge badge-info">آمادهٔ تصحیح</span> : <span className="badge badge-warning">فایل لازم است</span>}<button className="icon-button btn-icon-small danger-hover" onClick={() => removeSubmission(submission)} aria-label={`حذف ${submission.studentName}`}><Trash2 size={15} /></button></div>
+            <div className="submission-card-status">{submission.result ? <span className="badge badge-success">تصحیح‌شده</span> : submission.files.length ? <span className="badge badge-info">آمادهٔ تصحیح</span> : <span className="badge badge-warning">{submission.identitySource === "roster" ? "برگه مفقود" : "فایل لازم است"}</span>}<button className="icon-button btn-icon-small danger-hover" onClick={() => removeSubmission(submission)} aria-label={`حذف ${submission.studentName}`}><Trash2 size={15} /></button></div>
           </article>
         ))}</div> : <div className="submission-list-empty"><UsersRound size={25} /><span>هنوز برگه‌ای اضافه نشده است.</span></div>}
       </div>

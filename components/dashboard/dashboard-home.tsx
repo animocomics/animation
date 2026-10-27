@@ -26,21 +26,23 @@ import { ExamStatusBadge, ScoreRing, SubmissionStatusBadge } from "../ui/primiti
 const statIcons = [Files, CheckCheck, CircleAlert, TrendingUp];
 
 export function DashboardHome() {
-  const { exams } = useApp();
-  const activeExam = exams.find((exam) => exam.submissions.some((submission) => submission.result)) ?? exams[0];
+  const { exams, classes, user } = useApp();
+  const activeExam = exams.find((exam) => exam.submissions.some((submission) => submission.result)) ?? exams.find((exam) => exam.submissions.some((submission) => submission.files.length)) ?? exams[0];
   const allSubmissions = exams.flatMap((exam) => exam.submissions);
-  const approved = allSubmissions.filter((submission) => submission.status === "approved").length;
-  const pending = allSubmissions.filter((submission) => submission.status === "needs_review").length;
-  const graded = allSubmissions.filter((submission) => submission.result);
+  const paperSubmissions = allSubmissions.filter((submission) => submission.files.length > 0 || submission.result);
+  const approved = paperSubmissions.filter((submission) => submission.status === "approved").length;
+  const pending = paperSubmissions.filter((submission) => submission.status === "needs_review").length;
+  const graded = paperSubmissions.filter((submission) => submission.result);
   const overallAverage = average(graded.map((submission) => submission.result?.percentage ?? 0));
   const stats = [
-    { label: "کل برگه‌های بارگذاری‌شده", value: faNumber(allSubmissions.length), helper: `${faNumber(exams.length)} آزمون در فضای کاری`, tone: "mint" },
-    { label: "تأییدشده توسط معلم", value: faNumber(approved), helper: `${faNumber(allSubmissions.length ? (approved / allSubmissions.length) * 100 : 0, 0)}٪ از کل برگه‌ها`, tone: "blue" },
+    { label: "کل برگه‌های بارگذاری‌شده", value: faNumber(paperSubmissions.length), helper: `${faNumber(exams.length)} آزمون · ${faNumber(classes.length)} کلاس`, tone: "mint" },
+    { label: "تأییدشده توسط معلم", value: faNumber(approved), helper: `${faNumber(paperSubmissions.length ? (approved / paperSubmissions.length) * 100 : 0, 0)}٪ از کل برگه‌ها`, tone: "blue" },
     { label: "در انتظار بازبینی", value: faNumber(pending), helper: pending ? "نیازمند توجه شما" : "همه‌چیز بررسی شده", tone: "amber" },
     { label: "میانگین نمرهٔ کلاس", value: `${faNumber(overallAverage, 0)}٪`, helper: "بر اساس برگه‌های تصحیح‌شده", tone: "violet" },
   ];
 
-  const reviewQueue = activeExam?.submissions.filter((submission) => submission.status === "needs_review") ?? [];
+  const activePaperSubmissions = activeExam?.submissions.filter((submission) => submission.files.length > 0 || submission.result) ?? [];
+  const reviewQueue = activePaperSubmissions.filter((submission) => submission.status === "needs_review");
   const maxScore = activeExam ? totalExamScore(activeExam) : 0;
   const questionPerformance = activeExam?.questions.map((question) => {
     const results = activeExam.submissions.map((submission) => submission.result?.questions.find((result) => result.questionId === question.id)).filter(Boolean);
@@ -49,19 +51,20 @@ export function DashboardHome() {
       average: results.length ? average(results.map((result) => ((result?.score ?? 0) / question.maxScore) * 100)) : 0,
     };
   }) ?? [];
-  const approvedActive = activeExam?.submissions.filter((submission) => submission.status === "approved").length ?? 0;
-  const reviewActive = activeExam?.submissions.filter((submission) => submission.status === "needs_review").length ?? 0;
-  const draftActive = Math.max(0, (activeExam?.submissions.length ?? 0) - approvedActive - reviewActive);
+  const approvedActive = activePaperSubmissions.filter((submission) => submission.status === "approved").length;
+  const reviewActive = activePaperSubmissions.filter((submission) => submission.status === "needs_review").length;
+  const draftActive = Math.max(0, activePaperSubmissions.length - approvedActive - reviewActive);
 
   return (
     <div className="dashboard-page">
       <section className="welcome-row">
         <div>
           <div className="eyebrow"><span /> فضای کاری شما</div>
-          <h2>خوش آمدید، خانم رضایی <span className="wave">👋</span></h2>
+          <h2>خوش آمدید، {user.displayName} <span className="wave">👋</span></h2>
           <p>{pending ? `${faNumber(pending)} برگه منتظر بازبینی شماست؛ باقی موارد با آرامش پیش بروید.` : "همهٔ برگه‌ها بررسی شده‌اند؛ می‌توانید آزمون بعدی را بسازید."}</p>
         </div>
         <div className="welcome-actions">
+          <Link href="/classes" className="btn btn-secondary"><UsersRound size={17} /> کلاس‌های من</Link>
           <Link href="/exams" className="btn btn-secondary"><BookOpenCheck size={17} /> آزمون‌های من</Link>
           <Link href="/grading" className="btn btn-primary"><Plus size={18} /> تصحیح جدید</Link>
         </div>
@@ -80,7 +83,7 @@ export function DashboardHome() {
         })}
       </section>
 
-      {activeExam && activeExam.submissions.length > 0 ? (
+      {activeExam && activePaperSubmissions.length > 0 ? (
         <>
           <section className="dashboard-main-grid">
             <article className="card recent-exam-card">
@@ -101,7 +104,7 @@ export function DashboardHome() {
                 <table className="data-table dashboard-table">
                   <thead><tr><th>دانش‌آموز</th><th>نمره</th><th>اعتماد مدل</th><th>وضعیت</th><th aria-label="اقدام" /></tr></thead>
                   <tbody>
-                    {activeExam.submissions.slice(0, 5).map((submission) => (
+                    {activePaperSubmissions.slice(0, 5).map((submission) => (
                       <tr key={submission.id}>
                         <td><div className="student-cell"><span className="student-avatar">{getInitials(submission.studentName)}</span><span><strong>{submission.studentName}</strong><small>{submission.studentCode}</small></span></div></td>
                         <td><span className="score-number">{faNumber(submission.result?.totalScore ?? 0)} <span className="score-total">از {faNumber(maxScore)}</span></span></td>
@@ -113,7 +116,7 @@ export function DashboardHome() {
                   </tbody>
                 </table>
               </div>
-              <Link href={`/exams/${activeExam.id}`} className="table-footer-link">مشاهدهٔ همهٔ {faNumber(activeExam.submissions.length)} برگه <ArrowLeft size={15} /></Link>
+              <Link href={`/exams/${activeExam.id}`} className="table-footer-link">مشاهدهٔ همهٔ {faNumber(activePaperSubmissions.length)} برگه <ArrowLeft size={15} /></Link>
             </article>
 
             <aside className="card review-queue-card">
@@ -121,7 +124,7 @@ export function DashboardHome() {
               <div className="review-queue-list">
                 {reviewQueue.slice(0, 4).map((submission, index) => (
                   <Link href={`/review?exam=${activeExam.id}&submission=${submission.id}`} className="review-queue-item" key={submission.id}>
-                    <div className="queue-item-top"><span className={`queue-index ${index === 0 ? "urgent" : ""}`}>{faNumber(index + 1)}</span><div><strong>{submission.studentName}</strong><small>{submission.result?.flags[0]?.message ?? "نمره نیازمند بررسی است"}</small></div></div>
+                    <div className="queue-item-top"><span className={`queue-index ${index === 0 ? "urgent" : ""}`}>{faNumber(index + 1)}</span><div><strong>{submission.studentName}</strong><small>{submission.identityMessage && ["ambiguous", "unmatched", "missing"].includes(submission.identityStatus || "") ? submission.identityMessage : submission.result?.flags[0]?.message ?? "نمره نیازمند بررسی است"}</small></div></div>
                     <div className="queue-item-bottom"><span><CircleAlert size={13} /> {submission.result?.flags[0]?.type === "illegible" ? "دست‌خط ناخوانا" : submission.result?.flags[0]?.type === "grade_boundary" ? "نزدیک مرز قبولی" : "بررسی پاسخ"}</span><strong>{faNumber(submission.result?.totalScore ?? 0)} <small>/ {faNumber(maxScore)}</small></strong></div>
                   </Link>
                 ))}
@@ -148,7 +151,7 @@ export function DashboardHome() {
             <article className="card grading-status-card">
               <div className="card-header"><div><h3 className="card-title">وضعیت این آزمون</h3><p className="card-subtitle">پیشرفت تا انتشار نمره‌ها</p></div></div>
               <div className="status-ring-content">
-                <ScoreRing value={activeExam.submissions.length ? (approvedActive / activeExam.submissions.length) * 100 : 0} size={118} stroke={10} label="تأیید نهایی" />
+                <ScoreRing value={activePaperSubmissions.length ? (approvedActive / activePaperSubmissions.length) * 100 : 0} size={118} stroke={10} label="تأیید نهایی" />
                 <div className="status-legend">
                   <div><span><i className="legend-dot approved" />تأییدشده</span><strong>{faNumber(approvedActive)}</strong></div>
                   <div><span><i className="legend-dot review" />نیازمند بازبینی</span><strong>{faNumber(reviewActive)}</strong></div>
@@ -163,7 +166,7 @@ export function DashboardHome() {
         <section className="card empty-state dashboard-empty">
           <span className="empty-icon"><FilePlus2 size={28} /></span>
           <h3>اولین تصحیح واقعی را شروع کنید</h3>
-          <p>سؤال‌ها و بارم را وارد کنید، برگه‌ها را بارگذاری کنید و با API Key خودتان نتیجه را بگیرید.</p>
+          <p>کلاس و فهرست دانش‌آموزان را بسازید، سؤال‌ها و بارم را وارد کنید و برگه‌ها را برای تصحیح امن بارگذاری کنید.</p>
           <Link href="/grading" className="btn btn-primary">ساخت آزمون و بارگذاری برگه <ArrowLeft size={16} /></Link>
         </section>
       )}

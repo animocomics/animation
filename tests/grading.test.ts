@@ -34,9 +34,8 @@ const essay: Question = {
 };
 
 const request: GradeApiRequest = {
-  provider: "openai",
-  model: "gpt-4.1",
-  apiKey: "test-key-not-used",
+  examId: "exam_test",
+  submissionId: "submission_test",
   exam: {
     title: "آزمون",
     subject: "زیست",
@@ -50,7 +49,9 @@ const request: GradeApiRequest = {
 
 function rawModelResult() {
   return modelResultSchema.parse({
-    detectedStudentName: "باید حذف شود",
+    detectedStudentName: "سارا محمدی",
+    detectedClassName: "یازدهم الف",
+    identityConfidence: 0.91,
     summary: "خلاصه",
     strengths: ["نکته قوت"],
     improvements: ["بهبود"],
@@ -108,7 +109,7 @@ test("multiple response partial credit penalizes wrong selections without going 
   assert.equal(deterministicObjectiveScore(multiple, "هسته، ریبوزوم، گلژی").score, 0);
 });
 
-test("server normalizes scores, recomputes totals, enforces anonymity and flags low confidence", () => {
+test("server normalizes scores, recomputes totals, keeps identity separate and flags low confidence", () => {
   const result = normalizeGradingResult(rawModelResult(), request, "openai", "gpt-4.1", { inputTokens: 10, outputTokens: 5 });
   assert.equal(result.questions[0].score, 2, "objective key must override the model score");
   assert.equal(result.questions[1].score, 3, "score must be clamped to the question maximum");
@@ -116,7 +117,9 @@ test("server normalizes scores, recomputes totals, enforces anonymity and flags 
   assert.equal(result.totalScore, 5);
   assert.equal(result.maxScore, 5);
   assert.equal(result.percentage, 100);
-  assert.equal(result.detectedStudentName, "");
+  assert.equal(result.detectedStudentName, "سارا محمدی");
+  assert.equal(result.detectedClassName, "یازدهم الف");
+  assert.equal(result.identityConfidence, 0.91);
   assert.ok(result.questions[1].needsReview);
   assert.ok(result.flags.some((flag) => flag.type === "low_confidence" && flag.questionId === "q2"));
   assert.equal(result.usage.inputTokens, 10);

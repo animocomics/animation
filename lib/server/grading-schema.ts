@@ -25,9 +25,8 @@ const questionSchema = z.object({
 });
 
 export const gradeRequestSchema = z.object({
-  provider: z.enum(["openai", "gemini"]),
-  model: z.string().min(2).max(120),
-  apiKey: z.string().min(8).max(500),
+  examId: z.string().min(1).max(200),
+  submissionId: z.string().min(1).max(200).optional(),
   exam: z.object({
     title: z.string().min(1).max(300),
     subject: z.string().max(200),
@@ -89,6 +88,8 @@ const modelFlagSchema = z.object({
 
 export const modelResultSchema = z.object({
   detectedStudentName: z.string(),
+  detectedClassName: z.string(),
+  identityConfidence: z.number().min(0).max(1),
   summary: z.string(),
   strengths: z.array(z.string()),
   improvements: z.array(z.string()),
@@ -102,9 +103,11 @@ export type ModelResult = z.infer<typeof modelResultSchema>;
 export const gradingJsonSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["detectedStudentName", "summary", "strengths", "improvements", "overallConfidence", "questions", "flags"],
+  required: ["detectedStudentName", "detectedClassName", "identityConfidence", "summary", "strengths", "improvements", "overallConfidence", "questions", "flags"],
   properties: {
-    detectedStudentName: { type: "string", description: "Only if visible and requested; otherwise an empty string." },
+    detectedStudentName: { type: "string", description: "Student name only when visible on the paper; otherwise an empty string." },
+    detectedClassName: { type: "string", description: "Class/group label only when visible; otherwise an empty string." },
+    identityConfidence: { type: "number", minimum: 0, maximum: 1 },
     summary: { type: "string" },
     strengths: { type: "array", items: { type: "string" } },
     improvements: { type: "array", items: { type: "string" } },
