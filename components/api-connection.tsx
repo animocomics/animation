@@ -13,7 +13,7 @@ const MODEL_OPTIONS: Record<ProviderId, string[]> = {
 const PROVIDERS = {
   openai: { label: "OpenAI", hint: "Responses API · تصویر و PDF", icon: Sparkles },
   gemini: { label: "Google Gemini", hint: "GenerateContent · تصویر و PDF", icon: Zap },
-  deepseek: { label: "DeepSeek", hint: "Responses API · تصویر (بدون PDF مستقیم)", icon: BrainCircuit },
+  deepseek: { label: "DeepSeek", hint: "Responses API · تصویر و PDF با تبدیل خودکار", icon: BrainCircuit },
 } as const;
 
 export function ApiConnection() {

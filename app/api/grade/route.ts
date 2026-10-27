@@ -4,6 +4,7 @@ import { AuthError, requireUser } from "@/lib/server/auth";
 import { createId, getDb } from "@/lib/server/db";
 import { gradeRequestSchema } from "@/lib/server/grading-schema";
 import { mergeVerifiedResult, normalizeGradingResult } from "@/lib/server/normalize";
+import { prepareProviderFiles } from "@/lib/server/pdf-vision";
 import { getProviderConfig } from "@/lib/server/provider-config";
 import { buildGradingPrompt, callProvider, ProviderError } from "@/lib/server/providers";
 import { loadWorkspace } from "@/lib/server/workspace-store";
@@ -51,13 +52,14 @@ export async function POST(request: Request) {
   if (approximateFileBytes > providerByteLimit) {
     return NextResponse.json({ error: "حجم کل فایل‌های این دانش‌آموز برای یک درخواست زیاد است؛ فایل را فشرده یا برگه را به دسته‌های کوچک‌تر تقسیم کنید." }, { status: 413 });
   }
-  if (config.provider === "deepseek" && input.files.some((file) => file.type === "application/pdf")) {
-    return NextResponse.json({ error: "DeepSeek فعلاً PDF مستقیم نمی‌پذیرد؛ صفحات را به JPG/PNG تبدیل کنید یا مدیر سامانه OpenAI/Gemini را فعال کند." }, { status: 400 });
-  }
-
   let usage = { inputTokens: 0, outputTokens: 0 };
   try {
-    const firstCall = await callProvider({ ...config, prompt: buildGradingPrompt(input), files: input.files });
+    const providerFiles = await prepareProviderFiles(input.files, config.provider);
+    const preparedBytes = providerFiles.reduce((sum, file) => sum + Math.floor(file.data.length * 0.75), 0);
+    if (preparedBytes > providerByteLimit) {
+      throw new ProviderError("حجم تصاویر صفحات پس از آماده‌سازی برای مدل زیاد است؛ تعداد صفحات را کمتر یا PDF را به دسته‌های کوچک‌تر تقسیم کنید.", 413);
+    }
+    const firstCall = await callProvider({ ...config, prompt: buildGradingPrompt(input), files: providerFiles });
     usage = { ...firstCall.usage };
     let normalized = normalizeGradingResult(firstCall.result, input, config.provider, config.model, usage);
 
@@ -69,7 +71,7 @@ export async function POST(request: Request) {
 
     if (shouldVerify) {
       try {
-        const secondCall = await callProvider({ ...config, prompt: buildGradingPrompt(input, firstCall.result), files: input.files });
+        const secondCall = await callProvider({ ...config, prompt: buildGradingPrompt(input, firstCall.result), files: providerFiles });
         usage.inputTokens += secondCall.usage.inputTokens;
         usage.outputTokens += secondCall.usage.outputTokens;
         const merged = mergeVerifiedResult(firstCall.result, secondCall.result);

@@ -130,7 +130,7 @@ function parseModelResult(value: string): ModelResult {
 async function callOpenAI(input: ProviderCallInput): Promise<ProviderCallResult> {
   const providerName = PROVIDER_LABELS[input.provider];
   if (input.provider === "deepseek" && input.files.some((file) => file.type === "application/pdf")) {
-    throw new ProviderError("DeepSeek در این اتصال PDF مستقیم نمی‌پذیرد؛ صفحات را به JPG یا PNG تبدیل کنید یا OpenAI/Gemini را انتخاب کنید.", 400);
+    throw new ProviderError("PDF برای DeepSeek باید پیش از ارسال، داخل سامانه به تصویر صفحه تبدیل شود.", 400);
   }
   const content: Array<Record<string, unknown>> = [{ type: "input_text", text: input.prompt }];
   for (const [index, file] of input.files.entries()) {

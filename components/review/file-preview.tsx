@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import {
   AlertTriangle,
+  ExternalLink,
   FileImage,
   FileText,
   Minus,
@@ -38,11 +39,20 @@ export function FilePreview({ files, studentName, requestedPage = 1 }: {
     setMissing(false);
     if (!currentFile) return;
     setLoading(true);
-    getStoredFile(currentFile.storedId).then((stored) => {
+    const loadPreview = async (): Promise<Blob | null> => {
+      if (currentFile.type === "application/pdf") {
+        const response = await fetch(`/api/files/${encodeURIComponent(currentFile.storedId)}/preview?page=${requestedPage}`, { cache: "no-store" });
+        if (!response.ok) throw new Error("PDF preview failed");
+        return response.blob();
+      }
+      const stored = await getStoredFile(currentFile.storedId);
+      return stored?.blob || null;
+    };
+    loadPreview().then((blob) => {
       if (cancelled) return;
-      if (!stored) setMissing(true);
+      if (!blob) setMissing(true);
       else {
-        url = URL.createObjectURL(stored.blob);
+        url = URL.createObjectURL(blob);
         setObjectUrl(url);
       }
     }).catch(() => { if (!cancelled) setMissing(true); }).finally(() => { if (!cancelled) setLoading(false); });
@@ -50,9 +60,9 @@ export function FilePreview({ files, studentName, requestedPage = 1 }: {
       cancelled = true;
       if (url) URL.revokeObjectURL(url);
     };
-  }, [currentFile]);
+  }, [currentFile, requestedPage]);
 
-  useEffect(() => { setZoom(1); setRotation(0); }, [currentIndex]);
+  useEffect(() => { setZoom(1); setRotation(0); }, [currentIndex, requestedPage]);
 
   return (
     <section className="card paper-preview-card">
@@ -63,17 +73,18 @@ export function FilePreview({ files, studentName, requestedPage = 1 }: {
           <span>{faNumber(zoom * 100, 0)}٪</span>
           <button className="icon-button btn-icon-small" onClick={() => setZoom((value) => Math.min(2, value + 0.15))} aria-label="بزرگ‌نمایی"><Plus size={15} /></button>
           <button className="icon-button btn-icon-small" onClick={() => setRotation((value) => (value + 90) % 360)} aria-label="چرخاندن"><RotateCw size={15} /></button>
+          {currentFile?.type === "application/pdf" && <a className="icon-button btn-icon-small" href={`/api/files/${encodeURIComponent(currentFile.storedId)}`} target="_blank" rel="noreferrer" aria-label="بازکردن PDF اصلی" title="بازکردن PDF اصلی"><ExternalLink size={15} /></a>}
         </div>
       </div>
       {files.length > 1 && <div className="preview-file-tabs">{files.map((file, index) => <button className={index === currentIndex ? "active" : ""} onClick={() => setCurrentIndex(index)} key={file.id}>{file.type === "application/pdf" ? <FileText size={14} /> : <FileImage size={14} />}فایل {faNumber(index + 1)}<span>{file.name}</span></button>)}</div>}
       <div className="paper-viewport">
         {!files.length ? <DemoPaper studentName={studentName} /> : loading ? <div className="preview-loading"><span className="spinner" /><p>در حال بازکردن برگه…</p></div> : missing || !objectUrl ? <div className="preview-missing"><AlertTriangle size={27} /><strong>فایل اصلی روی سرور موجود نیست</strong><p>از بخش «افزودن و تصحیح برگه» فایل را دوباره اضافه کنید. نتیجهٔ قبلی حذف نمی‌شود.</p></div> : currentFile.type === "application/pdf" ? (
-          <iframe className="pdf-preview" src={`${objectUrl}#page=${requestedPage}&zoom=${Math.round(zoom * 100)}`} title={`برگهٔ ${studentName}`} />
+          <div className="image-preview-scroll pdf-image-preview"><img className="pdf-preview" data-page={requestedPage} src={objectUrl} alt={`صفحهٔ ${faNumber(requestedPage)} PDF برگهٔ ${studentName}`} style={{ transform: `scale(${zoom}) rotate(${rotation}deg)` }} /></div>
         ) : (
           <div className="image-preview-scroll"><img src={objectUrl} alt={`برگهٔ امتحانی ${studentName}`} style={{ transform: `scale(${zoom}) rotate(${rotation}deg)` }} /></div>
         )}
       </div>
-      <div className="paper-preview-footer"><span>{files.length ? `فایل ${faNumber(currentIndex + 1)} از ${faNumber(files.length)}` : "این برگه فقط برای نمایش رابط، دادهٔ نمایشی است"}</span><span>برای رفع ابهام، تصویر اصلی مبناست</span></div>
+      <div className="paper-preview-footer"><span>{files.length ? currentFile?.type === "application/pdf" ? `صفحهٔ ${faNumber(requestedPage)} · رندر امن PDF` : `فایل ${faNumber(currentIndex + 1)} از ${faNumber(files.length)}` : "این برگه فقط برای نمایش رابط، دادهٔ نمایشی است"}</span><span>برای رفع ابهام، فایل اصلی مبناست</span></div>
     </section>
   );
 }
