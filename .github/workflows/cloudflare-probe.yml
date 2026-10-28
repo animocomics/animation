@@ -39,5 +39,5 @@ jobs:
             -f head_sha="${GITHUB_SHA}" \
             -f status=completed \
             -f conclusion="$conclusion" \
-            -f output.title="Cloudflare deployment output" \
-            --raw-field output.summary="$(cat /tmp/nomreh-cf-probe/output.log)"
+            -f 'output[title]=Cloudflare deployment output' \
+            --raw-field 'output[summary]='"$(cat /tmp/nomreh-cf-probe/output.log)"
