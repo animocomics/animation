@@ -78,6 +78,8 @@ assert.equal(admin.user.role, "admin");
 const adminMe = await request("/api/auth/me", {}, admin.cookieJar);
 expectStatus(adminMe, 200, "admin session");
 assert.equal(adminMe.body.user.role, "admin");
+const seededTeacher = await login(teacherUsername, teacherPassword);
+assert.equal(seededTeacher.user.role, "teacher");
 
 const qaUsername = `cf-e2e-${randomUUID().slice(0, 10)}`;
 const qaPassword = `Qa1_${randomBytes(18).toString("base64url")}`;

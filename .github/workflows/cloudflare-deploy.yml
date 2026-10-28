@@ -78,14 +78,12 @@ jobs:
             NOMREH_SECRET_KEY: randomBytes(48).toString('base64url'),
           };
           fs.writeFileSync('/tmp/nomreh-cloudflare/secrets.sh', Object.entries(values).map(([key, value]) => `export ${key}='${value}'`).join('\n') + '\n');
+          fs.writeFileSync('/tmp/nomreh-cloudflare/secrets.json', JSON.stringify(values));
           NODE
           source /tmp/nomreh-cloudflare/secrets.sh
-          npx wrangler deploy 2>&1 | tee /tmp/nomreh-cloudflare/deploy.log
+          npx wrangler deploy --secrets-file /tmp/nomreh-cloudflare/secrets.json 2>&1 | tee /tmp/nomreh-cloudflare/deploy.log
           export NOMREH_BASE_URL="$(node -e "const fs=require('fs');const s=fs.readFileSync('/tmp/nomreh-cloudflare/deploy.log','utf8');const u=s.match(/https:\/\/nomreh\.[a-z0-9-]+\.workers\.dev/)?.[0];if(!u)throw new Error('Worker URL missing');process.stdout.write(u)")"
           printf '%s' "$NOMREH_BASE_URL" > /tmp/nomreh-cloudflare/url
-          for name in NOMREH_ADMIN_USERNAME NOMREH_ADMIN_PASSWORD NOMREH_TEACHER_USERNAME NOMREH_TEACHER_PASSWORD NOMREH_SECRET_KEY; do
-            printf '%s' "${!name}" | npx wrangler secret put "$name" --name nomreh
-          done
           node scripts/cloudflare-e2e.mjs | tee /tmp/nomreh-cloudflare/e2e.log
           persistence_status=0
           node scripts/cloudflare-persistence.mjs write > /tmp/nomreh-cloudflare/persistence-write.log 2>&1 || persistence_status=$?

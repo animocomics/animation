@@ -80,23 +80,28 @@ const SCHEMA = `
 
 let schemaPromise: Promise<void> | undefined;
 
-async function initialiseCloudflareDatabase(database: D1Database): Promise<void> {
+export async function initialiseCloudflareDatabase(database: D1Database): Promise<void> {
   const schemaStatements = SCHEMA.split(";").map((statement) => statement.trim()).filter(Boolean);
   await database.batch(schemaStatements.map((statement) => database.prepare(statement)));
-  const row = await database.prepare("SELECT COUNT(*) AS count FROM users").first<{ count: number }>();
-  if ((row?.count ?? 0) > 0) return;
-  const adminPassword = process.env.NOMREH_ADMIN_PASSWORD;
-  if (!adminPassword) throw new Error("NOMREH_ADMIN_PASSWORD برای نخستین راه‌اندازی Cloudflare تنظیم نشده است.");
+  const adminUsername = process.env.NOMREH_ADMIN_USERNAME || "admin";
+  const teacherUsername = process.env.NOMREH_TEACHER_USERNAME || "teacher";
+  const existing = await database.prepare("SELECT username FROM users WHERE username IN (?, ?)").bind(adminUsername, teacherUsername).all<{ username: string }>();
+  const usernames = new Set((existing.results ?? []).map((row) => row.username.toLowerCase()));
   const now = new Date().toISOString();
-  const statements = [
-database.prepare(`INSERT OR IGNORE INTO users (id, username, display_name, password_hash, role, active, created_at)
-      VALUES (?, ?, ?, ?, 'admin', 1, ?)`).bind(randomUUID(), process.env.NOMREH_ADMIN_USERNAME || "admin", "مدیر سامانه", hashPassword(adminPassword), now),
-  ];
-  if (process.env.NOMREH_TEACHER_PASSWORD) {
+  const statements = [];
+  if (!usernames.has(adminUsername.toLowerCase())) {
+    const password = process.env.NOMREH_ADMIN_PASSWORD;
+    if (!password) throw new Error("NOMREH_ADMIN_PASSWORD برای ساخت حساب مدیر در Cloudflare تنظیم نشده است.");
     statements.push(database.prepare(`INSERT OR IGNORE INTO users (id, username, display_name, password_hash, role, active, created_at)
-      VALUES (?, ?, ?, ?, 'teacher', 1, ?)`).bind(randomUUID(), process.env.NOMREH_TEACHER_USERNAME || "teacher", "معلم نمونه", hashPassword(process.env.NOMREH_TEACHER_PASSWORD), now));
+      VALUES (?, ?, ?, ?, 'admin', 1, ?)`).bind(randomUUID(), adminUsername, "مدیر سامانه", hashPassword(password), now));
   }
-  await database.batch(statements);
+  if (!usernames.has(teacherUsername.toLowerCase())) {
+    const password = process.env.NOMREH_TEACHER_PASSWORD;
+    if (!password) throw new Error("NOMREH_TEACHER_PASSWORD برای ساخت حساب معلم در Cloudflare تنظیم نشده است.");
+    statements.push(database.prepare(`INSERT OR IGNORE INTO users (id, username, display_name, password_hash, role, active, created_at)
+      VALUES (?, ?, ?, ?, 'teacher', 1, ?)`).bind(randomUUID(), teacherUsername, "معلم نمونه", hashPassword(password), now));
+  }
+  if (statements.length) await database.batch(statements);
 }
 
 export async function getCloudflareDb(): Promise<D1Database | null> {
