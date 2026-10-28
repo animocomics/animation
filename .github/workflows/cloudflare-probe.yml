@@ -1,0 +1,19 @@
+name: Cloudflare connectivity probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Cloudflare temporary deployment access
+        run: |
+          set -eu
+          mkdir -p /tmp/nomreh-cf-probe
+          printf '%s\n' 'export default { fetch() { return new Response("Nomreh Cloudflare probe"); } };' > /tmp/nomreh-cf-probe/worker.js
+          printf '%s\n' '{"name":"nomreh-cloudflare-probe","main":"/tmp/nomreh-cf-probe/worker.js","compatibility_date":"2026-10-28","workers_dev":true}' > /tmp/nomreh-cf-probe/wrangler.json
+          npx --yes wrangler deploy --temporary --config /tmp/nomreh-cf-probe/wrangler.json
