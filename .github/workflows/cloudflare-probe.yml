@@ -33,7 +33,9 @@ jobs:
           const account = text.match(/\bid\s*=\s*[\"']([^\"']+)[\"']/)?.[1];
           if (!token || !account) throw new Error('Temporary Cloudflare credentials were not found');
           fs.appendFileSync(process.env.GITHUB_ENV, `CLOUDFLARE_API_TOKEN=${token}\nCLOUDFLARE_ACCOUNT_ID=${account}\n`);
+          fs.writeFileSync('/tmp/nomreh-cf-probe/env.sh', `export CLOUDFLARE_API_TOKEN=${token}\nexport CLOUDFLARE_ACCOUNT_ID=${account}\n`);
           NODE
+            source /tmp/nomreh-cf-probe/env.sh
             npx --yes wrangler d1 create nomreh-probe-db --config /tmp/nomreh-cf-probe/wrangler.json --update-config=false 2>&1 | tee -a /tmp/nomreh-cf-probe/output.log
             d1_status=${PIPESTATUS[0]}
             npx --yes wrangler kv namespace create UPLOADS_KV --config /tmp/nomreh-cf-probe/wrangler.json --update-config=false 2>&1 | tee -a /tmp/nomreh-cf-probe/output.log
