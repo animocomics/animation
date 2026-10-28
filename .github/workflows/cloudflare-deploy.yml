@@ -85,13 +85,19 @@ jobs:
             printf '%s' "${!name}" | npx wrangler secret put "$name" --name nomreh
           done
           node scripts/cloudflare-e2e.mjs | tee /tmp/nomreh-cloudflare/e2e.log
-          node scripts/cloudflare-persistence.mjs write | tee /tmp/nomreh-cloudflare/persistence-write.log
-          npx wrangler deploy 2>&1 | tee -a /tmp/nomreh-cloudflare/deploy.log
-          node scripts/cloudflare-persistence.mjs verify | tee /tmp/nomreh-cloudflare/persistence-verify.log
+          printf 'Admin username: %s\nAdmin password: %s\nTeacher username: %s\nTeacher password: %s\n' "$NOMREH_ADMIN_USERNAME" "$NOMREH_ADMIN_PASSWORD" "$NOMREH_TEACHER_USERNAME" "$NOMREH_TEACHER_PASSWORD" > /tmp/nomreh-cloudflare/delivery.txt
+          persistence_status=0
+          node scripts/cloudflare-persistence.mjs write > /tmp/nomreh-cloudflare/persistence-write.log 2>&1 || persistence_status=$?
+          if [ "$persistence_status" -eq 0 ]; then
+            npx wrangler deploy > /tmp/nomreh-cloudflare/redeploy.log 2>&1 || persistence_status=$?
+          fi
+          if [ "$persistence_status" -eq 0 ]; then
+            node scripts/cloudflare-persistence.mjs verify > /tmp/nomreh-cloudflare/persistence-verify.log 2>&1 || persistence_status=$?
+          fi
           if ! npx wrangler d1 execute nomreh-production --remote --config wrangler.jsonc --command "DELETE FROM users WHERE username LIKE 'cf-e2e-%';" > /tmp/nomreh-cloudflare/cleanup.log 2>&1; then
             echo 'QA user cleanup was not confirmed; the QA account is disabled.'
           fi
-          printf 'Admin username: %s\nAdmin password: %s\nTeacher username: %s\nTeacher password: %s\n' "$NOMREH_ADMIN_USERNAME" "$NOMREH_ADMIN_PASSWORD" "$NOMREH_TEACHER_USERNAME" "$NOMREH_TEACHER_PASSWORD" > /tmp/nomreh-cloudflare/delivery.txt
+          if [ "$persistence_status" -ne 0 ]; then exit "$persistence_status"; fi
 
       - name: Publish deployment output and expire delivery material
         if: always()
@@ -108,7 +114,9 @@ jobs:
             if [ -f /tmp/nomreh-cloudflare/delivery.txt ]; then echo '### One-time app credentials'; cat /tmp/nomreh-cloudflare/delivery.txt; fi
             if [ -f /tmp/nomreh-cloudflare/claim-url ]; then echo '### Cloudflare account claim'; cat /tmp/nomreh-cloudflare/claim-url; echo; fi
             if [ -f /tmp/nomreh-cloudflare/e2e.log ]; then echo '### End-to-end verification'; cat /tmp/nomreh-cloudflare/e2e.log; fi
-            if [ -f /tmp/nomreh-cloudflare/persistence-verify.log ]; then cat /tmp/nomreh-cloudflare/persistence-verify.log; fi
+            if [ -f /tmp/nomreh-cloudflare/persistence-write.log ]; then echo '### Persistence write'; cat /tmp/nomreh-cloudflare/persistence-write.log; fi
+            if [ -f /tmp/nomreh-cloudflare/redeploy.log ]; then echo '### Second deployment'; tail -45 /tmp/nomreh-cloudflare/redeploy.log; fi
+            if [ -f /tmp/nomreh-cloudflare/persistence-verify.log ]; then echo '### Persistence verify'; cat /tmp/nomreh-cloudflare/persistence-verify.log; fi
             if [ -f /tmp/nomreh-cloudflare/deploy.log ]; then echo '### Wrangler deployment'; tail -45 /tmp/nomreh-cloudflare/deploy.log; fi
             if [ "$conclusion" = failure ] && [ -f /tmp/nomreh-cloudflare/build.log ]; then echo '### Build log'; tail -80 /tmp/nomreh-cloudflare/build.log; fi
           } > /tmp/nomreh-cloudflare/check-summary.md
