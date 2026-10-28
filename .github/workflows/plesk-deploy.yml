@@ -1,0 +1,46 @@
+name: Deploy to Plesk
+
+on:
+  push:
+    branches:
+      - arena/f4b832aa-animation
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check private Plesk deployment configuration
+        id: config
+        env:
+          PLESK_GIT_URL: ${{ secrets.PLESK_GIT_URL }}
+          PLESK_GIT_USERNAME: ${{ secrets.PLESK_GIT_USERNAME }}
+          PLESK_GIT_PASSWORD: ${{ secrets.PLESK_GIT_PASSWORD }}
+        run: |
+          if [ -z "$PLESK_GIT_URL" ] || [ -z "$PLESK_GIT_USERNAME" ] || [ -z "$PLESK_GIT_PASSWORD" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "Plesk push deployment is not configured; skipping without changing the server."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out the current branch
+        if: steps.config.outputs.configured == 'true'
+        uses: actions/checkout@v4
+
+      - name: Push the current branch to the private Plesk repository
+        if: steps.config.outputs.configured == 'true'
+        env:
+          PLESK_GIT_URL: ${{ secrets.PLESK_GIT_URL }}
+          PLESK_GIT_USERNAME: ${{ secrets.PLESK_GIT_USERNAME }}
+          PLESK_GIT_PASSWORD: ${{ secrets.PLESK_GIT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          auth="$(printf '%s:%s' "$PLESK_GIT_USERNAME" "$PLESK_GIT_PASSWORD" | base64 | tr -d '\n')"
+          echo "::add-mask::$auth"
+          clean_url="$(node -e 'const url = new URL(process.env.PLESK_GIT_URL); url.username = ""; url.password = ""; process.stdout.write(url.toString())')"
+          git -c http.extraHeader="Authorization: Basic ${auth}" push "$clean_url" "HEAD:refs/heads/${GITHUB_REF_NAME}"
+          echo "Pushed ${GITHUB_SHA} to the Plesk repository on branch ${GITHUB_REF_NAME}."
