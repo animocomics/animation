@@ -49,7 +49,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       {mobileOpen && <button className="sidebar-overlay" aria-label="بستن منو" onClick={() => setMobileOpen(false)} />}
       <aside className={`sidebar ${mobileOpen ? "is-open" : ""}`} aria-label="ناوبری اصلی">
         <div className="brand-row">
-          <Link href="/" className="brand" aria-label="نمره، صفحهٔ اصلی"><span className="brand-mark"><CheckCheck size={25} strokeWidth={2.5} /></span><span className="brand-name">نمره<span className="brand-dot">.</span></span></Link>
+          <Link href="/" className="brand" aria-label="نمره، صفحهٔ اصلی"><span className="brand-mark"><CheckCheck size={25} strokeWidth={2.5} /></span><span className="brand-name">نمره</span></Link>
           <button className="icon-button sidebar-close" onClick={() => setMobileOpen(false)} aria-label="بستن منو"><X size={20} /></button>
         </div>
         <div className="workspace-switcher">

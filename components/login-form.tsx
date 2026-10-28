@@ -12,7 +12,7 @@ export function LoginForm({ showDemoAccounts }: { showDemoAccounts: boolean }) {
 
   async function submit(event?: FormEvent) {
     event?.preventDefault();
-    if (!username.trim() || !password) { setError("نام کاربری و رمز عبور را وارد کنید."); return; }
+    if (!username.trim() || !password) { setError("لطفاً نام کاربری و رمز عبور را وارد کنید"); return; }
     setBusy(true);
     setError("");
     try {
@@ -22,10 +22,10 @@ export function LoginForm({ showDemoAccounts }: { showDemoAccounts: boolean }) {
         body: JSON.stringify({ username, password }),
       });
       const payload = await response.json() as { error?: string };
-      if (!response.ok) throw new Error(payload.error || "ورود ناموفق بود.");
+      if (!response.ok) throw new Error(payload.error || "ورود انجام نشد؛ لطفاً دوباره تلاش کنید");
       window.location.assign("/");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "ورود ناموفق بود.");
+      setError(reason instanceof Error ? reason.message : "ورود انجام نشد؛ لطفاً دوباره تلاش کنید");
       setBusy(false);
     }
   }
@@ -40,26 +40,26 @@ export function LoginForm({ showDemoAccounts }: { showDemoAccounts: boolean }) {
     <main className="login-page">
       <section className="login-story" aria-label="معرفی نمره">
         <div className="login-story-glow" />
-        <div className="login-brand"><span className="brand-mark"><CheckCheck size={27} /></span><span className="brand-name">نمره<span className="brand-dot">.</span></span></div>
+        <div className="login-brand"><span className="brand-mark"><CheckCheck size={27} /></span><span className="brand-name">نمره</span></div>
         <div className="login-story-content">
-          <span className="login-eyebrow"><Sparkles size={15} /> تصحیح منصف، از برگه تا کارنامه</span>
-          <h1>هر پاسخ، با شاهد.<br /><em>هر نمره، با اطمینان.</em></h1>
-          <p>فضای شخصی شما برای ساخت بارم، تصحیح چندوجهی و مدیریت نتایج همهٔ کلاس‌ها؛ با کنترل نهایی همیشه در دست معلم.</p>
+          <span className="login-eyebrow"><Sparkles size={15} /> دستیار هوشمند معلم</span>
+          <h1>تصحیح سریع‌تر،<br /><em>نمره‌دهی مطمئن‌تر</em></h1>
+          <p>نمره به شما کمک می‌کند برگه‌ها را بر اساس معیارهای خودتان ارزیابی کنید، دلیل هر نمره را ببینید و نتایج همهٔ کلاس‌ها را در یک فضای منظم مدیریت کنید</p>
           <div className="login-benefits">
-            <div><span><FileCheck2 size={20} /></span><p><strong>تصحیح با مدرک</strong><small>رونوشت، شاهد تصویر و دلیل نمره برای هر سؤال</small></p></div>
-            <div><span><UsersRound size={20} /></span><p><strong>کارنامهٔ خودکار کلاس</strong><small>تطبیق هویت و تجمیع نتایج، با هشدار برای موارد مبهم</small></p></div>
-            <div><span><ShieldCheck size={20} /></span><p><strong>حریم خصوصی واقعی</strong><small>حساب جدا برای هر معلم و کلید API محفوظ نزد مدیر</small></p></div>
+            <div><span><FileCheck2 size={20} /></span><p><strong>نمره‌دهی شفاف</strong><small>دلیل و شاهد هر نمره، در کنار پاسخ دانش‌آموز</small></p></div>
+            <div><span><UsersRound size={20} /></span><p><strong>مدیریت یکپارچهٔ کلاس</strong><small>ثبت نمره‌ها و آماده‌سازی کارنامه، بدون کار دستی تکراری</small></p></div>
+            <div><span><ShieldCheck size={20} /></span><p><strong>فضای کاری امن</strong><small>اطلاعات هر معلم، جدا و محافظت‌شده</small></p></div>
           </div>
         </div>
-        <div className="login-story-foot"><span className="status-dot" /> هوش مصنوعی پیشنهاد می‌دهد؛ معلم تصمیم می‌گیرد.</div>
+        <div className="login-story-foot"><span className="status-dot" /> هوش مصنوعی کمک می‌کند؛ تصمیم نهایی با شماست</div>
       </section>
 
       <section className="login-panel">
         <div className="login-form-wrap">
-          <div className="login-mobile-brand"><span className="brand-mark"><CheckCheck size={24} /></span><span className="brand-name">نمره<span className="brand-dot">.</span></span></div>
+          <div className="login-mobile-brand"><span className="brand-mark"><CheckCheck size={24} /></span><span className="brand-name">نمره</span></div>
           <span className="login-lock"><LockKeyhole size={23} /></span>
-          <h2>به فضای کاری خود وارد شوید</h2>
-          <p className="login-subtitle">برای ورود، نام کاربری و رمز حساب خود را وارد کنید؛ حساب معلم‌ها را مدیر سامانه می‌سازد.</p>
+          <h2>به نمره خوش آمدید</h2>
+          <p className="login-subtitle">برای ورود به فضای کاری، نام کاربری و رمز عبور خود را وارد کنید</p>
           <form onSubmit={submit} className="login-form">
             <div className="form-field">
               <label htmlFor="login-username">نام کاربری</label>
@@ -70,7 +70,7 @@ export function LoginForm({ showDemoAccounts }: { showDemoAccounts: boolean }) {
               <div className="input-with-icon input-with-action"><LockKeyhole size={18} /><input id="login-password" className="input" dir="ltr" type={showPassword ? "text" : "password"} autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="••••••••••" disabled={busy} /><button type="button" className="input-action" aria-label={showPassword ? "پنهان‌کردن رمز" : "نمایش رمز"} onClick={() => setShowPassword((value) => !value)}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div>
             </div>
             {error && <div className="login-error" role="alert">{error}</div>}
-            <button className="btn btn-primary btn-lg login-submit" disabled={busy}>{busy ? <LoaderCircle className="spin-icon" size={18} /> : <ArrowLeft size={18} />}{busy ? "در حال ورود…" : "ورود به نمره"}</button>
+            <button className="btn btn-primary btn-lg login-submit" disabled={busy}>{busy ? <LoaderCircle className="spin-icon" size={18} /> : <ArrowLeft size={18} />}{busy ? "در حال ورود…" : "ورود به فضای کاری"}</button>
           </form>
 
           {showDemoAccounts && <div className="demo-accounts">
@@ -80,9 +80,9 @@ export function LoginForm({ showDemoAccounts }: { showDemoAccounts: boolean }) {
               <button onClick={() => fillAccount("teacher")}><span><UserRound size={17} /></span><strong>معلم نمونه</strong><small dir="ltr">teacher</small><Check size={14} /></button>
               <button onClick={() => fillAccount("admin")}><span><ShieldCheck size={17} /></span><strong>مدیر سامانه</strong><small dir="ltr">admin</small><Check size={14} /></button>
             </div>
-            <small className="demo-security-note">رمزهای اولیه پیش از استقرار واقعی باید با متغیرهای محیطی تغییر کنند.</small>
+            <small className="demo-security-note">پیش از استفادهٔ واقعی، رمزهای پیش‌فرض را تغییر دهید</small>
           </div>}
-          <div className="login-privacy"><ShieldCheck size={15} /><span>نشست شما با کوکی HttpOnly و رمزنگاری رمز عبور محافظت می‌شود.</span></div>
+          <div className="login-privacy"><ShieldCheck size={15} /><span>ورود امن و محافظت از اطلاعات حساب شما</span></div>
         </div>
       </section>
     </main>
