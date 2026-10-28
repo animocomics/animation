@@ -11,12 +11,13 @@ export async function POST(request: Request) {
     if (!rateLimit(`login:${requestIp(request)}:${input.username.toLowerCase()}`, 10, 15 * 60 * 1000)) {
       return NextResponse.json({ error: "تلاش‌های ورود زیاد بوده است؛ ۱۵ دقیقه بعد دوباره تلاش کنید." }, { status: 429 });
     }
-    const user = authenticate(input.username, input.password);
+    const user = await authenticate(input.username, input.password);
     if (!user) return NextResponse.json({ error: "نام کاربری یا رمز عبور درست نیست." }, { status: 401 });
     await createSession(user.id);
     return NextResponse.json({ user });
   } catch (error) {
     if (error instanceof z.ZodError) return NextResponse.json({ error: "نام کاربری و رمز عبور را وارد کنید." }, { status: 400 });
+    console.error("Nomreh login failure", error);
     return NextResponse.json({ error: "ورود انجام نشد؛ لطفاً دوباره تلاش کنید." }, { status: 500 });
   }
 }

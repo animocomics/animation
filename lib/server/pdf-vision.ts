@@ -1,6 +1,8 @@
 import path from "path";
 import type { GradeApiRequest, ProviderId } from "../types";
+import type { PdfDocument, PdfEngine } from "clawpdf";
 import { ProviderError } from "./providers";
+import { isCloudflareRuntime } from "./cloudflare";
 
 const MAX_PDF_PAGES = 20;
 const MAX_TOTAL_VISION_FILES = 30;
@@ -11,10 +13,65 @@ const JPEG_QUALITY = 88;
 
 type VisionFile = GradeApiRequest["files"][number];
 
+async function renderPdfWithWasm(file: VisionFile, availableSlots: number, onlyPage: number | undefined, data: Buffer): Promise<VisionFile[]> {
+  let engine: PdfEngine | undefined;
+  let document: PdfDocument | undefined;
+  try {
+    const { createEngine } = await import("clawpdf/browser");
+    const { default: jpeg } = await import("jpeg-js");
+    const precompiledModule = (globalThis as typeof globalThis & { __NOMREH_PDFIUM_MODULE__?: WebAssembly.Module }).__NOMREH_PDFIUM_MODULE__;
+    engine = await createEngine({
+      maxRenderPixels: MAX_PAGE_PIXELS,
+      ...(precompiledModule ? {
+        instantiateWasm: (imports, successCallback) => {
+          const instance = new WebAssembly.Instance(precompiledModule, imports);
+          (successCallback as unknown as (instance: WebAssembly.Instance, module: WebAssembly.Module) => void)(instance, precompiledModule);
+          return instance.exports;
+        },
+      } : {}),
+    });
+    document = await engine.open(new Uint8Array(data.buffer, data.byteOffset, data.byteLength));
+    if (onlyPage === undefined && (document.pageCount > MAX_PDF_PAGES || document.pageCount > availableSlots)) {
+      throw new ProviderError(`PDF «${file.name}» ${document.pageCount} صفحه دارد. حداکثر ${MAX_PDF_PAGES} صفحه برای هر PDF و ۳۰ صفحه/فایل در هر تصحیح پشتیبانی می‌شود؛ آن را به دسته‌های کوچک‌تر تقسیم کنید.`, 413);
+    }
+    if (onlyPage !== undefined && (!Number.isInteger(onlyPage) || onlyPage < 1 || onlyPage > document.pageCount)) {
+      throw new ProviderError(`صفحهٔ درخواست‌شده در PDF «${file.name}» وجود ندارد.`, 400);
+    }
+    const baseName = file.name.replace(/\.pdf$/i, "").slice(0, 220) || "برگه";
+    const output: VisionFile[] = [];
+    const firstPage = onlyPage ?? 1;
+    const lastPage = onlyPage ?? document.pageCount;
+    for (let pageNumber = firstPage; pageNumber <= lastPage; pageNumber += 1) {
+      const page = document.page(pageNumber);
+      const dimensionScale = Math.min(MAX_PAGE_DIMENSION / page.width, MAX_PAGE_DIMENSION / page.height);
+      const pixelScale = Math.sqrt(MAX_PAGE_PIXELS / (page.width * page.height));
+      const scale = Math.min(RENDER_SCALE, dimensionScale, pixelScale);
+      if (!Number.isFinite(scale) || scale < 0.25) throw new ProviderError(`ابعاد صفحهٔ ${pageNumber} PDF «${file.name}» برای پردازش امن نامعتبر است.`, 400);
+      const rendered = page.render({ scale, background: "white" });
+      const jpegData = jpeg.encode({ data: rendered.rgba, width: rendered.width, height: rendered.height }, JPEG_QUALITY);
+      output.push({ name: `${baseName} — صفحه ${pageNumber}.jpg`, type: "image/jpeg", data: Buffer.from(jpegData.data).toString("base64") });
+      page[Symbol.dispose]();
+    }
+    return output;
+  } catch (error) {
+    if (error instanceof ProviderError) throw error;
+    console.error("Nomreh PDF WASM failure", error);
+    throw new ProviderError(`تبدیل PDF «${file.name}» به تصویر انجام نشد. فایل رمزدار، خراب یا غیراستاندارد است؛ نسخهٔ سالم و بدون رمز را دوباره بارگذاری کنید.`, 400);
+  } finally {
+    document?.destroy();
+    if (engine) await engine.destroy().catch(() => undefined);
+  }
+}
+
 /** Convert PDF pages locally; no OCR or external conversion service is involved. */
 export async function renderPdfToVisionFiles(file: VisionFile, availableSlots: number, onlyPage?: number): Promise<VisionFile[]> {
   if (availableSlots < 1) throw new ProviderError("تعداد صفحات و فایل‌های این دانش‌آموز بیش از حد مجاز است؛ برگه را به دسته‌های کوچک‌تر تقسیم کنید.", 413);
   if (file.type !== "application/pdf") return [file];
+  const data = Buffer.from(file.data, "base64");
+  if (data.length < 10 || !data.subarray(0, 5).toString("ascii").startsWith("%PDF-")) {
+    throw new ProviderError(`فایل «${file.name}» با وجود پسوند PDF، ساختار معتبر PDF ندارد.`, 400);
+  }
+  if (isCloudflareRuntime()) return renderPdfWithWasm(file, availableSlots, onlyPage, data);
 
   let loadingTask: { promise: Promise<{
     numPages: number;
@@ -34,10 +91,6 @@ export async function renderPdfToVisionFiles(file: VisionFile, availableSlots: n
     }
     const { getDocument } = await import("pdfjs-dist/legacy/build/pdf.mjs");
     const pdfjsRoot = path.join(process.cwd(), "node_modules", "pdfjs-dist");
-    const data = Buffer.from(file.data, "base64");
-    if (data.length < 10 || !data.subarray(0, 5).toString("ascii").startsWith("%PDF-")) {
-      throw new ProviderError(`فایل «${file.name}» با وجود پسوند PDF، ساختار معتبر PDF ندارد.`, 400);
-    }
     loadingTask = getDocument({
       data: new Uint8Array(data.buffer, data.byteOffset, data.byteLength),
       useSystemFonts: true,

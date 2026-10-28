@@ -8,7 +8,7 @@ export default async function WorkspaceLayout({ children }: { children: React.Re
   const user = await getCurrentUser();
   if (!user) redirect("/login");
   return (
-    <AppProvider initialUser={user} initialProvider={getProviderStatus(user.role === "admin")}>
+    <AppProvider initialUser={user} initialProvider={await getProviderStatus(user.role === "admin")}>
       <AppShell>{children}</AppShell>
     </AppProvider>
   );

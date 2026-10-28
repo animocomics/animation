@@ -8,7 +8,10 @@
     "build": "next build",
     "start": "next start -H 0.0.0.0",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test tests/**/*.test.ts"
+    "test": "tsx --test tests/**/*.test.ts",
+    "build:cloudflare": "NOMREH_CLOUDFLARE=1 node scripts/prepare-cloudflare.mjs && NOMREH_CLOUDFLARE=1 opennextjs-cloudflare build && node scripts/finalize-cloudflare.mjs",
+    "deploy:cloudflare": "NOMREH_CLOUDFLARE=1 node scripts/prepare-cloudflare.mjs && NOMREH_CLOUDFLARE=1 opennextjs-cloudflare build && node scripts/finalize-cloudflare.mjs && wrangler deploy",
+    "preview:cloudflare": "NOMREH_CLOUDFLARE=1 node scripts/prepare-cloudflare.mjs && NOMREH_CLOUDFLARE=1 opennextjs-cloudflare build && node scripts/finalize-cloudflare.mjs && wrangler dev"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -16,7 +19,10 @@
   "dependencies": {
     "@fontsource-variable/vazirmatn": "^5.3.0",
     "@napi-rs/canvas": "0.1.100",
+    "@opennextjs/cloudflare": "^1.20.13",
     "better-sqlite3": "^13.0.3",
+    "clawpdf": "^0.3.2",
+    "jpeg-js": "^0.4.4",
     "lucide-react": "^1.62.0",
     "next": "^16.4.3",
     "pdfjs-dist": "4.10.38",
@@ -25,12 +31,20 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261028.1",
     "@types/better-sqlite3": "^9.6.0",
+    "@types/jpeg-js": "^0.3.0",
     "@types/node": "^26.6.5",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "pdf-lib": "1.17.1",
     "tsx": "^4.23.15",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "wrangler": "^4.154.0"
+  },
+  "overrides": {
+    "@node-minify/core": {
+      "glob": "10.5.0"
+    }
   }
 }

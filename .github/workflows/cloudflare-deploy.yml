@@ -1,0 +1,130 @@
+name: Deploy Nomreh to Cloudflare
+
+on:
+  push:
+    branches:
+      - arena/f4b832aa-animation
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  deploy:
+    # Ordinary pushes must not create a fresh temporary Cloudflare account.
+    # Use the marker only for an intentional production deployment.
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[cloudflare-deploy]')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the application
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Provision, deploy and verify
+        id: deploy
+        run: |
+          set -euo pipefail
+          trap 'status=$?; echo "status=$status" >> "$GITHUB_OUTPUT"' EXIT
+          mkdir -p /tmp/nomreh-cloudflare
+          cat > /tmp/nomreh-cloudflare/bootstrap-worker.js <<'EOF'
+          export default { fetch() { return new Response("Nomreh is being configured", { status: 503 }); } };
+          EOF
+          cat > /tmp/nomreh-cloudflare/bootstrap-wrangler.json <<'EOF'
+          {"name":"nomreh","main":"/tmp/nomreh-cloudflare/bootstrap-worker.js","compatibility_date":"2026-10-28","workers_dev":true}
+          EOF
+          npx wrangler deploy --temporary --config /tmp/nomreh-cloudflare/bootstrap-wrangler.json 2>&1 | tee /tmp/nomreh-cloudflare/bootstrap.log
+          node <<'NODE'
+          const fs = require('node:fs');
+          const text = fs.readFileSync(`${process.env.HOME}/.config/.wrangler/wrangler-temporary-account.toml`, 'utf8');
+          const token = text.match(/apiToken\s*=\s*[\"']([^\"']+)[\"']/)?.[1];
+          const account = text.match(/\bid\s*=\s*[\"']([^\"']+)[\"']/)?.[1];
+          if (!token || !account) throw new Error('Temporary Cloudflare credentials were not found');
+          fs.writeFileSync('/tmp/nomreh-cloudflare/account.sh', `export CLOUDFLARE_API_TOKEN='${token}'\nexport CLOUDFLARE_ACCOUNT_ID='${account}'\n`);
+          const claim = fs.readFileSync('/tmp/nomreh-cloudflare/bootstrap.log', 'utf8').match(/https:\/\/dash\.cloudflare\.com\/claim-preview\?claimToken=[^\s]+/)?.[0];
+          if (claim) fs.writeFileSync('/tmp/nomreh-cloudflare/claim-url', claim);
+          NODE
+          source /tmp/nomreh-cloudflare/account.sh
+          npx wrangler d1 create nomreh-production --config /tmp/nomreh-cloudflare/bootstrap-wrangler.json --update-config=false 2>&1 | tee /tmp/nomreh-cloudflare/d1.log
+          npx wrangler kv namespace create NOMREH_UPLOADS --config /tmp/nomreh-cloudflare/bootstrap-wrangler.json --update-config=false 2>&1 | tee /tmp/nomreh-cloudflare/kv.log
+          node <<'NODE'
+          const fs = require('node:fs');
+          const d1 = fs.readFileSync('/tmp/nomreh-cloudflare/d1.log', 'utf8').match(/\"database_id\"\s*:\s*\"([^\"]+)\"/)?.[1];
+          const kv = fs.readFileSync('/tmp/nomreh-cloudflare/kv.log', 'utf8').match(/\"id\"\s*:\s*\"([0-9a-f]{32})\"/i)?.[1];
+          if (!d1 || !kv) throw new Error('Could not read the new D1/KV resource IDs');
+          let config = fs.readFileSync('wrangler.jsonc', 'utf8');
+          config = config.replace('REPLACE_D1_ID', d1).replace('REPLACE_KV_ID', kv);
+          fs.writeFileSync('wrangler.jsonc', config);
+          NODE
+          npm run build:cloudflare > /tmp/nomreh-cloudflare/build.log 2>&1 || { cat /tmp/nomreh-cloudflare/build.log; exit 1; }
+          node <<'NODE'
+          const fs = require('node:fs');
+          const { randomBytes } = require('node:crypto');
+          const values = {
+            NOMREH_ADMIN_USERNAME: 'nomreh_admin',
+            NOMREH_ADMIN_PASSWORD: `Adm1_${randomBytes(24).toString('base64url')}`,
+            NOMREH_TEACHER_USERNAME: 'nomreh_teacher',
+            NOMREH_TEACHER_PASSWORD: `Tch1_${randomBytes(24).toString('base64url')}`,
+            NOMREH_SECRET_KEY: randomBytes(48).toString('base64url'),
+          };
+          fs.writeFileSync('/tmp/nomreh-cloudflare/secrets.sh', Object.entries(values).map(([key, value]) => `export ${key}='${value}'`).join('\n') + '\n');
+          NODE
+          source /tmp/nomreh-cloudflare/secrets.sh
+          npx wrangler deploy 2>&1 | tee /tmp/nomreh-cloudflare/deploy.log
+          export NOMREH_BASE_URL="$(node -e "const fs=require('fs');const s=fs.readFileSync('/tmp/nomreh-cloudflare/deploy.log','utf8');const u=s.match(/https:\/\/nomreh\.[a-z0-9-]+\.workers\.dev/)?.[0];if(!u)throw new Error('Worker URL missing');process.stdout.write(u)")"
+          printf '%s' "$NOMREH_BASE_URL" > /tmp/nomreh-cloudflare/url
+          for name in NOMREH_ADMIN_USERNAME NOMREH_ADMIN_PASSWORD NOMREH_TEACHER_USERNAME NOMREH_TEACHER_PASSWORD NOMREH_SECRET_KEY; do
+            printf '%s' "${!name}" | npx wrangler secret put "$name" --name nomreh
+          done
+          node scripts/cloudflare-e2e.mjs | tee /tmp/nomreh-cloudflare/e2e.log
+          node scripts/cloudflare-persistence.mjs write | tee /tmp/nomreh-cloudflare/persistence-write.log
+          npx wrangler deploy 2>&1 | tee -a /tmp/nomreh-cloudflare/deploy.log
+          node scripts/cloudflare-persistence.mjs verify | tee /tmp/nomreh-cloudflare/persistence-verify.log
+          if ! npx wrangler d1 execute nomreh-production --remote --config wrangler.jsonc --command "DELETE FROM users WHERE username LIKE 'cf-e2e-%';" > /tmp/nomreh-cloudflare/cleanup.log 2>&1; then
+            echo 'QA user cleanup was not confirmed; the QA account is disabled.'
+          fi
+          printf 'Admin username: %s\nAdmin password: %s\nTeacher username: %s\nTeacher password: %s\n' "$NOMREH_ADMIN_USERNAME" "$NOMREH_ADMIN_PASSWORD" "$NOMREH_TEACHER_USERNAME" "$NOMREH_TEACHER_PASSWORD" > /tmp/nomreh-cloudflare/delivery.txt
+
+      - name: Publish deployment output and expire delivery material
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_STATUS: ${{ steps.deploy.outputs.status }}
+        run: |
+          set -u
+          conclusion=success
+          if [ "${RUN_STATUS:-1}" != "0" ]; then conclusion=failure; fi
+          {
+            echo '## Nomreh Cloudflare deployment'
+            if [ -f /tmp/nomreh-cloudflare/url ]; then printf 'App URL: '; cat /tmp/nomreh-cloudflare/url; echo; fi
+            if [ -f /tmp/nomreh-cloudflare/delivery.txt ]; then echo '### One-time app credentials'; cat /tmp/nomreh-cloudflare/delivery.txt; fi
+            if [ -f /tmp/nomreh-cloudflare/claim-url ]; then echo '### Cloudflare account claim'; cat /tmp/nomreh-cloudflare/claim-url; echo; fi
+            if [ -f /tmp/nomreh-cloudflare/e2e.log ]; then echo '### End-to-end verification'; cat /tmp/nomreh-cloudflare/e2e.log; fi
+            if [ -f /tmp/nomreh-cloudflare/persistence-verify.log ]; then cat /tmp/nomreh-cloudflare/persistence-verify.log; fi
+            if [ -f /tmp/nomreh-cloudflare/deploy.log ]; then echo '### Wrangler deployment'; tail -45 /tmp/nomreh-cloudflare/deploy.log; fi
+            if [ "$conclusion" = failure ] && [ -f /tmp/nomreh-cloudflare/build.log ]; then echo '### Build log'; tail -80 /tmp/nomreh-cloudflare/build.log; fi
+          } > /tmp/nomreh-cloudflare/check-summary.md
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name="Nomreh Cloudflare deployment" \
+            -f head_sha="${GITHUB_SHA}" \
+            -f status=completed \
+            -f conclusion="$conclusion" \
+            -f 'output[title]=Nomreh Cloudflare deployment' \
+            --raw-field "output[summary]=$(cat /tmp/nomreh-cloudflare/check-summary.md)" > /tmp/nomreh-cloudflare/check-response.json
+          node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync('/tmp/nomreh-cloudflare/check-response.json','utf8'));fs.writeFileSync('/tmp/nomreh-cloudflare/check-id',String(x.id))"
+          if [ -f /tmp/nomreh-cloudflare/claim-url ] || [ -f /tmp/nomreh-cloudflare/delivery.txt ]; then
+            sleep 180
+            redacted='Deployment output was retrieved. One-time passwords and the account claim link have been removed from this check.'
+            if [ -f /tmp/nomreh-cloudflare/url ]; then redacted="${redacted} App URL: $(cat /tmp/nomreh-cloudflare/url)"; fi
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/check-runs/$(cat /tmp/nomreh-cloudflare/check-id)" \
+              -f 'output[title]=Nomreh deployment (sensitive delivery removed)' \
+              --raw-field "output[summary]=${redacted}" > /dev/null
+          fi

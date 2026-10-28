@@ -12,7 +12,7 @@ const schema = z.object({
 export async function GET() {
   try {
     const user = await requireUser();
-    return NextResponse.json({ status: getProviderStatus(user.role === "admin") }, { headers: { "Cache-Control": "no-store" } });
+    return NextResponse.json({ status: await getProviderStatus(user.role === "admin") }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const status = error instanceof AuthError ? error.status : 500;
     return NextResponse.json({ error: error instanceof Error ? error.message : "خواندن وضعیت اتصال ناموفق بود." }, { status });
@@ -23,7 +23,7 @@ export async function PUT(request: Request) {
   try {
     const admin = await requireAdmin();
     const input = schema.parse(await request.json());
-    return NextResponse.json({ status: saveProviderConfig(input, admin.id) });
+    return NextResponse.json({ status: await saveProviderConfig(input, admin.id) });
   } catch (error) {
     if (error instanceof z.ZodError) return NextResponse.json({ error: "ارائه‌دهنده و مدل را کامل وارد کنید." }, { status: 400 });
     const status = error instanceof AuthError ? error.status : 400;

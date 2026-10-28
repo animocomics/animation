@@ -1,7 +1,8 @@
 import { randomUUID } from "crypto";
 import { NextResponse } from "next/server";
 import { AuthError, requireUser } from "@/lib/server/auth";
-import { createId, getDb } from "@/lib/server/db";
+import { cloudflareRun, getCloudflareDb } from "@/lib/server/cloudflare";
+import { createId } from "@/lib/server/ids";
 import { gradeRequestSchema } from "@/lib/server/grading-schema";
 import { mergeVerifiedResult, normalizeGradingResult } from "@/lib/server/normalize";
 import { prepareProviderFiles } from "@/lib/server/pdf-vision";
@@ -20,24 +21,30 @@ export async function POST(request: Request) {
   let jobId: string | undefined;
   const startedAt = Date.now();
 
-  const recordJob = (status: "succeeded" | "failed", usage = { inputTokens: 0, outputTokens: 0 }, error?: string) => {
+  const recordJob = async (status: "succeeded" | "failed", usage = { inputTokens: 0, outputTokens: 0 }, error?: string) => {
     if (!user || !config) return;
     const now = new Date().toISOString();
+    const cloud = await getCloudflareDb();
     if (!jobId) {
       jobId = createId("job");
-      getDb().prepare(`INSERT INTO ai_jobs (id, user_id, submission_id, provider, model, status, input_tokens, output_tokens, latency_ms, error, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(jobId, user.id, input?.submissionId || null, config.provider, config.model, status, usage.inputTokens, usage.outputTokens, Date.now() - startedAt, error?.slice(0, 500) || null, now);
+      const values = [jobId, user.id, input?.submissionId || null, config.provider, config.model, status, usage.inputTokens, usage.outputTokens, Date.now() - startedAt, error?.slice(0, 500) || null, now];
+      const sql = `INSERT INTO ai_jobs (id, user_id, submission_id, provider, model, status, input_tokens, output_tokens, latency_ms, error, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+      if (cloud) await cloudflareRun(cloud, sql, values);
+      else (await import("@/lib/server/db")).getDb().prepare(sql).run(...values);
     } else {
-      getDb().prepare("UPDATE ai_jobs SET status=?, input_tokens=?, output_tokens=?, latency_ms=?, error=? WHERE id=?")
-        .run(status, usage.inputTokens, usage.outputTokens, Date.now() - startedAt, error?.slice(0, 500) || null, jobId);
+      const values = [status, usage.inputTokens, usage.outputTokens, Date.now() - startedAt, error?.slice(0, 500) || null, jobId];
+      const sql = "UPDATE ai_jobs SET status=?, input_tokens=?, output_tokens=?, latency_ms=?, error=? WHERE id=?";
+      if (cloud) await cloudflareRun(cloud, sql, values);
+      else (await import("@/lib/server/db")).getDb().prepare(sql).run(...values);
     }
   };
 
   try {
     user = await requireUser();
     input = gradeRequestSchema.parse(await request.json()) as GradeApiRequest;
-    config = getProviderConfig();
-    const workspace = loadWorkspace(user.id).data;
+    config = await getProviderConfig();
+    const workspace = (await loadWorkspace(user.id)).data;
     if (!workspace?.exams.some((exam) => exam.id === input?.examId)) {
       return NextResponse.json({ error: "این آزمون در فضای کاری شما پیدا نشد." }, { status: 403 });
     }
@@ -93,11 +100,11 @@ export async function POST(request: Request) {
       }
     }
 
-    recordJob("succeeded", usage);
+    await recordJob("succeeded", usage);
     return NextResponse.json({ result: normalized satisfies GradingResult });
   } catch (error) {
     const message = error instanceof Error ? error.message : "تصحیح برگه کامل نشد.";
-    recordJob("failed", usage, message);
+    await recordJob("failed", usage, message);
     if (error instanceof ProviderError) return NextResponse.json({ error: error.message }, { status: error.status });
     return NextResponse.json({ error: "تصحیح این برگه کامل نشد. اطلاعات شما ذخیره شده است؛ لطفاً دوباره تلاش کنید." }, { status: 500 });
   }

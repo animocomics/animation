@@ -1,0 +1,28 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "nomreh",
+  "main": "cloudflare/worker-entry.js",
+  "rules": [{ "type": "CompiledWasm", "globs": ["**/*.wasm"], "fallthrough": false }],
+  "compatibility_date": "2026-01-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "vars": {
+    "NOMREH_CLOUDFLARE": "1"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "nomreh-production",
+      "database_id": "REPLACE_D1_ID"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "UPLOADS_KV",
+      "id": "REPLACE_KV_ID"
+    }
+  ]
+}

@@ -113,7 +113,26 @@ data/
 
 از کل این فهرست و راز رمزنگاری نسخهٔ پشتیبان امن بگیرید. فهرست `data` در Git نادیده گرفته شده است.
 
-> این نسخه برای یک نمونهٔ Node.js با دیسک پایدار و SQLite طراحی شده است. روی میزبان Serverless با فایل‌سیستم موقت یا چند نمونهٔ هم‌زمان بدون storage مشترک مستقر نکنید. مسیر مقیاس سازمانی در مسترپلن PostgreSQL، Object Storage و صف Worker است.
+> اجرای محلی Node.js با SQLite و دیسک پایدار انجام می‌شود. برای Cloudflare از مسیر اختصاصی زیر استفاده کنید؛ فایل‌سیستم موقت و ماژول‌های بومی در Workers به کار نمی‌روند.
+
+## استقرار Cloudflare Workers
+
+نسخهٔ Cloudflare با OpenNext روی Workers اجرا می‌شود و از این bindingها استفاده می‌کند:
+
+- **D1 (`DB`)**: کاربران، نشست‌ها، فضای کاری، مصرف و revisionها؛ JSON بزرگ فضای کاری به قطعات تراکنشی تقسیم می‌شود.
+- **KV (`UPLOADS_KV`)**: فایل‌های اصلی و metadata با کلیدهای تفکیک‌شدهٔ کاربر؛ در صورت اتصال R2، binding `UPLOADS` نیز پشتیبانی می‌شود.
+- **PDFium/WASM**: رندر داخلی PDF به JPEG با ماژول precompiled؛ هیچ سرویس OCR یا تبدیل خارجی و هیچ addon بومی‌ای لازم نیست.
+
+برای build محلیِ باندل Cloudflare:
+
+```bash
+npm ci
+npm run build:cloudflare
+```
+
+در استقرار واقعی `NOMREH_CLOUDFLARE=1` و رازهای `NOMREH_SECRET_KEY`, `NOMREH_ADMIN_USERNAME`, `NOMREH_ADMIN_PASSWORD`, `NOMREH_TEACHER_USERNAME` و `NOMREH_TEACHER_PASSWORD` باید به‌صورت Cloudflare Secrets تنظیم شوند. شناسه‌های `REPLACE_D1_ID` و `REPLACE_KV_ID` در `wrangler.jsonc` باید با منابع واقعی جایگزین شوند؛ این کار در workflow انجام می‌شود و هیچ رازی وارد Git نمی‌شود.
+
+Workflow در `.github/workflows/cloudflare-deploy.yml` با نشان `[cloudflare-deploy]` در پیام commit اجرا می‌شود. چون این محیط به حساب Cloudflare شخصی متصل نیست، bootstrap حساب موقت Wrangler استفاده می‌کند؛ برای ماندگاری حساب، لینک claim باید ظرف مهلت اعلام‌شدهٔ Cloudflare توسط مالک باز شود. این لینک و رمزهای تصادفی اولیه فقط یک‌بار تحویل داده می‌شوند و از خروجی عمومی CI حذف می‌شوند. پس از ورود، رمزها را تغییر دهید و کلید Provider واقعی را از پنل مدیر ذخیره کنید.
 
 ## مسیر استفادهٔ واقعی
 
@@ -168,7 +187,11 @@ lib/
   server/provider-config.ts # AES-GCM و وضعیت عمومی/مدیر
   server/providers.ts    # OpenAI / Gemini / DeepSeek
   server/pdf-vision.ts   # تبدیل داخلی PDF برای DeepSeek و پیش‌نمایش صفحه‌ای
+  server/cloudflare.ts   # D1/KV bindings و schema ابری
   roster.ts              # تطبیق هویت، CSV و ردیف‌های کارنامه
+cloudflare/              # ورودی Worker و ماژول precompiled PDFium
+scripts/                 # build، تست E2E و آزمون ماندگاری Cloudflare
+wrangler.jsonc           # bindingهای D1/KV و تنظیمات Workers
 tests/                   # نمره، رمز عبور، هویت و فهرست کلاس
 MASTER_PLAN.fa.md        # مسترپلن محصول، امنیت و پژوهش
 ```

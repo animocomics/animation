@@ -18,7 +18,7 @@ export async function POST(request: Request) {
     const input = schema.parse(await request.json());
     let apiKey = input.apiKey?.trim() || "";
     if (!apiKey) {
-      const stored = getProviderConfig();
+      const stored = await getProviderConfig();
       if (stored.provider !== input.provider || stored.model !== input.model) throw new Error("برای مدل جدید، کلید را دوباره وارد کنید یا ابتدا تنظیمات را ذخیره کنید.");
       apiKey = stored.apiKey;
     }
