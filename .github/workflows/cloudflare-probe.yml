@@ -24,6 +24,13 @@ jobs:
           set +e
           npx --yes wrangler deploy --temporary --config /tmp/nomreh-cf-probe/wrangler.json 2>&1 | tee /tmp/nomreh-cf-probe/output.log
           status=${PIPESTATUS[0]}
+          if [ "$status" = "0" ]; then
+            npx --yes wrangler d1 create nomreh-probe-db --config /tmp/nomreh-cf-probe/wrangler.json --update-config=false 2>&1 | tee -a /tmp/nomreh-cf-probe/output.log
+            d1_status=${PIPESTATUS[0]}
+            npx --yes wrangler kv namespace create UPLOADS_KV --config /tmp/nomreh-cf-probe/wrangler.json --update-config=false 2>&1 | tee -a /tmp/nomreh-cf-probe/output.log
+            kv_status=${PIPESTATUS[0]}
+            if [ "$d1_status" != "0" ] || [ "$kv_status" != "0" ]; then status=1; fi
+          fi
           echo "status=$status" >> "$GITHUB_OUTPUT"
           exit 0
       - name: Publish deployment output
