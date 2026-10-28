@@ -25,6 +25,15 @@ jobs:
           npx --yes wrangler deploy --temporary --config /tmp/nomreh-cf-probe/wrangler.json 2>&1 | tee /tmp/nomreh-cf-probe/output.log
           status=${PIPESTATUS[0]}
           if [ "$status" = "0" ]; then
+            node <<'NODE'
+            const fs = require('node:fs');
+            const path = `${process.env.HOME}/.config/.wrangler/wrangler-temporary-account.toml`;
+            const text = fs.readFileSync(path, 'utf8');
+            const token = text.match(/apiToken\s*=\s*[\"']([^\"']+)[\"']/)?.[1];
+            const account = text.match(/\bid\s*=\s*[\"']([^\"']+)[\"']/)?.[1];
+            if (!token || !account) throw new Error('Temporary Cloudflare credentials were not found');
+            fs.appendFileSync(process.env.GITHUB_ENV, `CLOUDFLARE_API_TOKEN=${token}\nCLOUDFLARE_ACCOUNT_ID=${account}\n`);
+            NODE
             npx --yes wrangler d1 create nomreh-probe-db --config /tmp/nomreh-cf-probe/wrangler.json --update-config=false 2>&1 | tee -a /tmp/nomreh-cf-probe/output.log
             d1_status=${PIPESTATUS[0]}
             npx --yes wrangler kv namespace create UPLOADS_KV --config /tmp/nomreh-cf-probe/wrangler.json --update-config=false 2>&1 | tee -a /tmp/nomreh-cf-probe/output.log
