@@ -1,6 +1,9 @@
 name: Cloudflare connectivity probe
 
 on:
+  push:
+    branches:
+      - arena/f4b832aa-animation
   workflow_dispatch:
 
 permissions:
