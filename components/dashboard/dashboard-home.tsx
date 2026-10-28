@@ -60,7 +60,7 @@ export function DashboardHome() {
       <section className="welcome-row">
         <div>
           <div className="eyebrow"><span /> فضای کاری شما</div>
-          <h2>خوش آمدید، {user.displayName} <span className="wave">👋</span></h2>
+          <h2>خوش آمدید، {user.displayName} <span className="welcome-spark" aria-hidden="true"><Sparkles size={18} strokeWidth={1.8} /></span></h2>
           <p>{pending ? `${faNumber(pending)} برگه منتظر بازبینی شماست؛ باقی موارد با آرامش پیش بروید.` : "همهٔ برگه‌ها بررسی شده‌اند؛ می‌توانید آزمون بعدی را بسازید."}</p>
         </div>
         <div className="welcome-actions">

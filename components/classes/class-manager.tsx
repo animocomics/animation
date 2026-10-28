@@ -133,7 +133,7 @@ export function ClassManager() {
   </>;
 
   return <div className="classes-page">
-    <section className="page-heading-row"><div><div className="eyebrow"><span />ساختار آموزشی</div><h2>کلاس‌ها، کارنامه‌ها و دانش‌آموزان</h2><p>هر آزمون به یک کلاس متصل است و نمره پس از تطبیق امن هویت در ردیف درست قرار می‌گیرد.</p></div><button className="btn btn-primary" onClick={() => setEditingClass(emptyClass())}><Plus size={17} /> کلاس جدید</button></section>
+    <section className="page-heading-row"><div><div className="eyebrow"><span />ساختار آموزشی</div><h2>کلاس‌ها و دانش‌آموزان شما</h2><p>کلاس بسازید، نام دانش‌آموزان را خودتان وارد کنید و کارنامه‌ها را در فضای مستقل خود نگه دارید.</p></div><button className="btn btn-primary" onClick={() => setEditingClass(emptyClass())}><Plus size={17} /> کلاس جدید</button></section>
     <div className="classes-layout">
       <aside className="card class-list-panel"><div className="class-list-heading"><strong>کلاس‌های من</strong><span>{faNumber(classes.length)}</span></div><div className="class-list">{classes.map((schoolClass) => <button key={schoolClass.id} className={selectedClass?.id === schoolClass.id ? "active" : ""} onClick={() => { setSelectedId(schoolClass.id); setQuery(""); }}><span className="class-list-icon"><GraduationCap size={19} /></span><span><strong>{schoolClass.name}</strong><small>{faNumber(schoolClass.students.filter((student) => student.active).length)} دانش‌آموز · {schoolClass.academicYear}</small></span><ChevronLeft size={15} /></button>)}</div><div className="class-list-note"><ListChecks size={16} /><p>فهرست کلاس فقط در فضای کاری شما ذخیره و برای تطبیق برگه‌ها استفاده می‌شود.</p></div></aside>
 

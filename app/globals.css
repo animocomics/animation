@@ -41,6 +41,8 @@ body {
   font-family: "Vazirmatn Variable", Vazirmatn, Tahoma, Arial, sans-serif;
   font-size: 14px;
   line-height: 1.65;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
 }
 button, input, textarea, select { font: inherit; }
@@ -269,6 +271,13 @@ input[type="number"] { font-variant-numeric: tabular-nums; }
 .modal-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 15px; padding: 21px 23px 17px; border-bottom: 1px solid var(--line); }
 .modal-header h2 { font-size: 16px; }
 .modal-header p { font-size: 10px; color: var(--muted); margin-top: 3px; }
+.modal-heading { display: flex; align-items: center; gap: 11px; }
+.modal-heading-icon { width: 39px; height: 39px; display: grid; place-items: center; flex-shrink: 0; border: 1px solid #d9e9df; border-radius: 11px; color: var(--brand); background: var(--mint); }
+.form-grid > .full { grid-column: 1 / -1; }
+.credential-handoff-note { display: flex; align-items: flex-start; gap: 10px; padding: 13px 14px; border: 1px solid #dbe9e0; border-radius: 12px; color: var(--brand); background: #f5faf7; }
+.credential-handoff-note > svg { flex-shrink: 0; margin-top: 2px; }
+.credential-handoff-note strong { display: block; color: var(--ink-2); font-size: 11px; }
+.credential-handoff-note p { margin-top: 3px; color: var(--muted); font-size: 10px; line-height: 1.9; }
 .modal-body { padding: 22px 23px; }
 .modal-footer { display: flex; justify-content: flex-end; gap: 9px; padding: 15px 23px; background: var(--surface-soft); border-top: 1px solid var(--line); border-radius: 0 0 20px 20px; }
 
@@ -277,7 +286,7 @@ input[type="number"] { font-variant-numeric: tabular-nums; }
 .eyebrow { display: flex; align-items: center; gap: 6px; color: var(--brand); font-size: 9px; font-weight: 650; margin-bottom: 5px; }
 .eyebrow > span { width: 15px; height: 2px; background: var(--brand); border-radius: 4px; }
 .welcome-row h2 { font-size: 22px; line-height: 1.6; font-weight: 790; letter-spacing: -0.55px; }
-.wave { display: inline-block; font-size: 20px; transform: rotate(-8deg); }
+.welcome-spark { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; margin-right: 4px; vertical-align: middle; border: 1px solid #d9e9df; border-radius: 9px; color: var(--brand); background: var(--mint); }
 .welcome-row p { color: var(--muted); font-size: 11px; margin-top: 3px; }
 .welcome-actions { display: flex; gap: 9px; }
 .stats-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 15px; margin-bottom: 19px; }

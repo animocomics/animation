@@ -59,7 +59,7 @@ export function LoginForm({ showDemoAccounts }: { showDemoAccounts: boolean }) {
           <div className="login-mobile-brand"><span className="brand-mark"><CheckCheck size={24} /></span><span className="brand-name">نمره<span className="brand-dot">.</span></span></div>
           <span className="login-lock"><LockKeyhole size={23} /></span>
           <h2>به فضای کاری خود وارد شوید</h2>
-          <p className="login-subtitle">برای ادامه، اطلاعات حساب معلم یا مدیر را وارد کنید.</p>
+          <p className="login-subtitle">برای ورود، نام کاربری و رمز حساب خود را وارد کنید؛ حساب معلم‌ها را مدیر سامانه می‌سازد.</p>
           <form onSubmit={submit} className="login-form">
             <div className="form-field">
               <label htmlFor="login-username">نام کاربری</label>
