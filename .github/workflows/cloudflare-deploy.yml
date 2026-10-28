@@ -68,11 +68,13 @@ jobs:
           node <<'NODE'
           const fs = require('node:fs');
           const { randomBytes } = require('node:crypto');
+          const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+          const credential = (prefix) => prefix + Array.from(randomBytes(24), (byte) => alphabet[byte % alphabet.length]).join('');
           const values = {
             NOMREH_ADMIN_USERNAME: 'nomreh_admin',
-            NOMREH_ADMIN_PASSWORD: `Adm1_${randomBytes(24).toString('base64url')}`,
+            NOMREH_ADMIN_PASSWORD: credential('Adm7'),
             NOMREH_TEACHER_USERNAME: 'nomreh_teacher',
-            NOMREH_TEACHER_PASSWORD: `Tch1_${randomBytes(24).toString('base64url')}`,
+            NOMREH_TEACHER_PASSWORD: credential('Tch7'),
             NOMREH_SECRET_KEY: randomBytes(48).toString('base64url'),
           };
           fs.writeFileSync('/tmp/nomreh-cloudflare/secrets.sh', Object.entries(values).map(([key, value]) => `export ${key}='${value}'`).join('\n') + '\n');
@@ -85,7 +87,6 @@ jobs:
             printf '%s' "${!name}" | npx wrangler secret put "$name" --name nomreh
           done
           node scripts/cloudflare-e2e.mjs | tee /tmp/nomreh-cloudflare/e2e.log
-          printf 'Admin username: %s\nAdmin password: %s\nTeacher username: %s\nTeacher password: %s\n' "$NOMREH_ADMIN_USERNAME" "$NOMREH_ADMIN_PASSWORD" "$NOMREH_TEACHER_USERNAME" "$NOMREH_TEACHER_PASSWORD" > /tmp/nomreh-cloudflare/delivery.txt
           persistence_status=0
           node scripts/cloudflare-persistence.mjs write > /tmp/nomreh-cloudflare/persistence-write.log 2>&1 || persistence_status=$?
           if [ "$persistence_status" -eq 0 ]; then
@@ -98,6 +99,21 @@ jobs:
             echo 'QA user cleanup was not confirmed; the QA account is disabled.'
           fi
           if [ "$persistence_status" -ne 0 ]; then exit "$persistence_status"; fi
+          npm install --prefix /tmp/nomreh-browser playwright-core@1.56.1 --no-audit --no-fund > /tmp/nomreh-cloudflare/browser-install.log 2>&1
+          export PLAYWRIGHT_MODULE=/tmp/nomreh-browser/node_modules/playwright-core
+          export SCREENSHOT_DIR=/tmp/nomreh-cloudflare
+          if command -v google-chrome > /dev/null 2>&1; then export CHROME_PATH="$(command -v google-chrome)"; fi
+          xvfb-run -a node scripts/cloudflare-browser-e2e.cjs | tee /tmp/nomreh-cloudflare/browser-e2e.log
+          printf 'Admin username: %s\nAdmin password: %s\nTeacher username: %s\nTeacher password: %s\n' "$NOMREH_ADMIN_USERNAME" "$NOMREH_ADMIN_PASSWORD" "$NOMREH_TEACHER_USERNAME" "$NOMREH_TEACHER_PASSWORD" > /tmp/nomreh-cloudflare/delivery.txt
+
+      - name: Upload verified browser screenshots
+        if: steps.deploy.outputs.status == '0'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: nomreh-browser-verification-${{ github.run_id }}
+          path: /tmp/nomreh-cloudflare/*-dashboard.png
+          retention-days: 1
 
       - name: Publish deployment output and expire delivery material
         if: always()
@@ -111,9 +127,10 @@ jobs:
           {
             echo '## Nomreh Cloudflare deployment'
             if [ -f /tmp/nomreh-cloudflare/url ]; then printf 'App URL: '; cat /tmp/nomreh-cloudflare/url; echo; fi
-            if [ -f /tmp/nomreh-cloudflare/delivery.txt ]; then echo '### One-time app credentials'; cat /tmp/nomreh-cloudflare/delivery.txt; fi
-            if [ -f /tmp/nomreh-cloudflare/claim-url ]; then echo '### Cloudflare account claim'; cat /tmp/nomreh-cloudflare/claim-url; echo; fi
+            if [ "$conclusion" = success ] && [ -f /tmp/nomreh-cloudflare/delivery.txt ]; then echo '### One-time app credentials'; cat /tmp/nomreh-cloudflare/delivery.txt; fi
+            if [ "$conclusion" = success ] && [ -f /tmp/nomreh-cloudflare/claim-url ]; then echo '### Cloudflare account claim'; cat /tmp/nomreh-cloudflare/claim-url; echo; fi
             if [ -f /tmp/nomreh-cloudflare/e2e.log ]; then echo '### End-to-end verification'; cat /tmp/nomreh-cloudflare/e2e.log; fi
+            if [ -f /tmp/nomreh-cloudflare/browser-e2e.log ]; then echo '### Real browser verification'; cat /tmp/nomreh-cloudflare/browser-e2e.log; fi
             if [ -f /tmp/nomreh-cloudflare/persistence-write.log ]; then echo '### Persistence write'; cat /tmp/nomreh-cloudflare/persistence-write.log; fi
             if [ -f /tmp/nomreh-cloudflare/redeploy.log ]; then echo '### Second deployment'; tail -45 /tmp/nomreh-cloudflare/redeploy.log; fi
             if [ -f /tmp/nomreh-cloudflare/persistence-verify.log ]; then echo '### Persistence verify'; cat /tmp/nomreh-cloudflare/persistence-verify.log; fi
@@ -128,7 +145,7 @@ jobs:
             -f 'output[title]=Nomreh Cloudflare deployment' \
             --raw-field "output[summary]=$(cat /tmp/nomreh-cloudflare/check-summary.md)" > /tmp/nomreh-cloudflare/check-response.json
           node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync('/tmp/nomreh-cloudflare/check-response.json','utf8'));fs.writeFileSync('/tmp/nomreh-cloudflare/check-id',String(x.id))"
-          if [ -f /tmp/nomreh-cloudflare/claim-url ] || [ -f /tmp/nomreh-cloudflare/delivery.txt ]; then
+          if [ "$conclusion" = success ] && { [ -f /tmp/nomreh-cloudflare/claim-url ] || [ -f /tmp/nomreh-cloudflare/delivery.txt ]; }; then
             sleep 180
             redacted='Deployment output was retrieved. One-time passwords and the account claim link have been removed from this check.'
             if [ -f /tmp/nomreh-cloudflare/url ]; then redacted="${redacted} App URL: $(cat /tmp/nomreh-cloudflare/url)"; fi
