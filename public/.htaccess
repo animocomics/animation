@@ -1,0 +1,12 @@
+# Serve Nomreh directly from its local production server, without Passenger.
+# This file affects only this domain's public document root.
+DirectoryIndex disabled
+RewriteEngine On
+ProxyPreserveHost On
+
+# Keep certificate renewal challenges on Apache.
+RewriteRule ^\.well-known/acme-challenge/ - [L]
+
+# In per-directory context the root request has an empty path.
+RewriteRule ^$ http://127.0.0.1:32147/ [P,L]
+RewriteRule ^(.*)$ http://127.0.0.1:32147/$1 [P,L,QSA]
