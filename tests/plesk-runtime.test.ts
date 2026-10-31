@@ -33,6 +33,17 @@ test("Plesk bootstrap pins Node 22 and delegates both build and production start
   assert.match(launcher, /nodejs-unofficial-glibc-217/);
 });
 
+test("Plesk disk report is read-only and separately reports Git, application and upload usage", () => {
+  const report = fs.readFileSync(path.join(root, "scripts", "plesk-space.cjs"), "utf8");
+  const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+
+  assert.equal(packageJson.scripts["space:plesk"], "node scripts/plesk-space.cjs");
+  assert.match(report, /Git history \(\.git\)/);
+  assert.match(report, /Teacher uploads/);
+  assert.match(report, /Report complete\. No files were changed or deleted\./);
+  assert.doesNotMatch(report, /\b(?:rmSync|unlinkSync|writeFileSync|mkdirSync|renameSync)\s*\(/);
+});
+
 test("runtime probe accepts the pinned binary and rejects an incompatible one", { skip: process.platform === "win32" }, () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nomreh-node-probe-"));
   try {
