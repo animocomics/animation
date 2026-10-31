@@ -34,6 +34,7 @@ const LEGACY_NODE = {
     `https://unofficial-builds.nodejs.org/download/release/${NODE_TAG}/node-${NODE_TAG}-linux-x64-glibc-217.tar.xz`,
   ],
   sha256: "5de83ffe678e6c478b7be75708458c2a2f552c300c8a24fb4bdcd1574cb7e132",
+  size: 31403312,
 };
 
 function inside(parent, candidate) {
@@ -276,23 +277,39 @@ async function downloadVerifiedWithRetry(urls, destination, expectedSha256) {
   throw new Error(`The compatible Node runtime download failed after 4 attempts. Last source: ${lastHost}. Last error: ${message}`);
 }
 
+async function verifyLegacyArchive(archive) {
+  if (fs.statSync(archive).size !== LEGACY_NODE.size) throw new Error("The Node runtime archive has an unexpected size.");
+  const hash = crypto.createHash("sha256");
+  for await (const chunk of fs.createReadStream(archive)) hash.update(chunk);
+  if (hash.digest("hex") !== LEGACY_NODE.sha256) throw new Error("The Node runtime archive failed SHA-256 verification.");
+}
+
 async function installLegacyRuntime() {
   if (process.platform !== "linux" || process.arch !== "x64") {
     throw new Error("No compatible domain-local Node runtime is available for this platform.");
   }
-  const archive = path.join(RUNTIME_ROOT, `.${LEGACY_NODE.archive}.${process.pid}.tmp`);
+  const bundledArchive = path.join(BOOTSTRAP_PACKAGE, LEGACY_NODE.archive);
+  const downloadedArchive = path.join(RUNTIME_ROOT, `.${LEGACY_NODE.archive}.${process.pid}.tmp`);
+  const hasBundledArchive = fs.existsSync(bundledArchive);
+  const archive = hasBundledArchive ? bundledArchive : downloadedArchive;
   const staging = temporaryPath("glibc-217");
   ensureDirectory(staging);
   try {
     console.log("Standard Node is not compatible; trying the Node.js community glibc-2.17 build with checksum verification…");
-    progress("Preparing to download the compatible glibc-2.17 Node runtime");
-    await downloadVerifiedWithRetry(LEGACY_NODE.urls, archive, LEGACY_NODE.sha256);
+    if (hasBundledArchive) {
+      console.log("Using the verified Node runtime archive bundled in the GitHub deployment.");
+      progress("Verifying the compatible Node runtime archive bundled with Nomreh");
+    } else {
+      progress("Preparing to download the compatible glibc-2.17 Node runtime");
+      await downloadVerifiedWithRetry(LEGACY_NODE.urls, archive, LEGACY_NODE.sha256);
+    }
+    await verifyLegacyArchive(archive);
     progress("Extracting and testing the compatible Node runtime");
     execute("tar", ["-xJf", archive, "-C", staging], { cwd: RUNTIME_ROOT, timeout: 120000 });
     const sourceRoot = path.join(staging, LEGACY_NODE.directory);
     return activateBinary(path.join(sourceRoot, "bin", "node"), "nodejs-unofficial-glibc-217", path.join(sourceRoot, "LICENSE"));
   } finally {
-    if (fs.existsSync(archive)) fs.unlinkSync(archive);
+    if (!hasBundledArchive && fs.existsSync(downloadedArchive)) fs.unlinkSync(downloadedArchive);
     if (fs.existsSync(staging)) removeRuntimePath(staging);
   }
 }

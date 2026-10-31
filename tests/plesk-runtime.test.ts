@@ -18,6 +18,7 @@ function fakeNode(directory: string, version: string) {
 
 test("Plesk bootstrap pins Node 22 and delegates both build and production startup", () => {
   const launcher = fs.readFileSync(launcherPath, "utf8");
+  const cacheWorkflow = fs.readFileSync(path.join(root, ".github", "workflows", "cache-node-runtime.yml"), "utf8");
   const server = fs.readFileSync(path.join(root, "server.js"), "utf8");
   const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
   const runtimePackage = JSON.parse(fs.readFileSync(path.join(root, "scripts", "plesk-runtime", "package.json"), "utf8"));
@@ -29,7 +30,15 @@ test("Plesk bootstrap pins Node 22 and delegates both build and production start
   assert.match(packageJson.engines.node, />=22/);
   assert.match(server, /major >= 22/);
   assert.match(server, /launchServer\(\)/);
-  assert.match(launcher, /sha256: "[a-f0-9]{64}"/);
+  const sha256 = launcher.match(/sha256: "([a-f0-9]{64})"/)?.[1];
+  const archiveSize = launcher.match(/size: ([0-9]+)/)?.[1];
+  assert.ok(sha256);
+  assert.ok(archiveSize);
+  assert.match(cacheWorkflow, new RegExp(`NODE_VERSION: ${version}`));
+  assert.match(cacheWorkflow, new RegExp(`EXPECTED_SHA256: ${sha256}`));
+  assert.match(cacheWorkflow, new RegExp(`EXPECTED_SIZE: ${archiveSize}`));
+  assert.match(cacheWorkflow, /git push origin HEAD:arena\/f4b832aa-animation/);
+  assert.match(launcher, /Using the verified Node runtime archive bundled in the GitHub deployment/);
   assert.match(launcher, /cdn\.npmmirror\.com/);
   assert.match(launcher, /unofficial-builds\.nodejs\.org/);
   assert.match(launcher, /nodejs-unofficial-glibc-217/);

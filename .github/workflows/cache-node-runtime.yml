@@ -1,0 +1,51 @@
+name: Cache verified legacy Node runtime
+
+on:
+  push:
+    branches:
+      - arena/f4b832aa-animation
+    paths:
+      - .github/workflows/cache-node-runtime.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  cache-runtime:
+    if: github.repository == 'rayavc099/animation' && github.ref == 'refs/heads/arena/f4b832aa-animation'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the deployment branch
+        uses: actions/checkout@v4
+        with:
+          ref: arena/f4b832aa-animation
+
+      - name: Download and verify the Node.js community glibc-2.17 build
+        env:
+          NODE_VERSION: 22.22.3
+          EXPECTED_SHA256: 5de83ffe678e6c478b7be75708458c2a2f552c300c8a24fb4bdcd1574cb7e132
+          EXPECTED_SIZE: 31403312
+        run: |
+          set -euo pipefail
+          archive="node-v${NODE_VERSION}-linux-x64-glibc-217.tar.xz"
+          destination="scripts/plesk-runtime/$archive"
+          url="https://unofficial-builds.nodejs.org/download/release/v${NODE_VERSION}/$archive"
+          curl --fail --location --retry 4 --retry-all-errors \
+            --connect-timeout 20 --max-time 600 \
+            --output "$destination" "$url"
+          test "$(stat -c %s "$destination")" = "$EXPECTED_SIZE"
+          printf '%s  %s\n' "$EXPECTED_SHA256" "$destination" | sha256sum --check -
+
+      - name: Add only the verified archive to the same private branch
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add scripts/plesk-runtime/node-v22.22.3-linux-x64-glibc-217.tar.xz
+          if git diff --cached --quiet; then
+            echo 'The verified archive is already present; no commit is needed.'
+            exit 0
+          fi
+          git commit -m 'Cache verified legacy Node runtime'
+          git push origin HEAD:arena/f4b832aa-animation
