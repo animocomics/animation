@@ -22,6 +22,7 @@ const RUNTIME_ROOT = path.join(DATA_DIR, "runtime");
 const ACTIVE_DIR = path.join(RUNTIME_ROOT, "node");
 const ACTIVE_NODE = path.join(ACTIVE_DIR, "bin", process.platform === "win32" ? "node.exe" : "node");
 const MANIFEST_FILE = path.join(RUNTIME_ROOT, "runtime.json");
+const PROGRESS_FILE = path.join(DATA_DIR, "build-progress.txt");
 const LOCK_FILE = path.join(RUNTIME_ROOT, "install.lock");
 const BOOTSTRAP_PACKAGE = path.join(__dirname, "plesk-runtime");
 const LEGACY_NODE = {
@@ -38,6 +39,28 @@ function inside(parent, candidate) {
 
 function ensureDirectory(directory) {
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+}
+
+let progressStartedAt = 0;
+let progressEnabled = false;
+
+function progress(stage, status = "RUNNING") {
+  if (!progressEnabled) return;
+  const elapsed = Math.max(0, Math.round((Date.now() - progressStartedAt) / 1000));
+  console.log(`[Nomreh ${status}; ${elapsed}s] ${stage}`);
+  try {
+    ensureDirectory(DATA_DIR);
+    fs.writeFileSync(PROGRESS_FILE, [
+      `Nomreh build status: ${status}`,
+      `Stage: ${stage}`,
+      `Elapsed seconds: ${elapsed}`,
+      `Process ID: ${process.pid}`,
+      `Updated at: ${new Date().toISOString()}`,
+      "",
+    ].join("\n"), { mode: 0o600 });
+  } catch (error) {
+    console.error(`The progress report could not be written: ${error.message}`);
+  }
 }
 
 function removeRuntimePath(candidate) {
@@ -164,6 +187,7 @@ function installOfficialRuntime() {
       fs.copyFileSync(path.join(BOOTSTRAP_PACKAGE, filename), path.join(staging, filename));
     }
     console.log(`Installing Nomreh's private Node ${NODE_VERSION} runtime from the pinned npm package…`);
+    progress("Downloading the standard Node 22 runtime package");
     runHostNpm(["ci", "--ignore-scripts=false", "--engine-strict=false", "--no-audit", "--no-fund"], staging);
     const sourceBinary = path.join(staging, "node_modules", "node", "bin", path.basename(ACTIVE_NODE));
     const probe = probeNode(sourceBinary);
@@ -204,7 +228,9 @@ async function downloadVerified(url, destination, expectedSha256, redirects = 0)
       }
       hash.update(chunk);
       if (size >= nextProgress) {
-        console.log(`Downloaded ${Math.floor(size / (1024 * 1024))} MiB of the compatible Node runtime…`);
+        const received = Math.floor(size / (1024 * 1024));
+        console.log(`Downloaded ${received} MiB of the compatible Node runtime…`);
+        progress(`Downloading the compatible Node runtime (${received} MiB received)`);
         nextProgress += 8 * 1024 * 1024;
       }
       callback(null, chunk);
@@ -225,6 +251,7 @@ async function downloadVerifiedWithRetry(url, destination, expectedSha256) {
   for (let attempt = 1; attempt <= 4; attempt += 1) {
     try {
       if (attempt > 1) console.log(`Retrying the compatible Node runtime download (${attempt}/4)…`);
+      progress(`Downloading the compatible Node runtime (attempt ${attempt}/4)`);
       await downloadVerified(url, destination, expectedSha256);
       return;
     } catch (error) {
@@ -249,7 +276,9 @@ async function installLegacyRuntime() {
   ensureDirectory(staging);
   try {
     console.log("Standard Node is not compatible; trying the Node.js community glibc-2.17 build with checksum verification…");
+    progress("Preparing to download the compatible glibc-2.17 Node runtime");
     await downloadVerifiedWithRetry(LEGACY_NODE.url, archive, LEGACY_NODE.sha256);
+    progress("Extracting and testing the compatible Node runtime");
     execute("tar", ["-xJf", archive, "-C", staging], { cwd: RUNTIME_ROOT, timeout: 120000 });
     const sourceRoot = path.join(staging, LEGACY_NODE.directory);
     return activateBinary(path.join(sourceRoot, "bin", "node"), "nodejs-unofficial-glibc-217", path.join(sourceRoot, "LICENSE"));
@@ -324,14 +353,30 @@ function smokeRuntime(runtime) {
 }
 
 async function build() {
-  const runtime = await ensureRuntime();
-  installDependencies(runtime);
-  console.log("Building Nomreh with Node 22…");
-  runRuntimeNpm(runtime, ["run", "build"]);
-  if (!fs.existsSync(path.join(APP_ROOT, ".next", "BUILD_ID"))) throw new Error("The production build did not create .next/BUILD_ID; nothing was compacted.");
-  compactProduction(runtime);
-  smokeRuntime(runtime);
-  console.log(`Nomreh production build is ready with the domain-local Node ${NODE_VERSION} (${runtime.kind}).`);
+  progressStartedAt = Date.now();
+  progressEnabled = true;
+  try {
+    progress("Checking or installing the private Node 22 runtime");
+    const runtime = await ensureRuntime();
+    progress("Installing application dependencies");
+    installDependencies(runtime);
+    console.log("Building Nomreh with Node 22…");
+    progress("Building the Nomreh production application with Next.js");
+    runRuntimeNpm(runtime, ["run", "build"]);
+    if (!fs.existsSync(path.join(APP_ROOT, ".next", "BUILD_ID"))) throw new Error("The production build did not create .next/BUILD_ID; nothing was compacted.");
+    progress("Removing development-only packages and regenerable build caches");
+    compactProduction(runtime);
+    progress("Testing SQLite and canvas with the production runtime");
+    smokeRuntime(runtime);
+    console.log(`Nomreh production build is ready with the domain-local Node ${NODE_VERSION} (${runtime.kind}).`);
+    progress("Nomreh production build is ready", "READY");
+    try { fs.unlinkSync(PROGRESS_FILE); } catch { /* The successful build is already complete. */ }
+  } catch (error) {
+    progress(error instanceof Error ? error.message : String(error), "FAILED");
+    throw error;
+  } finally {
+    progressEnabled = false;
+  }
 }
 
 async function setup() {
