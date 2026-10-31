@@ -10,6 +10,7 @@
     "setup:plesk": "node scripts/plesk-node22.cjs setup",
     "compact:plesk": "node scripts/plesk-node22.cjs compact",
     "space:plesk": "node scripts/plesk-space.cjs",
+    "git:compact": "node scripts/plesk-git-maintenance.cjs",
     "start": "next start -H 0.0.0.0",
     "start:plesk": "node scripts/plesk-standalone.cjs start",
     "restart:plesk": "node scripts/plesk-standalone.cjs restart",
