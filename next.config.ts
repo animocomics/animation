@@ -21,7 +21,14 @@ const nextConfig: NextConfig = {
           },
         },
       }
-    : {}),
+    : {
+        turbopack: {
+          resolveAlias: {
+            // Plesk never calls Cloudflare bindings; keep OpenNext out of its runtime and later builds.
+            "@opennextjs/cloudflare": "./lib/server/node-cloudflare-stub.ts",
+          },
+        },
+      }),
 };
 
 export default nextConfig;

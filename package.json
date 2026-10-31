@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "next dev -H 0.0.0.0",
     "build": "next build",
+    "build:plesk": "next build && node scripts/compact-production.cjs",
+    "compact:plesk": "node scripts/compact-production.cjs",
     "start": "next start -H 0.0.0.0",
     "start:plesk": "node scripts/plesk-standalone.cjs start",
     "restart:plesk": "node scripts/plesk-standalone.cjs restart",
@@ -25,29 +27,29 @@
     "workerd@1.20261023.1": true
   },
   "dependencies": {
+    "@cloudflare/workers-types": "^5.20261028.1",
     "@fontsource-variable/vazirmatn": "^5.3.0",
     "@napi-rs/canvas": "0.1.100",
-    "@opennextjs/cloudflare": "^1.20.13",
-    "better-sqlite3": "^13.0.3",
-    "clawpdf": "^0.3.2",
-    "jpeg-js": "^0.4.4",
-    "lucide-react": "^1.62.0",
-    "next": "^16.4.3",
-    "pdfjs-dist": "4.10.38",
-    "react": "^19.3.1",
-    "react-dom": "^19.3.1",
-    "zod": "^4.6.7"
-  },
-  "devDependencies": {
-    "@cloudflare/workers-types": "^5.20261028.1",
     "@types/better-sqlite3": "^9.6.0",
     "@types/jpeg-js": "^0.3.0",
     "@types/node": "^26.6.5",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "better-sqlite3": "^13.0.3",
+    "clawpdf": "^0.3.2",
+    "jpeg-js": "^0.4.4",
+    "lucide-react": "^1.62.0",
+    "next": "^16.4.3",
     "pdf-lib": "1.17.1",
-    "tsx": "^4.23.15",
+    "pdfjs-dist": "4.10.38",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
     "typescript": "^7.0.2",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@opennextjs/cloudflare": "^1.20.13",
+    "tsx": "^4.23.15",
     "wrangler": "^4.154.0"
   },
   "overrides": {

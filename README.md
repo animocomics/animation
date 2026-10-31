@@ -76,6 +76,16 @@ npm run build
 npm start
 ```
 
+### کاهش حجم نصب Production در Plesk
+
+در تنظیم **Build Command** همان اپ Node.js در Plesk، یک‌بار `npm run build:plesk` را قرار دهید. این دستور بعد از Build موفق، Cacheهای قابل‌ساخت و Dev Dependencies مربوط به توسعه/Cloudflare را حذف می‌کند؛ فایل‌های لازم برای اجرای Next، SQLite، رندر PDF و تصحیح باقی می‌مانند.
+
+- برای نصب فعلی که Build موفق دارد، اسکریپت `compact:plesk` همین پاک‌سازی را بدون Build مجدد انجام می‌دهد.
+- TypeScript، Types و `pdf-lib` برای Buildهای بعدی حفظ می‌شوند؛ بنابراین Build مجدد باعث نصب خودکار ابزارهای حجیم Cloudflare نمی‌شود.
+- اسکریپت بدون وجود `BUILD_ID` متوقف می‌شود و در مسیر Cloudflare اجرا نمی‌شود.
+- `data/`، `NOMREH_DATA_DIR`، دیتابیس، Uploads، تنظیمات و فایل‌های کاربران هرگز پاک نمی‌شوند.
+- برای توسعهٔ محلی یا Build بعدی Cloudflare، ابتدا `npm ci` اجرا کنید تا Dev Dependencies دوباره نصب شوند.
+
 ### حساب‌های اولیهٔ نصب توسعه
 
 در اولین اجرا، اگر پایگاه‌داده خالی باشد، این دو حساب ساخته می‌شوند:
