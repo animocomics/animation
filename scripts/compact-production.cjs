@@ -19,7 +19,12 @@ if (!fs.existsSync(BUILD_ID)) {
 }
 
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
-const result = spawnSync(npm, ["prune", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"], {
+const npmCli = process.env.NOMREH_NPM_EXECPATH;
+const command = npmCli ? process.execPath : npm;
+const args = npmCli
+  ? [npmCli, "prune", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"]
+  : ["prune", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"];
+const result = spawnSync(command, args, {
   cwd: APP_ROOT,
   env: { ...process.env, NODE_ENV: "production", NEXT_TELEMETRY_DISABLED: "1", npm_config_update_notifier: "false" },
   stdio: "inherit",

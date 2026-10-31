@@ -64,7 +64,7 @@
 
 ## اجرا
 
-نیازمند Node.js 20 یا جدیدتر:
+نیازمند Node.js 22 یا جدیدتر برای اجرای معمول:
 
 ```bash
 npm install
@@ -80,9 +80,13 @@ npm run build
 npm start
 ```
 
-### کاهش حجم نصب Production در Plesk
+### Node اختصاصی و کاهش حجم Production در Plesk
 
-در تنظیم **Build Command** همان اپ Node.js در Plesk، `npm run build:plesk` را قرار دهید. این دستور بعد از Build موفق، Cacheهای قابل‌ساخت و Dev Dependencies را حذف می‌کند؛ فایل‌های لازم برای اجرای Next، SQLite، رندر PDF و تصحیح باقی می‌مانند.
+در تنظیم **Build Command** همان اپ Node.js در Plesk، `npm run build:plesk` را قرار دهید. اگر Plesk فقط Node قدیمی مثل 17.9.1 داشته باشد، این دستور Node.js **22.22.3** مخصوص همان نمونه را در `NOMREH_DATA_DIR/runtime` نصب یا دوباره استفاده می‌کند؛ Node سایر دامنه‌ها و تنظیم سراسری هاست تغییر نمی‌کند. نصب وابستگی‌ها، Build، Prune و آزمایش SQLite/Canvas همگی با Node 22 انجام می‌شوند و `server.js` اجرای Production را به همان Runtime می‌سپارد.
+
+باینری استاندارد با نسخهٔ ثابت و Lockfile از npm نصب می‌شود. برای Linux x64، اگر باینری استاندارد با glibc هاست ناسازگار باشد، راه‌انداز باینری همان نسخه از پروژهٔ Node.js unofficial-builds با الگوی `glibc-217` و **SHA-256 ثابت** را امتحان می‌کند. هیچ Runtime یا Header سراسری نصب نمی‌شود.
+
+این دستور بعد از Build موفق، Cacheهای قابل‌ساخت و Dev Dependencies را حذف می‌کند؛ فایل‌های لازم برای اجرای Next، SQLite، رندر PDF و تصحیح باقی می‌مانند. وابستگی‌های Native با باینری ازپیش‌ساخته‌شده استفاده می‌شوند و Lifecycle Scripts هنگام نصب اپ غیرفعال‌اند.
 
 - برای نصب فعلی که Build موفق دارد، اسکریپت `compact:plesk` همین پاک‌سازی را بدون Build مجدد انجام می‌دهد.
 - TypeScript، Types و `pdf-lib` برای Buildهای بعدی حفظ می‌شوند؛ بنابراین Build مجدد به نصب خودکار ابزارهای اضافی نیاز ندارد.
@@ -147,9 +151,26 @@ data/
 
 ## استقرار روی Plesk
 
-این نسخه برای اجرا روی ساب‌دامین `nomreh.arounidea.com` و از مخزن خصوصی GitHub آماده است. در اپ Node.js همان ساب‌دامین، Build Command را `npm run build:plesk` قرار بده و مسیر دادهٔ پایدار را با `NOMREH_DATA_DIR` مشخص کن. دادهٔ پیشنهادی خارج از Document Root و در `../nomreh-data` است؛ این فهرست و راز رمزنگاری را در Backup هاست نگه دار.
+این نسخه برای اجرا روی ساب‌دامین `nomreh.arounidea.com` و از مخزن خصوصی GitHub آماده است. Plesk با **Remote repository** و HTTPS/Fine-grained Token فقط از شاخهٔ `arena/f4b832aa-animation` Pull می‌کند و Webhook همان مخزن، Pull و Deployment خودکار را انجام می‌دهد. Workflow قدیمی GitHub Actions برای این مسیر لازم نیست و باید غیرفعال بماند تا دو Deploy هم‌زمان انجام نشود.
 
-برای به‌روزرسانی خودکار، Workflow موجود در `.github/workflows/plesk-deploy.yml` بعد از Push به شاخهٔ `arena/f4b832aa-animation`، در صورت تنظیم‌شدن Secrets مربوط به Plesk، همان commit را به مخزن خصوصی Git در Plesk Push می‌کند. استقرار Git و Build/Restart اپ باید در همان ساب‌دامین فعال باشد؛ هیچ سرویس یا پیکربندی ابری جداگانه‌ای لازم نیست.
+تنظیم اپ Node.js همان ساب‌دامین:
+
+- **Application Root:** همان Deployment directory، یعنی `/nomreh.arounidea.com`؛
+- **Document Root:** `/nomreh.arounidea.com/public`؛
+- **Application Startup File:** `server.js`؛
+- **Application Mode:** `production` و Package Manager برابر `npm`؛
+- **NOMREH_DATA_DIR:** مقدار پیشنهادی `../nomreh-data`، بیرون از Document Root و Deployment directory؛
+- رمزهای امنیتی فقط در Environment همان اپ و بدون ارسال به Git نگهداری شوند.
+
+پس از Pull، یک بار `npm run build:plesk` را از **Run Node.js commands / Run script** اجرا کنید و بعد از موفقیت، **Enable Node.js / Restart App** را بزنید. NPM Install جداگانه لازم نیست. برای Build و Restart خودکار در Deploymentهای بعدی، Post-deployment actions را فقط با این دستورها تنظیم کنید:
+
+```sh
+npm run build:plesk
+mkdir -p tmp
+touch tmp/restart.txt
+```
+
+فهرست داده و راز رمزنگاری را در Backup هاست نگه دارید. `runtime/` داخل فهرست داده قابل بازسازی است و Build هیچ دیتابیس، Upload یا Workspaceای را پاک نمی‌کند. هیچ سرویس ابری یا پیکربندی جداگانه‌ای لازم نیست.
 
 ## مسیر استفادهٔ واقعی
 

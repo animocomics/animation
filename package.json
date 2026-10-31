@@ -6,8 +6,9 @@
   "scripts": {
     "dev": "next dev -H 0.0.0.0",
     "build": "next build",
-    "build:plesk": "next build && node scripts/compact-production.cjs",
-    "compact:plesk": "node scripts/compact-production.cjs",
+    "build:plesk": "node scripts/plesk-node22.cjs build",
+    "setup:plesk": "node scripts/plesk-node22.cjs setup",
+    "compact:plesk": "node scripts/plesk-node22.cjs compact",
     "start": "next start -H 0.0.0.0",
     "start:plesk": "node scripts/plesk-standalone.cjs start",
     "restart:plesk": "node scripts/plesk-standalone.cjs restart",
@@ -16,7 +17,7 @@
     "test": "tsx --test tests/**/*.test.ts"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   },
   "allowScripts": {
     "better-sqlite3@13.0.3": true

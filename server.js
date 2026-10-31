@@ -1,21 +1,15 @@
-const { createServer } = require("node:http");
-const next = require("next");
+"use strict";
 
-process.env.NODE_ENV = "production";
-const port = Number(process.env.PORT) || 3000;
-const hostname = process.env.NOMREH_HOST || "0.0.0.0";
-const app = next({ dev: false, hostname, port });
-const handle = app.getRequestHandler();
+// Plesk may provide only an older bootstrap Node.js. Keep this launcher
+// compatible with Node 17, then run the actual Next.js server with the
+// domain-local Node 22 runtime installed by build:plesk.
+const major = Number(process.versions.node.split(".")[0]);
 
-app.prepare().then(() => {
-  const server = createServer((request, response) => handle(request, response));
-  server.listen(port, hostname, () => {
-    console.log(`Nomreh is ready on ${hostname}:${port}`);
-  });
-  const shutdown = () => server.close(() => process.exit(0));
-  process.on("SIGTERM", shutdown);
-  process.on("SIGINT", shutdown);
-}).catch((error) => {
-  console.error("Nomreh failed to start", error);
+if (major >= 22) {
+  require("./scripts/next-server.cjs");
+} else if (process.env.NOMREH_NODE22_DELEGATED === "1") {
+  console.error(`Nomreh requires its Node 22 runtime, but the delegated process is still ${process.version}.`);
   process.exit(1);
-});
+} else {
+  require("./scripts/plesk-node22.cjs").launchServer();
+}

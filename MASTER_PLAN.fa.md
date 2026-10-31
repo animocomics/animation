@@ -118,6 +118,8 @@
 
 نسخهٔ فعلی برای **یک نمونهٔ Node.js با دیسک پایدار** طراحی شده است. SQLite و فایل‌سیستم محلی برای Serverless موقت یا چند Replica بدون Storage مشترک مناسب نیستند. در Production باید HTTPS، Backup امن، راز پایدار، Volume ماندگار و رمزهای قوی تنظیم شود.
 
+در Plesk با Node قدیمی، `server.js` فقط راه‌انداز است و `build:plesk` نسخهٔ ثابت Node 22 را اختصاصی برای همان نمونه در `NOMREH_DATA_DIR/runtime` نصب یا بازاستفاده می‌کند. نصب، Build، Compact و آزمایش Nativeها با Node 22 انجام می‌شود؛ نسخهٔ Node سایر دامنه‌ها تغییر نمی‌کند. Fallback لینوکس‌های glibc قدیمی فقط از باینری همان نسخه با SHA-256 ثابت استفاده می‌کند و Runtime جزء فایل‌های قابل‌بازسازی است، نه دادهٔ کاربر.
+
 ### مسیر مقیاس
 
 PostgreSQL، Object Storage سازگار با S3، صف و Worker، KMS، Retention خودکار، Audit غیرقابل تغییر، Multi-tenancy سازمانی و اتصال LMS.
