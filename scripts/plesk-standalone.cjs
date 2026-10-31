@@ -72,7 +72,6 @@ function runtimeEnvironment() {
   environment.NODE_ENV = "production";
   environment.PORT = String(PORT);
   environment.NEXT_TELEMETRY_DISABLED = "1";
-  delete environment.NOMREH_CLOUDFLARE;
   return environment;
 }
 

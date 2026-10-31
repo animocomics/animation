@@ -14,9 +14,6 @@ const { spawnSync } = require("node:child_process");
 const APP_ROOT = path.resolve(__dirname, "..");
 const BUILD_ID = path.join(APP_ROOT, ".next", "BUILD_ID");
 
-if (process.env.NOMREH_CLOUDFLARE === "1") {
-  throw new Error("Production compaction is only for the Node/Plesk runtime, not a Cloudflare build.");
-}
 if (!fs.existsSync(BUILD_ID)) {
   throw new Error("A completed production build was not found. Run the Plesk build first; nothing was pruned.");
 }

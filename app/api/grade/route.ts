@@ -1,7 +1,6 @@
 import { randomUUID } from "crypto";
 import { NextResponse } from "next/server";
 import { AuthError, requireUser } from "@/lib/server/auth";
-import { cloudflareRun, getCloudflareDb } from "@/lib/server/cloudflare";
 import { createId } from "@/lib/server/ids";
 import { gradeRequestSchema } from "@/lib/server/grading-schema";
 import { mergeVerifiedResult, normalizeGradingResult } from "@/lib/server/normalize";
@@ -24,19 +23,17 @@ export async function POST(request: Request) {
   const recordJob = async (status: "succeeded" | "failed", usage = { inputTokens: 0, outputTokens: 0 }, error?: string) => {
     if (!user || !config) return;
     const now = new Date().toISOString();
-    const cloud = await getCloudflareDb();
+    const db = (await import("@/lib/server/db")).getDb();
     if (!jobId) {
       jobId = createId("job");
       const values = [jobId, user.id, input?.submissionId || null, config.provider, config.model, status, usage.inputTokens, usage.outputTokens, Date.now() - startedAt, error?.slice(0, 500) || null, now];
       const sql = `INSERT INTO ai_jobs (id, user_id, submission_id, provider, model, status, input_tokens, output_tokens, latency_ms, error, created_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-      if (cloud) await cloudflareRun(cloud, sql, values);
-      else (await import("@/lib/server/db")).getDb().prepare(sql).run(...values);
+      db.prepare(sql).run(...values);
     } else {
       const values = [status, usage.inputTokens, usage.outputTokens, Date.now() - startedAt, error?.slice(0, 500) || null, jobId];
       const sql = "UPDATE ai_jobs SET status=?, input_tokens=?, output_tokens=?, latency_ms=?, error=? WHERE id=?";
-      if (cloud) await cloudflareRun(cloud, sql, values);
-      else (await import("@/lib/server/db")).getDb().prepare(sql).run(...values);
+      db.prepare(sql).run(...values);
     }
   };
 

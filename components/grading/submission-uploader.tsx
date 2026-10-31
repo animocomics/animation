@@ -182,7 +182,7 @@ export function SubmissionUploader({ submissions, onChange }: {
           <h3>برگه‌ها را اینجا رها کنید</h3>
           <p>عکس JPG، PNG، WebP یا PDF · حداکثر ۱۵ مگابایت برای هر فایل</p>
           <button className="btn btn-primary" disabled={busy} onClick={() => bulkInput.current?.click()}>{busy ? <LoaderCircle className="spin-icon" size={17} /> : <FilePlus2 size={17} />}{busy ? "در حال ذخیره…" : "انتخاب فایل‌ها"}</button>
-          <span className="bulk-upload-note">در بارگذاری گروهی هر فایل یک برگه می‌شود؛ نام و کلاس هنگام تصحیح از روی برگه خوانده و با فهرست تطبیق داده خواهد شد.</span>
+          <span className="bulk-upload-note">در بارگذاری گروهی هر فایل یک دانش‌آموز جدید می‌شود. برای چند صفحهٔ یک نفر، یک PDF بسازید یا از دکمهٔ «افزودن صفحه / فایل» در کارت همان دانش‌آموز استفاده کنید.</span>
         </div>
         <aside className="add-student-panel">
           <span className="add-student-icon"><UserPlus size={22} /></span>

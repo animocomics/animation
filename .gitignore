@@ -13,10 +13,3 @@ data/
 *.db
 *.db-shm
 *.db-wal
-
-.open-next/
-.wrangler/
-.dev.vars*
-
-cloudflare/pdfium.esm.wasm
-wrangler.local.jsonc

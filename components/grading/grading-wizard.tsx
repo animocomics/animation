@@ -383,12 +383,12 @@ export function GradingWizard() {
         </div>}
 
         {step === 2 && <section className="card questions-wizard-card">
-          <div className="wizard-section-heading questions-heading"><span className="section-heading-icon"><ListChecks size={21} /></span><div><h3>سؤال‌ها، کلید و بارم تفصیلی</h3><p>معیارهای کوتاه و مستقل بنویسید؛ این مهم‌ترین عامل تصحیح منسجم است.</p></div><div className="questions-total-chip"><span>جمع نمرات</span><strong>{faNumber(totalExamScore(draft))}</strong></div></div>
+          <div className="wizard-section-heading questions-heading"><span className="section-heading-icon"><ListChecks size={21} /></span><div><h3>سؤال‌ها، کلید و بارم تفصیلی</h3><p>سؤال و کلید را در همین صفحه وارد کنید؛ برای تشریحی، پاسخ کامل و معیارهای نمره را بنویسید.</p></div><div className="questions-total-chip"><span>جمع نمرات</span><strong>{faNumber(totalExamScore(draft))}</strong></div></div>
           <QuestionEditor questions={draft.questions} onChange={(questions) => updateDraft({ questions })} />
         </section>}
 
         {step === 3 && <section className="card upload-wizard-card">
-          <div className="wizard-section-heading"><span className="section-heading-icon"><FileStack size={21} /></span><div><h3>برگه‌های دانش‌آموزان</h3><p>فایل‌ها در فضای امن همین حساب روی سرور نگه‌داری می‌شوند و فقط هنگام اجرا برای دانش‌آموز مربوط به مدل ارسال خواهند شد.</p></div><span className="badge badge-info">بدون OCR جداگانه</span></div>
+          <div className="wizard-section-heading"><span className="section-heading-icon"><FileStack size={21} /></span><div><h3>برگه‌های دانش‌آموزان</h3><p>همهٔ صفحات یک نفر را در کارت همان دانش‌آموز بگذارید؛ فایل‌ها روی سرور همین حساب نگه‌داری می‌شوند و فقط برای همان دانش‌آموز به مدل ارسال می‌شوند.</p></div><span className="badge badge-info">بدون OCR جداگانه</span></div>
           <div className="upload-wizard-body"><SubmissionUploader submissions={draft.submissions} onChange={(submissions) => { updateDraft({ submissions }); setSelectedIds([]); setHasRun(false); }} /></div>
         </section>}
 

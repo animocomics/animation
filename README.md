@@ -78,13 +78,13 @@ npm start
 
 ### کاهش حجم نصب Production در Plesk
 
-در تنظیم **Build Command** همان اپ Node.js در Plesk، یک‌بار `npm run build:plesk` را قرار دهید. این دستور بعد از Build موفق، Cacheهای قابل‌ساخت و Dev Dependencies مربوط به توسعه/Cloudflare را حذف می‌کند؛ فایل‌های لازم برای اجرای Next، SQLite، رندر PDF و تصحیح باقی می‌مانند.
+در تنظیم **Build Command** همان اپ Node.js در Plesk، `npm run build:plesk` را قرار دهید. این دستور بعد از Build موفق، Cacheهای قابل‌ساخت و Dev Dependencies را حذف می‌کند؛ فایل‌های لازم برای اجرای Next، SQLite، رندر PDF و تصحیح باقی می‌مانند.
 
 - برای نصب فعلی که Build موفق دارد، اسکریپت `compact:plesk` همین پاک‌سازی را بدون Build مجدد انجام می‌دهد.
-- TypeScript، Types و `pdf-lib` برای Buildهای بعدی حفظ می‌شوند؛ بنابراین Build مجدد باعث نصب خودکار ابزارهای حجیم Cloudflare نمی‌شود.
-- اسکریپت بدون وجود `BUILD_ID` متوقف می‌شود و در مسیر Cloudflare اجرا نمی‌شود.
+- TypeScript، Types و `pdf-lib` برای Buildهای بعدی حفظ می‌شوند؛ بنابراین Build مجدد به نصب خودکار ابزارهای اضافی نیاز ندارد.
+- اسکریپت بدون وجود `BUILD_ID` متوقف می‌شود تا در صورت Build ناقص چیزی حذف نشود.
 - `data/`، `NOMREH_DATA_DIR`، دیتابیس، Uploads، تنظیمات و فایل‌های کاربران هرگز پاک نمی‌شوند.
-- برای توسعهٔ محلی یا Build بعدی Cloudflare، ابتدا `npm ci` اجرا کنید تا Dev Dependencies دوباره نصب شوند.
+- برای توسعهٔ محلی یا نصب دوبارهٔ وابستگی‌ها، `npm ci` را اجرا کنید.
 
 ### حساب‌های اولیهٔ نصب توسعه
 
@@ -127,26 +127,13 @@ data/
 
 از کل این فهرست و راز رمزنگاری نسخهٔ پشتیبان امن بگیرید. فهرست `data` در Git نادیده گرفته شده است.
 
-> اجرای محلی Node.js با SQLite و دیسک پایدار انجام می‌شود. برای Cloudflare از مسیر اختصاصی زیر استفاده کنید؛ فایل‌سیستم موقت و ماژول‌های بومی در Workers به کار نمی‌روند.
+> اجرای Production فقط روی Node.js و هاست خودت انجام می‌شود؛ داده‌ها در SQLite و فایل‌های برگه روی دیسک پایدار همان هاست باقی می‌مانند.
 
-## استقرار Cloudflare Workers
+## استقرار روی Plesk
 
-نسخهٔ Cloudflare با OpenNext روی Workers اجرا می‌شود و از این bindingها استفاده می‌کند:
+این نسخه برای اجرا روی ساب‌دامین `nomreh.arounidea.com` و از مخزن خصوصی GitHub آماده است. در اپ Node.js همان ساب‌دامین، Build Command را `npm run build:plesk` قرار بده و مسیر دادهٔ پایدار را با `NOMREH_DATA_DIR` مشخص کن. دادهٔ پیشنهادی خارج از Document Root و در `../nomreh-data` است؛ این فهرست و راز رمزنگاری را در Backup هاست نگه دار.
 
-- **D1 (`DB`)**: کاربران، نشست‌ها، فضای کاری، مصرف و revisionها؛ JSON بزرگ فضای کاری به قطعات تراکنشی تقسیم می‌شود.
-- **KV (`UPLOADS_KV`)**: فایل‌های اصلی و metadata با کلیدهای تفکیک‌شدهٔ کاربر؛ در صورت اتصال R2، binding `UPLOADS` نیز پشتیبانی می‌شود.
-- **PDFium/WASM**: رندر داخلی PDF به JPEG با ماژول precompiled؛ هیچ سرویس OCR یا تبدیل خارجی و هیچ addon بومی‌ای لازم نیست.
-
-برای build محلیِ باندل Cloudflare:
-
-```bash
-npm ci
-npm run build:cloudflare
-```
-
-در استقرار واقعی `NOMREH_CLOUDFLARE=1` و رازهای `NOMREH_SECRET_KEY`, `NOMREH_ADMIN_USERNAME`, `NOMREH_ADMIN_PASSWORD`, `NOMREH_TEACHER_USERNAME` و `NOMREH_TEACHER_PASSWORD` باید به‌صورت Cloudflare Secrets تنظیم شوند. شناسه‌های `REPLACE_D1_ID` و `REPLACE_KV_ID` در `wrangler.jsonc` باید با منابع واقعی جایگزین شوند؛ این کار در workflow انجام می‌شود و هیچ رازی وارد Git نمی‌شود.
-
-Workflow در `.github/workflows/cloudflare-deploy.yml` با نشان `[cloudflare-deploy]` در پیام commit اجرا می‌شود. چون این محیط به حساب Cloudflare شخصی متصل نیست، bootstrap حساب موقت Wrangler استفاده می‌کند؛ برای ماندگاری حساب، لینک claim باید ظرف مهلت اعلام‌شدهٔ Cloudflare توسط مالک باز شود. این لینک و رمزهای تصادفی اولیه فقط یک‌بار تحویل داده می‌شوند و از خروجی عمومی CI حذف می‌شوند. پس از ورود، رمزها را تغییر دهید و کلید Provider واقعی را از پنل مدیر ذخیره کنید.
+برای به‌روزرسانی خودکار، Workflow موجود در `.github/workflows/plesk-deploy.yml` بعد از Push به شاخهٔ `arena/f4b832aa-animation`، در صورت تنظیم‌شدن Secrets مربوط به Plesk، همان commit را به مخزن خصوصی Git در Plesk Push می‌کند. استقرار Git و Build/Restart اپ باید در همان ساب‌دامین فعال باشد؛ هیچ سرویس یا پیکربندی ابری جداگانه‌ای لازم نیست.
 
 ## مسیر استفادهٔ واقعی
 
@@ -201,11 +188,9 @@ lib/
   server/provider-config.ts # AES-GCM و وضعیت عمومی/مدیر
   server/providers.ts    # OpenAI / Gemini / DeepSeek / Z.AI / MiniMax / Inkling / Mistral
   server/pdf-vision.ts   # تبدیل داخلی PDF برای Providerهای Chat-Vision و پیش‌نمایش صفحه‌ای
-  server/cloudflare.ts   # D1/KV bindings و schema ابری
   roster.ts              # تطبیق هویت، CSV و ردیف‌های کارنامه
-cloudflare/              # ورودی Worker و ماژول precompiled PDFium
-scripts/                 # build، تست E2E و آزمون ماندگاری Cloudflare
-wrangler.jsonc           # bindingهای D1/KV و تنظیمات Workers
+scripts/                 # Build و اجرای Node/Plesk
+.github/workflows/        # به‌روزرسانی خودکار مخزن Plesk
 tests/                   # نمره، رمز عبور، هویت و فهرست کلاس
 MASTER_PLAN.fa.md        # مسترپلن محصول، امنیت و پژوهش
 ```

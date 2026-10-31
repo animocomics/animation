@@ -1,5 +1,4 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypto";
-import { cloudflareFirst, cloudflareRun, getCloudflareDb, isCloudflareRuntime } from "./cloudflare";
 import type { ProviderId, ProviderPublicStatus } from "@/lib/types";
 import { DEFAULT_MODELS, PROVIDER_LABELS } from "./providers";
 
@@ -14,7 +13,6 @@ interface ProviderRow {
 async function encryptionKey(): Promise<Buffer> {
   const configured = process.env.NOMREH_SECRET_KEY;
   if (configured) return createHash("sha256").update(configured).digest();
-  if (isCloudflareRuntime()) throw new Error("NOMREH_SECRET_KEY برای رمزنگاری کلید سرویس‌دهنده تنظیم نشده است.");
   const [{ readFileSync, writeFileSync }, { default: path }, { DATA_DIRECTORY }] = await Promise.all([import("fs"), import("path"), import("./db")]);
   const keyPath = path.join(DATA_DIRECTORY, ".provider-secret");
   try {
@@ -44,10 +42,7 @@ async function decrypt(payload: string): Promise<string> {
 }
 
 async function findProviderRow(): Promise<ProviderRow | undefined> {
-  const cloud = await getCloudflareDb();
-  return cloud
-    ? cloudflareFirst<ProviderRow>(cloud, "SELECT * FROM provider_settings WHERE id = 1")
-    : (await import("./db")).getDb().prepare("SELECT * FROM provider_settings WHERE id = 1").get() as ProviderRow | undefined;
+  return (await import("./db")).getDb().prepare("SELECT * FROM provider_settings WHERE id = 1").get() as ProviderRow | undefined;
 }
 
 export async function getProviderStatus(includeKeyHint = false): Promise<ProviderPublicStatus> {
@@ -79,13 +74,11 @@ export async function saveProviderConfig(input: { provider: ProviderId; model?: 
   const model = input.model?.trim() || DEFAULT_MODELS[input.provider];
   const hint = `•••• ${apiKey.slice(-4)}`;
   const values = [input.provider, model, await encrypt(apiKey), hint, new Date().toISOString(), userId];
-  const cloud = await getCloudflareDb();
   const sql = `INSERT INTO provider_settings (id, provider, model, encrypted_api_key, key_hint, updated_at, updated_by)
     VALUES (1, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET provider=excluded.provider, model=excluded.model,
       encrypted_api_key=excluded.encrypted_api_key, key_hint=excluded.key_hint,
       updated_at=excluded.updated_at, updated_by=excluded.updated_by`;
-  if (cloud) await cloudflareRun(cloud, sql, values);
-  else (await import("./db")).getDb().prepare(sql).run(...values);
+  (await import("./db")).getDb().prepare(sql).run(...values);
   return getProviderStatus(true);
 }

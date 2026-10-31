@@ -1,6 +1,5 @@
 import { createHash, randomBytes } from "crypto";
 import { cookies } from "next/headers";
-import { cloudflareFirst, cloudflareRun, getCloudflareDb } from "./cloudflare";
 import { verifyPassword } from "./password";
 import type { AuthUser, UserRole } from "@/lib/types";
 
@@ -45,14 +44,11 @@ export function toAuthUser(row: UserRow): AuthUser {
 }
 
 export async function authenticate(username: string, password: string): Promise<AuthUser | null> {
-  const cloud = await getCloudflareDb();
-  const row = cloud
-    ? await cloudflareFirst<UserRow>(cloud, "SELECT * FROM users WHERE username = ? COLLATE NOCASE", [username.trim()])
-    : (await import("./db")).getDb().prepare("SELECT * FROM users WHERE username = ? COLLATE NOCASE").get(username.trim()) as UserRow | undefined;
+  const db = (await import("./db")).getDb();
+  const row = db.prepare("SELECT * FROM users WHERE username = ? COLLATE NOCASE").get(username.trim()) as UserRow | undefined;
   if (!row || !row.active || !verifyPassword(password, row.password_hash)) return null;
   const now = new Date().toISOString();
-  if (cloud) await cloudflareRun(cloud, "UPDATE users SET last_login_at = ? WHERE id = ?", [now, row.id]);
-  else (await import("./db")).getDb().prepare("UPDATE users SET last_login_at = ? WHERE id = ?").run(now, row.id);
+  db.prepare("UPDATE users SET last_login_at = ? WHERE id = ?").run(now, row.id);
   return toAuthUser({ ...row, last_login_at: now });
 }
 
@@ -61,10 +57,7 @@ export async function createSession(userId: string): Promise<string> {
   const now = new Date();
   const expires = new Date(now.getTime() + SESSION_DAYS * 24 * 60 * 60 * 1000);
   const values = [randomBytes(16).toString("hex"), createHash("sha256").update(token).digest("hex"), userId, expires.toISOString(), now.toISOString(), now.toISOString()];
-  const cloud = await getCloudflareDb();
-  if (cloud) await cloudflareRun(cloud, `INSERT INTO sessions (id, token_hash, user_id, expires_at, created_at, last_seen_at)
-    VALUES (?, ?, ?, ?, ?, ?)`, values);
-  else (await import("./db")).getDb().prepare(`INSERT INTO sessions (id, token_hash, user_id, expires_at, created_at, last_seen_at)
+  (await import("./db")).getDb().prepare(`INSERT INTO sessions (id, token_hash, user_id, expires_at, created_at, last_seen_at)
     VALUES (?, ?, ?, ?, ?, ?)`).run(...values);
   const cookieStore = await cookies();
   cookieStore.set(SESSION_COOKIE, token, {
@@ -80,11 +73,9 @@ export async function createSession(userId: string): Promise<string> {
 export async function destroySession(): Promise<void> {
   const cookieStore = await cookies();
   const token = cookieStore.get(SESSION_COOKIE)?.value;
-  const cloud = await getCloudflareDb();
   if (token) {
     const hash = createHash("sha256").update(token).digest("hex");
-    if (cloud) await cloudflareRun(cloud, "DELETE FROM sessions WHERE token_hash = ?", [hash]);
-    else (await import("./db")).getDb().prepare("DELETE FROM sessions WHERE token_hash = ?").run(hash);
+    (await import("./db")).getDb().prepare("DELETE FROM sessions WHERE token_hash = ?").run(hash);
   }
   cookieStore.delete(SESSION_COOKIE);
 }
@@ -95,17 +86,13 @@ export async function getCurrentUser(): Promise<AuthUser | null> {
   if (!token) return null;
   const tokenHash = createHash("sha256").update(token).digest("hex");
   const now = new Date().toISOString();
-  const cloud = await getCloudflareDb();
   const sql = `SELECT u.*, s.id AS session_id, s.expires_at, s.last_seen_at
     FROM sessions s JOIN users u ON u.id = s.user_id
     WHERE s.token_hash = ? AND s.expires_at > ? AND u.active = 1`;
-  const row = cloud
-    ? await cloudflareFirst<SessionRow>(cloud, sql, [tokenHash, now])
-    : (await import("./db")).getDb().prepare(sql).get(tokenHash, now) as SessionRow | undefined;
+  const row = (await import("./db")).getDb().prepare(sql).get(tokenHash, now) as SessionRow | undefined;
   if (!row) return null;
   if (Date.now() - new Date(row.last_seen_at).getTime() > 5 * 60 * 1000) {
-    if (cloud) await cloudflareRun(cloud, "UPDATE sessions SET last_seen_at = ? WHERE id = ?", [now, row.session_id]);
-    else (await import("./db")).getDb().prepare("UPDATE sessions SET last_seen_at = ? WHERE id = ?").run(now, row.session_id);
+    (await import("./db")).getDb().prepare("UPDATE sessions SET last_seen_at = ? WHERE id = ?").run(now, row.session_id);
   }
   return toAuthUser(row);
 }

@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { AuthError, requireAdmin, toAuthUser } from "@/lib/server/auth";
-import { cloudflareAll, cloudflareFirst, cloudflareRun, getCloudflareDb } from "@/lib/server/cloudflare";
 import { createId } from "@/lib/server/ids";
 import { hashPassword, isStrongEnoughPassword } from "@/lib/server/password";
 import type { UserRole } from "@/lib/types";
@@ -43,8 +42,7 @@ async function listUsers() {
     (SELECT COALESCE(SUM(j.input_tokens + j.output_tokens), 0) FROM ai_jobs j WHERE j.user_id = u.id) AS token_count,
     (SELECT w.updated_at FROM workspaces w WHERE w.user_id = u.id) AS workspace_updated_at
     FROM users u ORDER BY u.created_at`;
-  const cloud = await getCloudflareDb();
-  const rows = cloud ? await cloudflareAll<AdminUserRow>(cloud, sql) : (await localDb()).prepare(sql).all() as AdminUserRow[];
+  const rows = (await localDb()).prepare(sql).all() as AdminUserRow[];
   return rows.map((row) => ({
     ...toAuthUser(row),
     jobCount: row.job_count,
@@ -71,9 +69,7 @@ export async function POST(request: Request) {
     const values = [createId("user"), input.username, input.displayName, hashPassword(input.password), input.role, new Date().toISOString()];
     const sql = `INSERT INTO users (id, username, display_name, password_hash, role, active, created_at)
       VALUES (?, ?, ?, ?, ?, 1, ?)`;
-    const cloud = await getCloudflareDb();
-    if (cloud) await cloudflareRun(cloud, sql, values);
-    else (await localDb()).prepare(sql).run(...values);
+    (await localDb()).prepare(sql).run(...values);
     return NextResponse.json({ users: await listUsers() }, { status: 201 });
   } catch (error) {
     if (error instanceof z.ZodError) return NextResponse.json({ error: error.issues[0]?.message || "اطلاعات کاربر معتبر نیست." }, { status: 400 });
@@ -87,38 +83,20 @@ export async function PATCH(request: Request) {
   try {
     const admin = await requireAdmin();
     const input = updateSchema.parse(await request.json());
-    const cloud = await getCloudflareDb();
-    const target = cloud
-      ? await cloudflareFirst<{ id: string; role: UserRole }>(cloud, "SELECT id, role FROM users WHERE id = ?", [input.id])
-      : (await localDb()).prepare("SELECT id, role FROM users WHERE id = ?").get(input.id) as { id: string; role: UserRole } | undefined;
+    const db = await localDb();
+    const target = db.prepare("SELECT id, role FROM users WHERE id = ?").get(input.id) as { id: string; role: UserRole } | undefined;
     if (!target) return NextResponse.json({ error: "کاربر پیدا نشد." }, { status: 404 });
     if (input.active === false && (input.id === admin.id || target.role === "admin")) {
       return NextResponse.json({ error: "حساب مدیر را نمی‌توان غیرفعال کرد." }, { status: 400 });
     }
     if (input.password && !isStrongEnoughPassword(input.password)) throw new Error("رمز جدید باید شامل حرف و عدد باشد.");
-    if (input.displayName) {
-      if (cloud) await cloudflareRun(cloud, "UPDATE users SET display_name = ? WHERE id = ?", [input.displayName, input.id]);
-      else (await localDb()).prepare("UPDATE users SET display_name = ? WHERE id = ?").run(input.displayName, input.id);
-    }
-    if (input.active !== undefined) {
-      if (cloud) await cloudflareRun(cloud, "UPDATE users SET active = ? WHERE id = ?", [input.active ? 1 : 0, input.id]);
-      else (await localDb()).prepare("UPDATE users SET active = ? WHERE id = ?").run(input.active ? 1 : 0, input.id);
-    }
+    if (input.displayName) db.prepare("UPDATE users SET display_name = ? WHERE id = ?").run(input.displayName, input.id);
+    if (input.active !== undefined) db.prepare("UPDATE users SET active = ? WHERE id = ?").run(input.active ? 1 : 0, input.id);
     if (input.password) {
-      const passwordHash = hashPassword(input.password);
-      if (cloud) {
-        await cloudflareRun(cloud, "UPDATE users SET password_hash = ? WHERE id = ?", [passwordHash, input.id]);
-        await cloudflareRun(cloud, "DELETE FROM sessions WHERE user_id = ?", [input.id]);
-      } else {
-        const db = await localDb();
-        db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(passwordHash, input.id);
-        db.prepare("DELETE FROM sessions WHERE user_id = ?").run(input.id);
-      }
+      db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hashPassword(input.password), input.id);
+      db.prepare("DELETE FROM sessions WHERE user_id = ?").run(input.id);
     }
-    if (input.active === false) {
-      if (cloud) await cloudflareRun(cloud, "DELETE FROM sessions WHERE user_id = ?", [input.id]);
-      else (await localDb()).prepare("DELETE FROM sessions WHERE user_id = ?").run(input.id);
-    }
+    if (input.active === false) db.prepare("DELETE FROM sessions WHERE user_id = ?").run(input.id);
     return NextResponse.json({ users: await listUsers() });
   } catch (error) {
     if (error instanceof z.ZodError) return NextResponse.json({ error: "اطلاعات ویرایش معتبر نیست." }, { status: 400 });
