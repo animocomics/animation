@@ -97,6 +97,11 @@ test("Persian and Arabic answer normalization is stable", () => {
 test("objective scoring uses the answer key and detects ambiguity", () => {
   assert.deepEqual(deterministicObjectiveScore(mcq, "گزینه ۲ — میتوکندری").score, 2);
   assert.equal(deterministicObjectiveScore(mcq, "هسته").score, 0);
+  assert.equal(deterministicObjectiveScore(mcq, "گزینه ۲").score, 2, "a filled bubble reported only by number must map to the same option");
+  assert.equal(deterministicObjectiveScore(mcq, "ب").score, 2, "a filled bubble reported only by Persian option label must map to the same option");
+  assert.equal(deterministicObjectiveScore(mcq, "الف").score, 0);
+  assert.equal(deterministicObjectiveScore(mcq, "گزینه ۸").ambiguous, true);
+  assert.equal(deterministicObjectiveScore(mcq, "۱، ۲").ambiguous, true);
   assert.equal(deterministicObjectiveScore(mcq, "هسته و میتوکندری").ambiguous, true);
   const fill = { ...mcq, id: "fill", type: "fill_blank" as const, answer: "سلول", acceptedAnswers: ["یاخته"] };
   assert.equal(deterministicObjectiveScore(fill, "ياخته").score, 2);
@@ -105,6 +110,9 @@ test("objective scoring uses the answer key and detects ambiguity", () => {
 test("multiple response partial credit penalizes wrong selections without going below zero", () => {
   const multiple: Question = { ...mcq, type: "multiple_response", answer: "هسته، میتوکندری", partialCredit: true };
   assert.equal(deterministicObjectiveScore(multiple, "هسته، میتوکندری").score, 2);
+  assert.equal(deterministicObjectiveScore(multiple, "۱، ۲").score, 2);
+  assert.equal(deterministicObjectiveScore(multiple, "الف").score, 1);
+  assert.equal(deterministicObjectiveScore(multiple, "۱، ۹").ambiguous, true);
   assert.equal(deterministicObjectiveScore(multiple, "هسته").score, 1);
   assert.equal(deterministicObjectiveScore(multiple, "هسته، ریبوزوم، گلژی").score, 0);
 });

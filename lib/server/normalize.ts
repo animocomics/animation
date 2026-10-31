@@ -18,6 +18,15 @@ function splitAnswers(value: string): string[] {
   return value.split(/[,،;؛|\n]+/).map((part) => normalizeAnswer(part)).filter(Boolean);
 }
 
+function optionIndexFromLabel(value: string): number | undefined {
+  const normalized = normalizeAnswer(value);
+  const match = normalized.match(/^(?:(?:گزینه|پاسخ|جواب)(?:\s+شماره)?\s*)?(\d+|الف|ب|ج|د|ه|و|[a-f])$/);
+  if (!match) return undefined;
+  if (/^\d+$/.test(match[1])) return Number(match[1]);
+  const persianIndex = ["الف", "ب", "ج", "د", "ه", "و"].indexOf(match[1]);
+  return persianIndex >= 0 ? persianIndex + 1 : "abcdef".indexOf(match[1]) + 1;
+}
+
 interface DeterministicScore {
   score?: number;
   ambiguous?: boolean;
@@ -55,6 +64,23 @@ export function deterministicObjectiveScore(question: Question, extractedAnswer:
       return { score: 0, note: "گزینهٔ استخراج‌شده جزو پاسخ‌های صحیح نیست." };
     }
 
+    if (question.type === "multiple_choice") {
+      const labelParts = extractedAnswer.split(/[,،;؛|\n]+|\s+و\s+/).map((part) => normalizeAnswer(part)).filter(Boolean);
+      if (labelParts.length > 1 && labelParts.every((part) => optionIndexFromLabel(part) !== undefined)) return { ambiguous: true };
+      const optionIndex = optionIndexFromLabel(extracted);
+      if (optionIndex !== undefined) {
+        if (optionIndex < 1 || optionIndex > question.options.length || !question.options[optionIndex - 1]?.trim()) return { ambiguous: true };
+        const selected = normalizeAnswer(question.options[optionIndex - 1]);
+        const correctOption = question.options.find((option) => normalizeAnswer(question.answer) === normalizeAnswer(option));
+        if (correctOption) {
+          const correct = selected === normalizeAnswer(correctOption);
+          return { score: correct ? question.maxScore : 0, note: correct ? "گزینهٔ علامت‌خورده با کلید مطابقت دارد." : "گزینهٔ علامت‌خورده با کلید متفاوت است." };
+        }
+        if (accepted.includes(selected)) return { score: question.maxScore, note: "گزینهٔ علامت‌خورده با پاسخ صحیح مطابقت دارد." };
+        return { score: 0, note: "گزینهٔ علامت‌خورده جزو پاسخ‌های صحیح نیست." };
+      }
+    }
+
     if (question.type === "true_false" && ["درست", "غلط", "صحیح", "نادرست", "true", "false"].includes(extracted)) {
       const isTrue = ["درست", "صحیح", "true"].includes(extracted);
       const answerIsTrue = ["درست", "صحیح", "true"].includes(normalizeAnswer(question.answer));
@@ -65,7 +91,14 @@ export function deterministicObjectiveScore(question: Question, extractedAnswer:
   if (question.type === "multiple_response") {
     const correct = new Set(splitAnswers(question.answer));
     const selectedOptions = question.options.filter((option) => extracted.includes(normalizeAnswer(option)));
-    const selected = new Set(selectedOptions.length ? selectedOptions.map(normalizeAnswer) : splitAnswers(extractedAnswer));
+    const fallbackAnswers = extractedAnswer.split(/[,،;؛|\n]+|\s+و\s+/).map((part) => normalizeAnswer(part)).filter(Boolean);
+    const fallbackOptionIndexes = fallbackAnswers.map(optionIndexFromLabel);
+    if (!selectedOptions.length && fallbackOptionIndexes.some((index) => index !== undefined && (index < 1 || index > question.options.length))) return { ambiguous: true };
+    const fallbackSelections = fallbackAnswers.map((answer, index) => {
+      const optionIndex = fallbackOptionIndexes[index];
+      return optionIndex !== undefined ? normalizeAnswer(question.options[optionIndex - 1] ?? "") : answer;
+    }).filter(Boolean);
+    const selected = new Set(selectedOptions.length ? selectedOptions.map(normalizeAnswer) : fallbackSelections);
     if (!selected.size || !correct.size) return {};
     const correctSelections = [...selected].filter((answer) => correct.has(answer)).length;
     const wrongSelections = selected.size - correctSelections;

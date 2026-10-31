@@ -25,6 +25,7 @@ test("OpenAI adapter sends multimodal Responses input, strict schema and parses 
     const body = JSON.parse(String(init.body));
     assert.equal(body.store, false);
     assert.equal(body.text.format.strict, true);
+    assert.match(body.instructions, /سیاه\/پرشده/);
     const content = body.input[0].content;
     assert.ok(content.some((part: { type: string }) => part.type === "input_image"));
     assert.ok(content.some((part: { type: string }) => part.type === "input_file"));
@@ -52,6 +53,26 @@ test("question import uses a separate strict schema and no-guessing instructions
   }, async () => {
     const response = await callProvider({ provider: "openai", model: "gpt-4.1", apiKey: "secret-openai", prompt: "prompt", files: files.slice(0, 1), task: "question-import" });
     assert.equal(response.result.questions[0].prompt, "صورت خوانده‌شده");
+  });
+});
+
+test("separate answer-key import uses its strict schema and filled-mark instructions", async () => {
+  const extracted = {
+    answers: [{ questionNumber: 1, answer: "", selectedOptions: [2], complete: true, issues: [] }],
+    warnings: [],
+  };
+  await mockFetch((url, init) => {
+    assert.equal(url, "https://api.openai.com/v1/responses");
+    const body = JSON.parse(String(init.body));
+    assert.equal(body.text.format.name, "nomreh_answer_key_import");
+    assert.equal(body.text.format.strict, true);
+    assert.match(body.instructions, /سیاه یا پر کردن/);
+    assert.match(body.instructions, /نه حل‌کننده/);
+    assert.equal(body.text.format.schema.properties.answers.type, "array");
+    return Response.json({ output_text: JSON.stringify(extracted) });
+  }, async () => {
+    const response = await callProvider({ provider: "openai", model: "gpt-4.1", apiKey: "secret-openai", prompt: "prompt", files: files.slice(0, 1), task: "answer-key-import" });
+    assert.deepEqual(response.result.answers[0].selectedOptions, [2]);
   });
 });
 
