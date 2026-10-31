@@ -30,6 +30,8 @@ test("Plesk bootstrap pins Node 22 and delegates both build and production start
   assert.match(server, /major >= 22/);
   assert.match(server, /launchServer\(\)/);
   assert.match(launcher, /sha256: "[a-f0-9]{64}"/);
+  assert.match(launcher, /cdn\.npmmirror\.com/);
+  assert.match(launcher, /unofficial-builds\.nodejs\.org/);
   assert.match(launcher, /nodejs-unofficial-glibc-217/);
 });
 

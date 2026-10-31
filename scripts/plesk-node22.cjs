@@ -28,7 +28,11 @@ const BOOTSTRAP_PACKAGE = path.join(__dirname, "plesk-runtime");
 const LEGACY_NODE = {
   archive: `node-${NODE_TAG}-linux-x64-glibc-217.tar.xz`,
   directory: `node-${NODE_TAG}-linux-x64-glibc-217`,
-  url: `https://unofficial-builds.nodejs.org/download/release/${NODE_TAG}/node-${NODE_TAG}-linux-x64-glibc-217.tar.xz`,
+  urls: [
+    `https://cdn.npmmirror.com/binaries/node-unofficial-builds/${NODE_TAG}/node-${NODE_TAG}-linux-x64-glibc-217.tar.xz`,
+    `https://registry.npmmirror.com/-/binary/node-unofficial-builds/${NODE_TAG}/node-${NODE_TAG}-linux-x64-glibc-217.tar.xz`,
+    `https://unofficial-builds.nodejs.org/download/release/${NODE_TAG}/node-${NODE_TAG}-linux-x64-glibc-217.tar.xz`,
+  ],
   sha256: "5de83ffe678e6c478b7be75708458c2a2f552c300c8a24fb4bdcd1574cb7e132",
 };
 
@@ -205,7 +209,7 @@ async function downloadVerified(url, destination, expectedSha256, redirects = 0)
   if (parsed.protocol !== "https:") throw new Error("The Node runtime download must use HTTPS.");
   const response = await new Promise((resolve, reject) => {
     const request = https.get(parsed, { headers: { "User-Agent": "Nomreh-Plesk-Runtime/1.0" } }, resolve);
-    request.setTimeout(120000, () => request.destroy(new Error("The Node runtime download timed out.")));
+    request.setTimeout(60000, () => request.destroy(new Error("The Node runtime download timed out.")));
     request.on("error", reject);
   });
   if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
@@ -246,25 +250,30 @@ async function downloadVerified(url, destination, expectedSha256, redirects = 0)
   }
 }
 
-async function downloadVerifiedWithRetry(url, destination, expectedSha256) {
+async function downloadVerifiedWithRetry(urls, destination, expectedSha256) {
   let lastError;
+  let lastHost = "unknown";
   for (let attempt = 1; attempt <= 4; attempt += 1) {
+    const url = urls[(attempt - 1) % urls.length];
+    const host = new URL(url).host;
+    lastHost = host;
     try {
       if (attempt > 1) console.log(`Retrying the compatible Node runtime download (${attempt}/4)…`);
-      progress(`Downloading the compatible Node runtime (attempt ${attempt}/4)`);
+      console.log(`Download source: ${host}`);
+      progress(`Downloading the compatible Node runtime from ${host} (attempt ${attempt}/4)`);
       await downloadVerified(url, destination, expectedSha256);
       return;
     } catch (error) {
       lastError = error;
       if (attempt < 4) {
         const message = error instanceof Error ? error.message : String(error);
-        console.error(`Download attempt ${attempt} did not complete: ${message}`);
+        console.error(`Download attempt ${attempt} from ${host} did not complete: ${message}`);
         await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
       }
     }
   }
   const message = lastError instanceof Error ? lastError.message : String(lastError);
-  throw new Error(`The compatible Node runtime download failed after 4 attempts. Last error: ${message}`);
+  throw new Error(`The compatible Node runtime download failed after 4 attempts. Last source: ${lastHost}. Last error: ${message}`);
 }
 
 async function installLegacyRuntime() {
@@ -277,7 +286,7 @@ async function installLegacyRuntime() {
   try {
     console.log("Standard Node is not compatible; trying the Node.js community glibc-2.17 build with checksum verification…");
     progress("Preparing to download the compatible glibc-2.17 Node runtime");
-    await downloadVerifiedWithRetry(LEGACY_NODE.url, archive, LEGACY_NODE.sha256);
+    await downloadVerifiedWithRetry(LEGACY_NODE.urls, archive, LEGACY_NODE.sha256);
     progress("Extracting and testing the compatible Node runtime");
     execute("tar", ["-xJf", archive, "-C", staging], { cwd: RUNTIME_ROOT, timeout: 120000 });
     const sourceRoot = path.join(staging, LEGACY_NODE.directory);
