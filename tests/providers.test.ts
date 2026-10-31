@@ -36,6 +36,25 @@ test("OpenAI adapter sends multimodal Responses input, strict schema and parses 
   });
 });
 
+test("question import uses a separate strict schema and no-guessing instructions", async () => {
+  const extracted = {
+    questions: [{ number: 1, type: "short_answer", prompt: "صورت خوانده‌شده", maxScore: 2, answer: "کلید خوانده‌شده", options: [], acceptedAnswers: [], rubric: [], complete: true, issues: [] }],
+    warnings: [],
+  };
+  await mockFetch((url, init) => {
+    assert.equal(url, "https://api.openai.com/v1/responses");
+    const body = JSON.parse(String(init.body));
+    assert.equal(body.text.format.name, "nomreh_question_import");
+    assert.equal(body.text.format.strict, true);
+    assert.match(body.instructions, /حدس/);
+    assert.equal(body.text.format.schema.properties.questions.type, "array");
+    return Response.json({ output_text: JSON.stringify(extracted) });
+  }, async () => {
+    const response = await callProvider({ provider: "openai", model: "gpt-4.1", apiKey: "secret-openai", prompt: "prompt", files: files.slice(0, 1), task: "question-import" });
+    assert.equal(response.result.questions[0].prompt, "صورت خوانده‌شده");
+  });
+});
+
 test("DeepSeek adapter uses its Responses endpoint and accepts image content", async () => {
   await mockFetch((url, init) => {
     assert.equal(url, "https://api.deepseek.com/responses");

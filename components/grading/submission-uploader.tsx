@@ -15,12 +15,13 @@ import {
   X,
 } from "lucide-react";
 import { useApp } from "../../lib/app-context";
+import { ACCEPTED_FILE_TYPES, MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_LABEL } from "../../lib/file-constraints";
 import { deleteStoredFile, getStoredFile, storeFile } from "../../lib/file-store";
 import type { FileMeta, Submission } from "../../lib/types";
 import { faNumber, formatBytes, uid } from "../../lib/utils";
 
-const ACCEPTED_TYPES = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
-const MAX_FILE_SIZE = 15 * 1024 * 1024;
+const ACCEPTED_TYPES: readonly string[] = ACCEPTED_FILE_TYPES;
+const MAX_FILE_SIZE = MAX_FILE_SIZE_BYTES;
 
 function fileType(file: File): string {
   if (ACCEPTED_TYPES.includes(file.type)) return file.type;
@@ -84,7 +85,7 @@ export function SubmissionUploader({ submissions, onChange }: {
         continue;
       }
       if (file.size > MAX_FILE_SIZE) {
-        notify({ title: `فایل ${file.name} بزرگ‌تر از ۱۵ مگابایت است`, description: "آن را فشرده کنید یا صفحات را جدا کنید.", variant: "error" });
+        notify({ title: `فایل ${file.name} بزرگ‌تر از ${MAX_FILE_SIZE_LABEL} است`, description: "آن را فشرده کنید یا صفحات را جدا کنید.", variant: "error" });
         continue;
       }
       validFiles.push({ file, type });
@@ -97,7 +98,7 @@ export function SubmissionUploader({ submissions, onChange }: {
         const metas: FileMeta[] = [];
         for (const { file, type } of validFiles) {
           const id = uid("file");
-          await storeFile(id, file);
+          await storeFile(id, file, type);
           metas.push({ id, storedId: id, name: file.name, type, size: file.size });
         }
         onChange(submissions.map((submission) => submission.id === submissionId ? {
@@ -111,7 +112,7 @@ export function SubmissionUploader({ submissions, onChange }: {
         const newSubmissions: Submission[] = [];
         for (const [index, { file, type }] of validFiles.entries()) {
           const id = uid("file");
-          await storeFile(id, file);
+          await storeFile(id, file, type);
           newSubmissions.push({
             id: uid("submission"),
             studentName: nameFromFile(file.name, submissions.length + index),
@@ -180,7 +181,7 @@ export function SubmissionUploader({ submissions, onChange }: {
           <input ref={bulkInput} type="file" accept=".jpg,.jpeg,.png,.webp,.pdf" multiple hidden onChange={onBulkInput} />
           <span className="upload-illustration"><UploadCloud size={29} /></span>
           <h3>برگه‌ها را اینجا رها کنید</h3>
-          <p>عکس JPG، PNG، WebP یا PDF · حداکثر ۱۵ مگابایت برای هر فایل</p>
+          <p>عکس JPG، PNG، WebP یا PDF · حداکثر {MAX_FILE_SIZE_LABEL} برای هر فایل</p>
           <button className="btn btn-primary" disabled={busy} onClick={() => bulkInput.current?.click()}>{busy ? <LoaderCircle className="spin-icon" size={17} /> : <FilePlus2 size={17} />}{busy ? "در حال ذخیره…" : "انتخاب فایل‌ها"}</button>
           <span className="bulk-upload-note">در بارگذاری گروهی هر فایل یک دانش‌آموز جدید می‌شود. برای چند صفحهٔ یک نفر، یک PDF بسازید یا از دکمهٔ «افزودن صفحه / فایل» در کارت همان دانش‌آموز استفاده کنید.</span>
         </div>

@@ -61,6 +61,13 @@ test("chat-vision providers change PDF input; original images and direct-PDF pro
   assert.equal(await prepareProviderFiles(input, "gemini"), input);
 });
 
+test("question/key import can explicitly convert a five-page PDF before provider upload", async () => {
+  const converted = await prepareProviderFiles([await makePdf(5)], "openai", { convertAllPdfs: true });
+  assert.equal(converted.length, 5);
+  assert.ok(converted.every((file) => file.type === "image/jpeg"));
+  assert.match(converted[4].name, /صفحه 5/);
+});
+
 test("converted PDF reaches the DeepSeek adapter as JPEG images, never as input_file", async () => {
   const originalFetch = globalThis.fetch;
   let attachmentCount = 0;

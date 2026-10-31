@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_FILE_BASE64_LENGTH } from "../file-constraints";
 
 const rubricCriterionSchema = z.object({
   id: z.string().min(1),
@@ -24,6 +25,15 @@ const questionSchema = z.object({
   rubric: z.array(rubricCriterionSchema).max(50),
 });
 
+const gradeFileSchema = z.object({
+  name: z.string().min(1).max(300).optional(),
+  type: z.enum(["image/jpeg", "image/png", "image/webp", "application/pdf"]).optional(),
+  data: z.string().min(10).max(MAX_FILE_BASE64_LENGTH).optional(),
+  storedId: z.string().min(1).max(180).optional(),
+}).refine((file) => Boolean(file.storedId || (file.data && file.name && file.type)), {
+  message: "فایل باید شناسهٔ ذخیره‌شده یا دادهٔ معتبر داشته باشد.",
+});
+
 export const gradeRequestSchema = z.object({
   examId: z.string().min(1).max(200),
   submissionId: z.string().min(1).max(200).optional(),
@@ -44,11 +54,7 @@ export const gradeRequestSchema = z.object({
     name: z.string().max(200),
     code: z.string().max(100),
   }),
-  files: z.array(z.object({
-    name: z.string().min(1).max(300),
-    type: z.enum(["image/jpeg", "image/png", "image/webp", "application/pdf"]),
-    data: z.string().min(10).max(75_000_000),
-  })).min(1).max(30),
+  files: z.array(gradeFileSchema).min(1).max(30),
 });
 
 const criterionResultSchema = z.object({

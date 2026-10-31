@@ -16,10 +16,11 @@ async function apiError(response: Response, fallback: string): Promise<Error> {
   }
 }
 
-export async function storeFile(id: string, file: File): Promise<void> {
+export async function storeFile(id: string, file: File, typeOverride?: string): Promise<void> {
   const form = new FormData();
+  const upload = typeOverride && file.type !== typeOverride ? new File([file], file.name, { type: typeOverride, lastModified: file.lastModified }) : file;
   form.set("id", id);
-  form.set("file", file);
+  form.set("file", upload);
   const response = await fetch("/api/files", { method: "POST", body: form });
   if (!response.ok) throw await apiError(response, "بارگذاری فایل روی سرور ناموفق بود.");
 }

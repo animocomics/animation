@@ -1,5 +1,8 @@
+import { ACCEPTED_FILE_TYPES, MAX_FILE_SIZE_BYTES } from "../file-constraints";
+
+export { ACCEPTED_FILE_TYPES } from "../file-constraints";
+
 const SAFE_ID = /^[A-Za-z0-9_-]{1,180}$/;
-export const ACCEPTED_FILE_TYPES = ["image/jpeg", "image/png", "image/webp", "application/pdf"] as const;
 
 type StoredFile = { data: Buffer; name: string; type: string };
 
@@ -13,7 +16,7 @@ export function assertFileId(id: string): void {
 
 function validateFile(file: File): void {
   if (!(ACCEPTED_FILE_TYPES as readonly string[]).includes(file.type)) throw new Error("فرمت فایل پشتیبانی نمی‌شود.");
-  if (file.size < 10 || file.size > 15 * 1024 * 1024) throw new Error("حجم فایل باید کمتر از ۱۵ مگابایت باشد.");
+  if (file.size < 10 || file.size > MAX_FILE_SIZE_BYTES) throw new Error("حجم هر فایل باید حداکثر ۱۰۰ مگابایت باشد.");
 }
 
 export async function saveUserFile(userId: string, id: string, file: File): Promise<void> {

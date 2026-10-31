@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { deterministicObjectiveScore, normalizeGradingResult } from "../lib/server/normalize";
-import { modelResultSchema } from "../lib/server/grading-schema";
+import { gradeRequestSchema, modelResultSchema } from "../lib/server/grading-schema";
 import type { GradeApiRequest, Question } from "../lib/types";
 import { normalizeAnswer } from "../lib/utils";
 
@@ -133,6 +133,30 @@ test("a missing model question never disappears silently", () => {
   assert.equal(result.questions[1].score, 0);
   assert.equal(result.questions[1].needsReview, true);
   assert.ok(result.flags.some((flag) => flag.type === "rubric_mismatch" && flag.severity === "critical"));
+});
+
+test("grade requests accept owned stored-file references without browser Base64", () => {
+  const parsed = gradeRequestSchema.parse({ ...request, files: [{ storedId: "file_1", name: "sheet.png", type: "image/png" }] });
+  assert.equal(parsed.files[0].storedId, "file_1");
+  assert.equal(parsed.files[0].data, undefined);
+  assert.throws(() => gradeRequestSchema.parse({ ...request, files: [{ name: "missing.png", type: "image/png" }] }));
+});
+
+test("uncertain or illegible model content cannot keep an authoritative score", () => {
+  const raw = rawModelResult();
+  raw.questions[0].needsReview = true;
+  raw.questions[1].needsReview = true;
+  raw.questions[1].transcript = "[ناخوانا]";
+  raw.questions[1].extractedAnswer = "[ناخوانا]";
+  raw.questions[1].score = 3;
+  raw.questions[1].criteria[0].score = 3;
+  const result = normalizeGradingResult(raw, request, "openai", "gpt-4.1", { inputTokens: 0, outputTokens: 0 });
+  assert.equal(result.questions[0].score, 0, "even an exact-looking extraction must not win over an explicit review flag");
+  assert.equal(result.questions[1].score, 0);
+  assert.equal(result.questions[1].criteria[0].score, 0);
+  assert.equal(result.questions[1].needsReview, true);
+  assert.ok(result.flags.some((flag) => flag.type === "illegible" && flag.questionId === "q2"));
+  assert.match(result.questions[1].rationale, /نمرهٔ خودکار صفر/);
 });
 
 test("scores close to the pass boundary are routed to the teacher", () => {

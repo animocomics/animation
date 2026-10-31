@@ -3,6 +3,7 @@ import { AuthError, requireUser } from "@/lib/server/auth";
 import { clearUserFiles, saveUserFile } from "@/lib/server/file-storage";
 
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 export async function POST(request: Request) {
   try {

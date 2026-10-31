@@ -88,8 +88,9 @@ export async function renderPdfToVisionFiles(file: VisionFile, availableSlots: n
   }
 }
 
-export async function prepareProviderFiles(files: GradeApiRequest["files"], provider: ProviderId): Promise<GradeApiRequest["files"]> {
-  if (!["deepseek", "zai", "minimax", "inkling", "mistral"].includes(provider) || !files.some((file) => file.type === "application/pdf")) return files;
+export async function prepareProviderFiles(files: GradeApiRequest["files"], provider: ProviderId, options: { convertAllPdfs?: boolean } = {}): Promise<GradeApiRequest["files"]> {
+  const shouldConvertPdfs = options.convertAllPdfs || ["deepseek", "zai", "minimax", "inkling", "mistral"].includes(provider);
+  if (!shouldConvertPdfs || !files.some((file) => file.type === "application/pdf")) return files;
   const output: VisionFile[] = [];
   for (const file of files) {
     const converted = await renderPdfToVisionFiles(file, MAX_TOTAL_VISION_FILES - output.length);

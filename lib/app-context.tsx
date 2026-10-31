@@ -25,7 +25,7 @@ interface AppContextValue {
   deleteClass: (classId: string) => void;
   updateSubmission: (examId: string, submissionId: string, update: Partial<Submission>) => void;
   saveSettings: (settings: WorkspaceSettings) => void;
-  syncWorkspace: () => Promise<void>;
+  syncWorkspace: (data?: WorkspaceData) => Promise<void>;
   refreshProviderStatus: () => Promise<void>;
   notify: (toast: Omit<ToastMessage, "id">) => void;
   dismissToast: (id: string) => void;
@@ -180,8 +180,9 @@ export function AppProvider({ children, initialUser, initialProvider }: { childr
     }));
   }, []);
   const saveSettings = useCallback((nextSettings: WorkspaceSettings) => setSettings({ ...nextSettings, provider: providerStatus.provider, model: providerStatus.model }), [providerStatus.model, providerStatus.provider]);
-  const syncWorkspace = useCallback(async () => {
-    if (latestData.current) await persist(latestData.current);
+  const syncWorkspace = useCallback(async (data?: WorkspaceData) => {
+    const payload = data ?? latestData.current;
+    if (payload) await persist(payload);
   }, [persist]);
   const refreshProviderStatus = useCallback(async () => {
     const response = await fetch("/api/provider", { cache: "no-store" });

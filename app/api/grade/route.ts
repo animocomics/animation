@@ -2,7 +2,9 @@ import { randomUUID } from "crypto";
 import { NextResponse } from "next/server";
 import { AuthError, requireUser } from "@/lib/server/auth";
 import { createId } from "@/lib/server/ids";
+import { readUserFile } from "@/lib/server/file-storage";
 import { gradeRequestSchema } from "@/lib/server/grading-schema";
+import { MAX_FILE_SIZE_BYTES } from "@/lib/file-constraints";
 import { mergeVerifiedResult, normalizeGradingResult } from "@/lib/server/normalize";
 import { prepareProviderFiles } from "@/lib/server/pdf-vision";
 import { getProviderConfig } from "@/lib/server/provider-config";
@@ -12,6 +14,30 @@ import type { AuthUser, GradeApiRequest, GradingResult, ProviderId } from "@/lib
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
+
+type GradeFileInput = {
+  name?: string;
+  type?: "image/jpeg" | "image/png" | "image/webp" | "application/pdf";
+  data?: string;
+  storedId?: string;
+};
+
+async function resolveGradeFiles(userId: string, files: GradeFileInput[]): Promise<GradeApiRequest["files"]> {
+  const resolved: GradeApiRequest["files"] = [];
+  for (const file of files) {
+    if (file.data && file.name && file.type) {
+      if (Buffer.byteLength(file.data, "base64") > MAX_FILE_SIZE_BYTES) throw new ProviderError(`فایل «${file.name}» بزرگ‌تر از ۱۰۰ مگابایت است.`, 413);
+      resolved.push({ name: file.name, type: file.type, data: file.data });
+      continue;
+    }
+    if (!file.storedId) throw new Error("شناسهٔ یکی از فایل‌ها مشخص نیست.");
+    const stored = await readUserFile(userId, file.storedId);
+    if (!stored) throw new Error("یکی از فایل‌های برگه روی سرور پیدا نشد؛ دوباره بارگذاری کنید.");
+    if (stored.data.length > MAX_FILE_SIZE_BYTES) throw new ProviderError(`فایل «${stored.name}» بزرگ‌تر از ۱۰۰ مگابایت است.`, 413);
+    resolved.push({ name: stored.name, type: stored.type, data: stored.data.toString("base64") });
+  }
+  return resolved;
+}
 
 export async function POST(request: Request) {
   let user: AuthUser | undefined;
@@ -39,26 +65,32 @@ export async function POST(request: Request) {
 
   try {
     user = await requireUser();
-    input = gradeRequestSchema.parse(await request.json()) as GradeApiRequest;
-    config = await getProviderConfig();
+    const parsed = gradeRequestSchema.parse(await request.json());
     const workspace = (await loadWorkspace(user.id)).data;
-    if (!workspace?.exams.some((exam) => exam.id === input?.examId)) {
+    const ownedExam = workspace?.exams.find((exam) => exam.id === parsed.examId);
+    if (!ownedExam) {
       return NextResponse.json({ error: "این آزمون در فضای کاری شما پیدا نشد." }, { status: 403 });
     }
+    if (ownedExam.questionsNeedReview) {
+      return NextResponse.json({ error: "سؤال‌ها و کلید هنوز تأیید نشده‌اند. ابتدا پیش‌نویس را با برگهٔ اصلی مقایسه و در گام ۲ تأیید کنید." }, { status: 409 });
+    }
+    config = await getProviderConfig();
+    input = { ...parsed, files: await resolveGradeFiles(user.id, parsed.files) } as GradeApiRequest;
   } catch (error) {
-    if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.status });
+    if (error instanceof AuthError || error instanceof ProviderError) return NextResponse.json({ error: error.message }, { status: error.status });
     const message = error instanceof Error && !("issues" in error) ? error.message : "اطلاعات آزمون یا فایل‌ها کامل و معتبر نیست. نوع فایل، حجم و بارم سؤال‌ها را بررسی کنید.";
     return NextResponse.json({ error: message }, { status: 400 });
   }
 
   const approximateFileBytes = input.files.reduce((sum, file) => sum + Math.floor(file.data.length * 0.75), 0);
   const providerByteLimit = config.provider === "gemini" ? 14 * 1024 * 1024 : ["deepseek", "zai", "minimax", "inkling", "mistral"].includes(config.provider) ? 24 * 1024 * 1024 : 40 * 1024 * 1024;
-  if (approximateFileBytes > providerByteLimit) {
+  const hasPdf = input.files.some((file) => file.type === "application/pdf");
+  if (approximateFileBytes > providerByteLimit && !hasPdf) {
     return NextResponse.json({ error: "حجم کل فایل‌های این دانش‌آموز برای یک درخواست زیاد است؛ فایل را فشرده یا برگه را به دسته‌های کوچک‌تر تقسیم کنید." }, { status: 413 });
   }
   let usage = { inputTokens: 0, outputTokens: 0 };
   try {
-    const providerFiles = await prepareProviderFiles(input.files, config.provider);
+    const providerFiles = await prepareProviderFiles(input.files, config.provider, { convertAllPdfs: approximateFileBytes > providerByteLimit });
     const preparedBytes = providerFiles.reduce((sum, file) => sum + Math.floor(file.data.length * 0.75), 0);
     if (preparedBytes > providerByteLimit) {
       throw new ProviderError("حجم تصاویر صفحات پس از آماده‌سازی برای مدل زیاد است؛ تعداد صفحات را کمتر یا PDF را به دسته‌های کوچک‌تر تقسیم کنید.", 413);

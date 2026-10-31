@@ -66,7 +66,7 @@ export function DashboardHome() {
         <div className="welcome-actions">
           <Link href="/classes" className="btn btn-secondary"><UsersRound size={17} /> کلاس‌های من</Link>
           <Link href="/exams" className="btn btn-secondary"><BookOpenCheck size={17} /> آزمون‌های من</Link>
-          <Link href="/grading" className="btn btn-primary"><Plus size={18} /> تصحیح جدید</Link>
+          <Link href="/grading" className="btn btn-primary"><Plus size={18} /> آزمون جدید</Link>
         </div>
       </section>
 

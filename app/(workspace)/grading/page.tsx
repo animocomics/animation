@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import { GradingWizard } from "@/components/grading/grading-wizard";
 
-export const metadata: Metadata = { title: "تصحیح جدید" };
+export const metadata: Metadata = { title: "آزمون جدید" };
 
 export default function GradingPage() {
   return (

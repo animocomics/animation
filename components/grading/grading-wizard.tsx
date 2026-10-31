@@ -32,11 +32,11 @@ import {
   XCircle,
 } from "lucide-react";
 import { useApp } from "../../lib/app-context";
-import { readStoredFileAsBase64 } from "../../lib/file-store";
 import { applyIdentityMatch, populateRosterSubmissions } from "../../lib/roster";
 import type { Exam, ExamSettings, GradingResult, Submission } from "../../lib/types";
 import { faNumber, rubricScore, totalExamScore, uid } from "../../lib/utils";
 import { makeQuestion, QuestionEditor } from "./question-editor";
+import { QuestionSourceImporter } from "./question-source-importer";
 import { SubmissionUploader } from "./submission-uploader";
 
 const steps = [
@@ -89,6 +89,7 @@ export function GradingWizard() {
   const [dirty, setDirty] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [running, setRunning] = useState(false);
+  const [importBusy, setImportBusy] = useState(false);
   const [hasRun, setHasRun] = useState(false);
   const [activeIds, setActiveIds] = useState<string[]>([]);
   const [completedCount, setCompletedCount] = useState(0);
@@ -128,13 +129,21 @@ export function GradingWizard() {
     setDirty(true);
   };
 
+  const updateQuestions = (questions: Exam["questions"]) => {
+    updateDraft({ questions, ...(draft.questionSources?.length || draft.questionsImported ? { questionsNeedReview: true } : {}) });
+  };
+
   const goToStep = (nextStep: number) => {
     if (running || nextStep > maxStep) return;
+    if (importBusy) {
+      notify({ title: "خواندن برگه‌ها هنوز تمام نشده", description: "تا پایان ذخیره یا خواندن سؤال و کلید صبر کنید.", variant: "info" });
+      return;
+    }
     setStep(nextStep);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  const validateStep = (currentStep: number): boolean => {
+  const validateStep = (currentStep: number, skipImportReview = false): boolean => {
     if (currentStep === 1) {
       if (!draft.title.trim() || !draft.subject.trim() || !draft.classId || !draft.code?.trim()) {
         notify({ title: "مشخصات آزمون کامل نیست", description: "عنوان، درس، کد یکتا و کلاس الزامی هستند.", variant: "error" });
@@ -146,6 +155,14 @@ export function GradingWizard() {
       }
     }
     if (currentStep === 2) {
+      if (importBusy) {
+        notify({ title: "خواندن برگه‌ها هنوز تمام نشده", description: "تا پایان عملیات صبر کنید؛ پیش‌نویس ناقص تأیید نمی‌شود.", variant: "error" });
+        return false;
+      }
+      if (!skipImportReview && draft.questionsNeedReview) {
+        notify({ title: "تأیید سؤال و کلید لازم است", description: "پیش‌نویس را با برگهٔ اصلی مقایسه کنید و دکمهٔ «تأیید سؤال‌ها و کلید» را بزنید.", variant: "error" });
+        return false;
+      }
       const invalid = draft.questions.find((question) =>
         !question.prompt.trim() || !question.answer.trim() || question.maxScore <= 0 || Math.abs(rubricScore(question) - question.maxScore) > 0.001 ||
         (["multiple_choice", "multiple_response"].includes(question.type) && (question.options.filter((option) => option.trim()).length < 2)),
@@ -175,6 +192,15 @@ export function GradingWizard() {
     return true;
   };
 
+  const confirmQuestions = () => {
+    if (!validateStep(2, true)) return;
+    const confirmed = { ...draft, questionsNeedReview: false, isDemo: false };
+    setDraft(confirmed);
+    saveExam(confirmed);
+    setDirty(false);
+    notify({ title: "سؤال‌ها و کلید تأیید شد", description: "اکنون می‌توانید برگه‌های دانش‌آموزان را اضافه و تصحیح کنید.", variant: "success" });
+  };
+
   const nextStep = () => {
     if (!validateStep(step)) return;
     saveExam(draft);
@@ -189,6 +215,15 @@ export function GradingWizard() {
     saveExam(draft);
     setDirty(false);
     notify({ title: "پیش‌نویس ذخیره شد", description: "می‌توانید بعداً از بخش آزمون‌ها ادامه دهید.", variant: "success" });
+  };
+
+  const prepareQuestionImport = async () => {
+    // The import endpoint checks ownership on the server; persist a brand-new wizard draft first.
+    const nextExam = { ...draft, isDemo: false, updatedAt: new Date().toISOString() };
+    const nextExams = exams.some((exam) => exam.id === nextExam.id) ? exams.map((exam) => exam.id === nextExam.id ? nextExam : exam) : [nextExam, ...exams];
+    saveExam(nextExam);
+    setDirty(false);
+    await syncWorkspace({ exams: nextExams, classes, settings: { ...workspaceSettings, provider: providerStatus.provider, model: providerStatus.model } });
   };
 
   const eligibleSubmissions = useMemo(() => draft.submissions.filter((submission) => submission.files.length > 0 && submission.status !== "approved"), [draft.submissions]);
@@ -240,7 +275,7 @@ export function GradingWizard() {
         const submission = queue[index];
         setActiveIds((current) => [...current, submission.id]);
         try {
-          const files = await Promise.all(submission.files.map((file) => readStoredFileAsBase64(file.storedId)));
+          const files = submission.files.map((file) => ({ storedId: file.storedId, name: file.name, type: file.type }));
           if (controller.signal.aborted) return;
           const response = await fetch("/api/grade", {
             method: "POST",
@@ -383,8 +418,10 @@ export function GradingWizard() {
         </div>}
 
         {step === 2 && <section className="card questions-wizard-card">
-          <div className="wizard-section-heading questions-heading"><span className="section-heading-icon"><ListChecks size={21} /></span><div><h3>سؤال‌ها، کلید و بارم تفصیلی</h3><p>سؤال و کلید را در همین صفحه وارد کنید؛ برای تشریحی، پاسخ کامل و معیارهای نمره را بنویسید.</p></div><div className="questions-total-chip"><span>جمع نمرات</span><strong>{faNumber(totalExamScore(draft))}</strong></div></div>
-          <QuestionEditor questions={draft.questions} onChange={(questions) => updateDraft({ questions })} />
+          <div className="wizard-section-heading questions-heading"><span className="section-heading-icon"><ListChecks size={21} /></span><div><h3>سؤال‌ها، کلید و بارم تفصیلی</h3><p>سؤال و کلید را دستی وارد کنید یا برگه‌های سؤال و پاسخ‌نامهٔ معلم را بخوانید؛ خروجی خواندن، پیش‌نویس قابل ویرایش است.</p></div><div className="questions-total-chip"><span>جمع نمرات</span><strong>{faNumber(totalExamScore(draft))}</strong></div></div>
+          <QuestionSourceImporter examId={draft.id} sources={draft.questionSources ?? []} needsReview={draft.questionsNeedReview} imported={draft.questionsImported} warnings={draft.questionImportWarnings} onChange={updateDraft} onBusyChange={setImportBusy} beforeRead={prepareQuestionImport} />
+          {draft.questionsNeedReview ? <div className="notice notice-warning imported-questions-review"><CircleAlert size={19} /><div><strong>پیش‌نویس سؤال و کلید نیازمند تأیید معلم است</strong><p>صورت سؤال، نوع، نمره، کلید و معیارهای بارم را با تصویر اصلی مقایسه کنید. در صورت ویرایش هر سؤال، تأیید دوباره لازم است.</p><button type="button" className="btn btn-primary" disabled={importBusy} onClick={confirmQuestions}><CheckCircle2 size={17} />تأیید سؤال‌ها و کلید</button></div></div> : null}
+          <QuestionEditor questions={draft.questions} onChange={updateQuestions} />
         </section>}
 
         {step === 3 && <section className="card upload-wizard-card">

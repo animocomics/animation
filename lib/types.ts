@@ -98,6 +98,12 @@ export interface FileMeta {
   storedId: string;
 }
 
+export type QuestionSourceKind = "questions" | "answers" | "combined";
+
+export interface QuestionSourceFile extends FileMeta {
+  kind: QuestionSourceKind;
+}
+
 export interface CriterionResult {
   criterionId: string;
   score: number;
@@ -206,6 +212,11 @@ export interface Exam {
   duration: number;
   status: "draft" | "ready" | "grading" | "review" | "completed";
   questions: Question[];
+  questionSources?: QuestionSourceFile[];
+  /** Imported questions stay blocked until the teacher explicitly confirms them. */
+  questionsNeedReview?: boolean;
+  questionsImported?: boolean;
+  questionImportWarnings?: string[];
   settings: ExamSettings;
   submissions: Submission[];
   createdAt: string;

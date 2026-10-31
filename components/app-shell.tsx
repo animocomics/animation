@@ -11,7 +11,7 @@ const navigation = [
   { href: "/", label: "داشبورد", icon: LayoutDashboard },
   { href: "/classes", label: "کلاس‌ها و دانش‌آموزان", icon: UsersRound },
   { href: "/exams", label: "آزمون‌های من", icon: FileStack },
-  { href: "/grading", label: "تصحیح جدید", icon: Sparkles },
+  { href: "/grading", label: "آزمون جدید", icon: Sparkles },
   { href: "/review", label: "بازبینی نمرات", icon: ClipboardCheck, badge: true },
   { href: "/reports", label: "گزارش و تحلیل", icon: BarChart3 },
 ];
@@ -20,7 +20,7 @@ const pageTitles: Array<{ match: (path: string) => boolean; title: string; subti
   { match: (path) => path === "/", title: "داشبورد", subtitle: "نمای کلی آزمون‌ها و تصحیح‌ها" },
   { match: (path) => path.startsWith("/classes"), title: "کلاس‌ها و دانش‌آموزان", subtitle: "فهرست کلاس، تطبیق هویت و کارنامهٔ تجمیعی" },
   { match: (path) => path.startsWith("/exams"), title: "آزمون‌های من", subtitle: "مدیریت سؤال‌ها، برگه‌ها و وضعیت تصحیح" },
-  { match: (path) => path.startsWith("/grading"), title: "تصحیح جدید", subtitle: "از ساخت بارم تا دریافت نتیجه، در چهار گام" },
+  { match: (path) => path.startsWith("/grading"), title: "آزمون جدید", subtitle: "از ساخت بارم تا دریافت نتیجه، در چهار گام" },
   { match: (path) => path.startsWith("/review"), title: "بازبینی نمرات", subtitle: "بررسی شواهد و تأیید نهایی توسط معلم" },
   { match: (path) => path.startsWith("/reports"), title: "گزارش و تحلیل", subtitle: "عملکرد کلاس و نقاط نیازمند توجه" },
   { match: (path) => path.startsWith("/admin"), title: "مدیریت سامانه", subtitle: "کاربران، اتصال امن مدل و مصرف سرویس" },
@@ -91,7 +91,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <main className="page-content">{storageReady ? children : <div className="workspace-loading"><span className="brand-mark"><CheckCheck size={25} /></span><strong>فضای کاری امن شما آماده می‌شود</strong><LoaderCircle className="spin-icon" size={21} /><p>در حال خواندن کلاس‌ها، آزمون‌ها و نتایج…</p></div>}</main>
       </div>
 
-      <Link href="/grading" className="floating-create" title="تصحیح جدید"><Plus size={22} /><span>تصحیح جدید</span></Link>
+      <Link href="/grading" className="floating-create" title="آزمون جدید"><Plus size={22} /><span>آزمون جدید</span></Link>
       <div className="toast-viewport" aria-live="polite">{toasts.map((toast) => <div key={toast.id} className={`toast toast-${toast.variant}`}><span className="toast-icon">{toast.variant === "success" ? <Check size={18} /> : toast.variant === "error" ? <TriangleAlert size={18} /> : <Sparkles size={18} />}</span><div><strong>{toast.title}</strong>{toast.description && <p>{toast.description}</p>}</div><button onClick={() => dismissToast(toast.id)} aria-label="بستن پیام"><X size={16} /></button></div>)}</div>
     </div>
   );

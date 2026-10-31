@@ -8,6 +8,7 @@ import {
   CalendarDays,
   CheckCircle2,
   ChevronDown,
+  CircleAlert,
   Clock3,
   Download,
   FileQuestion,
@@ -89,6 +90,7 @@ export function ExamDetail({ examId }: { examId: string }) {
       {tab === "questions" && (
         <section className="questions-detail-list">
           <div className="questions-detail-intro"><div><h3>سؤال‌ها و معیارهای نمره‌دهی</h3><p>مدل ملزم است برای هر معیار، شاهد و نمرهٔ جداگانه برگرداند.</p></div><Link href={`/grading?exam=${exam.id}&step=2`} className="btn btn-secondary btn-sm">ویرایش در چیدمان آزمون</Link></div>
+          {exam.questionsNeedReview ? <div className="notice notice-warning"><CircleAlert size={18} /><div><strong>پیش‌نویس سؤال و کلید تأیید نشده است</strong><p>پیش از تصحیح، آن را در گام ۲ با برگهٔ اصلی مقایسه و تأیید کنید.</p></div></div> : null}
           {exam.questions.map((question) => {
             const open = openQuestion === question.id;
             return <article className={`card question-detail-item ${open ? "open" : ""}`} key={question.id}>

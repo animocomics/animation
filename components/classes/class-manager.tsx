@@ -113,7 +113,7 @@ export function ClassManager() {
 
   function populateGradebooks() {
     if (!selectedClass) return;
-    if (!classExams.length) { notify({ title: "هنوز آزمونی برای این کلاس نیست", description: "از مسیر تصحیح جدید، آزمون را به این کلاس متصل کنید.", variant: "info" }); return; }
+    if (!classExams.length) { notify({ title: "هنوز آزمونی برای این کلاس نیست", description: "از مسیر آزمون جدید، آزمون را به این کلاس متصل کنید.", variant: "info" }); return; }
     classExams.forEach((exam) => saveExam({ ...exam, submissions: populateRosterSubmissions(exam, selectedClass) }));
     notify({ title: "کارنامه‌ها به‌روز شد", description: "نمره‌های موجود وارد شد و ردیف برگه‌های مفقود با هشدار ساخته شد.", variant: "success" });
   }

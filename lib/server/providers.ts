@@ -1,4 +1,5 @@
 import { gradingJsonSchema, modelResultSchema, type ModelResult } from "./grading-schema";
+import { QUESTION_IMPORT_SYSTEM_INSTRUCTIONS, questionImportJsonSchema, questionImportResultSchema, type QuestionImportResult } from "./question-import-schema";
 import type { GradeApiRequest, ProviderId } from "../types";
 
 export const DEFAULT_MODELS: Record<ProviderId, string> = {
@@ -21,16 +22,19 @@ export const PROVIDER_LABELS: Record<ProviderId, string> = {
   mistral: "Mistral AI",
 };
 
+export type ProviderTask = "grading" | "question-import";
+
 interface ProviderCallInput {
   provider: ProviderId;
   model: string;
   apiKey: string;
   prompt: string;
   files: GradeApiRequest["files"];
+  task?: ProviderTask;
 }
 
-interface ProviderCallResult {
-  result: ModelResult;
+interface ProviderCallResult<T = ModelResult | QuestionImportResult> {
+  result: T;
   usage: { inputTokens: number; outputTokens: number };
 }
 
@@ -57,6 +61,7 @@ const SYSTEM_INSTRUCTIONS = `تو «موتور تصحیح نمره» هستی؛ 
 - در evidence صفحه و گواه کوتاه واقعی از پاسخ بیاور. اگر صفحه مشخص نیست null بگذار.
 - اگر پاسخ مبهم، خط‌خورده، چندگانه، خارج از بارم، خالی یا تصویر بی‌کیفیت است، هشدار مناسب بده و needsReview را true کن.
 - اگر چیزی را مطمئن نیستی حدس نزن؛ confidence واقع‌بینانه بده و علت را برای معلم بنویس.
+- برای محتوای مبهم، ناخوانا، ناقص یا تطبیق‌نیافته نمرهٔ حدسی صادر نکن؛ needsReview=true بگذار، score موقت را صفر نگه دار و در rationale علت را بنویس. این صفر به معنی اشتباه بودن پاسخ نیست و تا بررسی معلم قطعی نیست.
 - summary، rationale، strengths و improvements را به فارسی روشن و محترمانه بنویس.
 - خروجی فقط مطابق JSON Schema خواسته‌شده باشد.`;
 
@@ -125,19 +130,22 @@ function cleanJsonText(value: string): string {
   return trimmed;
 }
 
-function parseModelResult(value: string): ModelResult {
+function parseProviderResult(input: ProviderCallInput, value: string): ModelResult | QuestionImportResult {
   try {
-    return modelResultSchema.parse(JSON.parse(cleanJsonText(value)));
+    const parsed = JSON.parse(cleanJsonText(value));
+    return input.task === "question-import" ? questionImportResultSchema.parse(parsed) : modelResultSchema.parse(parsed);
   } catch (error) {
     if (error instanceof SyntaxError) {
-      throw new ProviderError("خروجی مدل JSON معتبر نبود؛ لطفاً تصحیح این برگه را دوباره اجرا کنید.", 502);
+      throw new ProviderError(input.task === "question-import" ? "خروجی مدل JSON معتبر نبود؛ پیش‌نویس سؤال‌ها ساخته نشد." : "خروجی مدل JSON معتبر نبود؛ لطفاً تصحیح این برگه را دوباره اجرا کنید.", 502);
     }
-    throw new ProviderError("ساختار نتیجهٔ مدل کامل نیست. نتیجه ذخیره نشد تا نمرهٔ اشتباه ثبت نشود؛ دوباره تلاش کنید.", 502);
+    throw new ProviderError(input.task === "question-import" ? "ساختار پیش‌نویس مدل کامل نیست؛ هیچ سؤال یا کلیدی ذخیره نشد. فایل واضح‌تر یا مدل دیگری امتحان کنید." : "ساختار نتیجهٔ مدل کامل نیست. نتیجه ذخیره نشد تا نمرهٔ اشتباه ثبت نشود؛ دوباره تلاش کنید.", 502);
   }
 }
 
-function systemInstructionsWithSchema(): string {
-  return `${SYSTEM_INSTRUCTIONS}\n- ساختار خروجی باید از این JSON Schema پیروی کند:\n${JSON.stringify(gradingJsonSchema)}`;
+function systemInstructionsWithSchema(input: ProviderCallInput): string {
+  const instructions = input.task === "question-import" ? QUESTION_IMPORT_SYSTEM_INSTRUCTIONS : SYSTEM_INSTRUCTIONS;
+  const schema = input.task === "question-import" ? questionImportJsonSchema : gradingJsonSchema;
+  return `${instructions}\n- ساختار خروجی باید از این JSON Schema پیروی کند:\n${JSON.stringify(schema)}`;
 }
 
 function chatContent(input: ProviderCallInput, imageStyle: "object" | "string" = "object", detail?: "low" | "default" | "high"): Array<Record<string, unknown>> {
@@ -200,14 +208,14 @@ async function callOpenAI(input: ProviderCallInput): Promise<ProviderCallResult>
     },
     body: JSON.stringify({
       model: input.model,
-      instructions: SYSTEM_INSTRUCTIONS,
+      instructions: systemInstructionsWithSchema(input),
       input: [{ role: "user", content }],
       text: {
         format: {
           type: "json_schema",
-          name: "nomreh_grading_result",
+          name: input.task === "question-import" ? "nomreh_question_import" : "nomreh_grading_result",
           strict: true,
-          schema: gradingJsonSchema,
+          schema: input.task === "question-import" ? questionImportJsonSchema : gradingJsonSchema,
         },
       },
       max_output_tokens: input.model.includes("gpt-4o") ? 16384 : 32768,
@@ -229,7 +237,7 @@ async function callOpenAI(input: ProviderCallInput): Promise<ProviderCallResult>
   if (!outputText) throw new ProviderError("مدل پاسخ متنی برنگرداند؛ احتمالاً ظرفیت خروجی پر شده یا پاسخ ناقص است.", 502);
   const usage = payload.usage as { input_tokens?: number; output_tokens?: number } | undefined;
   return {
-    result: parseModelResult(outputText),
+    result: parseProviderResult(input, outputText),
     usage: { inputTokens: usage?.input_tokens ?? 0, outputTokens: usage?.output_tokens ?? 0 },
   };
 }
@@ -259,7 +267,7 @@ async function callZai(input: ProviderCallInput): Promise<ProviderCallResult> {
       messages: [
         {
           role: "system",
-          content: `${SYSTEM_INSTRUCTIONS}\n- ساختار خروجی باید از این JSON Schema پیروی کند:\n${JSON.stringify(gradingJsonSchema)}`,
+          content: systemInstructionsWithSchema(input),
         },
         { role: "user", content },
       ],
@@ -290,7 +298,7 @@ async function callZai(input: ProviderCallInput): Promise<ProviderCallResult> {
   }
   const usage = payload.usage as { prompt_tokens?: number; completion_tokens?: number } | undefined;
   return {
-    result: parseModelResult(outputText),
+    result: parseProviderResult(input, outputText),
     usage: { inputTokens: usage?.prompt_tokens ?? 0, outputTokens: usage?.completion_tokens ?? 0 },
   };
 }
@@ -308,7 +316,7 @@ async function callMiniMax(input: ProviderCallInput): Promise<ProviderCallResult
     body: JSON.stringify({
       model: input.model,
       messages: [
-        { role: "system", content: systemInstructionsWithSchema() },
+        { role: "system", content: systemInstructionsWithSchema(input) },
         { role: "user", content: chatContent(input, "object", "high") },
       ],
       thinking: { type: "adaptive" },
@@ -329,7 +337,7 @@ async function callMiniMax(input: ProviderCallInput): Promise<ProviderCallResult
     const reason = choices?.[0]?.finish_reason;
     throw new ProviderError(`MiniMax نتیجهٔ قابل استفاده برنگرداند${reason ? ` (${reason})` : ""}. ظرفیت پاسخ و دسترسی مدل را بررسی کنید.`, 502);
   }
-  return { result: parseModelResult(outputText), usage: standardChatUsage(payload) };
+  return { result: parseProviderResult(input, outputText), usage: standardChatUsage(payload) };
 }
 
 async function callMistral(input: ProviderCallInput): Promise<ProviderCallResult> {
@@ -342,7 +350,7 @@ async function callMistral(input: ProviderCallInput): Promise<ProviderCallResult
     body: JSON.stringify({
       model: input.model,
       messages: [
-        { role: "system", content: systemInstructionsWithSchema() },
+        { role: "system", content: systemInstructionsWithSchema(input) },
         { role: "user", content: chatContent(input, "string") },
       ],
       response_format: { type: "json_object" },
@@ -358,7 +366,7 @@ async function callMistral(input: ProviderCallInput): Promise<ProviderCallResult
     const reason = choices?.[0]?.finish_reason;
     throw new ProviderError(`Mistral نتیجهٔ قابل استفاده برنگرداند${reason ? ` (${reason})` : ""}. ظرفیت پاسخ و دسترسی مدل را بررسی کنید.`, 502);
   }
-  return { result: parseModelResult(outputText), usage: standardChatUsage(payload) };
+  return { result: parseProviderResult(input, outputText), usage: standardChatUsage(payload) };
 }
 
 async function callInkling(input: ProviderCallInput): Promise<ProviderCallResult> {
@@ -385,7 +393,7 @@ async function callInkling(input: ProviderCallInput): Promise<ProviderCallResult
     },
     body: JSON.stringify({
       model: input.model,
-      system: systemInstructionsWithSchema(),
+      system: systemInstructionsWithSchema(input),
       messages: [{ role: "user", content }],
       output_config: { effort: "high" },
       max_tokens: 32768,
@@ -399,7 +407,7 @@ async function callInkling(input: ProviderCallInput): Promise<ProviderCallResult
   }
   const usage = payload.usage as { input_tokens?: number; output_tokens?: number } | undefined;
   return {
-    result: parseModelResult(outputText),
+    result: parseProviderResult(input, outputText),
     usage: { inputTokens: usage?.input_tokens ?? 0, outputTokens: usage?.output_tokens ?? 0 },
   };
 }
@@ -416,11 +424,11 @@ async function callGemini(input: ProviderCallInput): Promise<ProviderCallResult>
       method: "POST",
       headers: { "x-goog-api-key": input.apiKey, "Content-Type": "application/json" },
       body: JSON.stringify({
-        systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTIONS }] },
+        systemInstruction: { parts: [{ text: systemInstructionsWithSchema(input) }] },
         contents: [{ role: "user", parts }],
         generationConfig: {
           responseMimeType: "application/json",
-          responseSchema: gradingJsonSchema,
+          responseSchema: input.task === "question-import" ? questionImportJsonSchema : gradingJsonSchema,
           maxOutputTokens: 32768,
           temperature: 0.1,
         },
@@ -439,12 +447,14 @@ async function callGemini(input: ProviderCallInput): Promise<ProviderCallResult>
   }
   const usage = payload.usageMetadata as { promptTokenCount?: number; candidatesTokenCount?: number } | undefined;
   return {
-    result: parseModelResult(outputText),
+    result: parseProviderResult(input, outputText),
     usage: { inputTokens: usage?.promptTokenCount ?? 0, outputTokens: usage?.candidatesTokenCount ?? 0 },
   };
 }
 
-export function callProvider(input: ProviderCallInput): Promise<ProviderCallResult> {
+export function callProvider(input: ProviderCallInput & { task: "question-import" }): Promise<ProviderCallResult<QuestionImportResult>>;
+export function callProvider(input: ProviderCallInput): Promise<ProviderCallResult<ModelResult>>;
+export function callProvider(input: ProviderCallInput): Promise<ProviderCallResult<ModelResult | QuestionImportResult>> {
   if (input.provider === "gemini") return callGemini(input);
   if (input.provider === "zai") return callZai(input);
   if (input.provider === "minimax") return callMiniMax(input);

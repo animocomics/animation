@@ -1,6 +1,9 @@
 # Serve Nomreh directly from its local production server, without Passenger.
 # This file affects only this domain's public document root.
 DirectoryIndex disabled
+
+# Leave room for multipart/Base64 overhead; the app still enforces 100 MiB per file.
+LimitRequestBody 157286400
 RewriteEngine On
 ProxyPreserveHost On
 

@@ -142,7 +142,12 @@ export function normalizeGradingResult(
     const localFlags = new Set(raw.flags);
     let rationale = raw.rationale;
     const deterministic = deterministicObjectiveScore(question, raw.extractedAnswer || raw.transcript);
-    let score = deterministic.score ?? raw.score;
+    const hasIllegibleContent = /ناخوانا|unreadable|illegible/i.test(`${raw.transcript} ${raw.extractedAnswer}`);
+    const explicitUncertainty = raw.needsReview || deterministic.ambiguous || hasIllegibleContent || !raw.transcript.trim();
+    const suppressModelScore = explicitUncertainty;
+    // An uncertain model score is not evidence. Keep it at zero until the teacher reviews the sheet.
+    let score = suppressModelScore ? 0 : deterministic.score ?? raw.score;
+    if (suppressModelScore) rationale = `${rationale} به‌دلیل ابهام یا نقص در خواندن، نمرهٔ خودکار صفر و نیازمند بررسی معلم است.`.trim();
     if (deterministic.note) rationale = `${rationale} ${deterministic.note}`.trim();
     if (deterministic.ambiguous) {
       localFlags.add("multiple_answers");
@@ -157,7 +162,7 @@ export function normalizeGradingResult(
     score = round(clamp(Number(score), 0, question.maxScore), 2);
     const confidence = round(clamp(Number(raw.confidence), 0, 1), 2);
 
-    if (/ناخوانا|unreadable|illegible/i.test(raw.transcript)) {
+    if (hasIllegibleContent) {
       localFlags.add("illegible");
       addFlag({
         type: "illegible",
@@ -187,6 +192,16 @@ export function normalizeGradingResult(
         page: raw.evidence.page ?? undefined,
       });
     }
+    if (raw.needsReview && !localFlags.size) {
+      localFlags.add("other");
+      addFlag({
+        type: "other",
+        severity: "warning",
+        message: `مدل سؤال ${question.number} را نیازمند بررسی دانسته است؛ نمرهٔ مبهم قطعی نیست.`,
+        questionId: question.id,
+        page: raw.evidence.page ?? undefined,
+      });
+    }
 
     const rawCriteria = new Map(raw.criteria.map((criterion) => [criterion.criterionId, criterion]));
     const criteria = question.rubric.map((criterion) => {
@@ -197,7 +212,7 @@ export function normalizeGradingResult(
       }
       return {
         criterionId: criterion.id,
-        score: round(clamp(result.score, 0, criterion.points), 2),
+        score: suppressModelScore ? 0 : round(clamp(result.score, 0, criterion.points), 2),
         maxScore: criterion.points,
         note: result.note,
       };
