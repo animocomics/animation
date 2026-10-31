@@ -1,18 +1,18 @@
 import { randomUUID } from "crypto";
 import { mkdirSync } from "fs";
 import path from "path";
-import Database from "better-sqlite3";
+import { Database, type DatabaseConnection } from "./sqlite";
 import { hashPassword } from "./password";
 
 export const DATA_DIRECTORY = process.env.NOMREH_DATA_DIR || path.join(process.cwd(), "data");
 mkdirSync(DATA_DIRECTORY, { recursive: true });
 
 interface NomrehGlobal {
-  __nomrehDatabase?: Database.Database;
+  __nomrehDatabase?: DatabaseConnection;
 }
 const globalStore = globalThis as typeof globalThis & NomrehGlobal;
 
-function createDatabase(): Database.Database {
+function createDatabase(): DatabaseConnection {
   const database = new Database(path.join(DATA_DIRECTORY, "nomreh.db"));
   database.pragma("journal_mode = WAL");
   database.pragma("foreign_keys = ON");
@@ -116,7 +116,7 @@ function createDatabase(): Database.Database {
   return database;
 }
 
-export function getDb(): Database.Database {
+export function getDb(): DatabaseConnection {
   if (!globalStore.__nomrehDatabase) globalStore.__nomrehDatabase = createDatabase();
   return globalStore.__nomrehDatabase;
 }

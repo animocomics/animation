@@ -364,8 +364,8 @@ function compactProduction(runtime) {
 
 function smokeRuntime(runtime) {
   const source = `
-    const Database = require("better-sqlite3");
-    const database = new Database(":memory:");
+    const { DatabaseSync } = require("node:sqlite");
+    const database = new DatabaseSync(":memory:");
     database.exec("CREATE TABLE smoke (value INTEGER)");
     database.prepare("INSERT INTO smoke VALUES (?)").run(22);
     if (database.prepare("SELECT value FROM smoke").get().value !== 22) throw new Error("SQLite smoke failed");
