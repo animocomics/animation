@@ -1,15 +1,6 @@
-# Serve Nomreh directly from its local production server, without Passenger.
-# This file affects only this domain's public document root.
-DirectoryIndex disabled
-
-# Leave room for multipart/Base64 overhead; the app still enforces 100 MiB per file.
-LimitRequestBody 157286400
-RewriteEngine On
-ProxyPreserveHost On
+# Nomreh is served by the Plesk Node.js application (Passenger).
+# Do not proxy these requests to the legacy standalone runtime.
 
 # Keep certificate renewal challenges on Apache.
+RewriteEngine On
 RewriteRule ^\.well-known/acme-challenge/ - [L]
-
-# In per-directory context the root request has an empty path.
-RewriteRule ^$ http://127.0.0.1:32147/ [P,L]
-RewriteRule ^(.*)$ http://127.0.0.1:32147/$1 [P,L,QSA]
