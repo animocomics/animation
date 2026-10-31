@@ -8,7 +8,7 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 const APP_ROOT = path.resolve(__dirname, "..");
-const GIT_ROOT = path.join(path.dirname(APP_ROOT), ".git");
+const GIT_ROOTS = [path.join(path.dirname(APP_ROOT), "git"), path.join(path.dirname(APP_ROOT), ".git")];
 
 function gitDirectoryFor(candidate) {
   return [candidate, path.join(candidate, ".git")].find((entry) =>
@@ -50,10 +50,14 @@ function discoverRepository() {
       walk(path.join(directory, entry.name), depth + 1);
     }
   }
-  if (fs.existsSync(GIT_ROOT)) walk(GIT_ROOT, 0);
-  if (matches.length === 1) return matches[0];
-  if (matches.length > 1) throw new Error(`Multiple Nomreh Plesk mirrors were found under ${GIT_ROOT}. Nothing was changed.`);
-  throw new Error(`No Plesk mirror for rayavc099/animation was found under ${GIT_ROOT}. Nothing was changed.`);
+  for (const root of GIT_ROOTS) {
+    if (fs.existsSync(root)) walk(root, 0);
+  }
+  const uniqueMatches = [...new Set(matches)];
+  if (uniqueMatches.length === 1) return uniqueMatches[0];
+  const roots = GIT_ROOTS.join(" and ");
+  if (uniqueMatches.length > 1) throw new Error(`Multiple Nomreh Plesk mirrors were found under ${roots}. Nothing was changed.`);
+  throw new Error(`No Plesk mirror for rayavc099/animation was found under ${roots}. Nothing was changed.`);
 }
 
 const REPOSITORY = discoverRepository();
