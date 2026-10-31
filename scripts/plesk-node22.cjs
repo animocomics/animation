@@ -123,11 +123,14 @@ function runtimeEnvironment(runtime) {
   };
 }
 
-function runRuntimeNpm(runtime, args) {
+function runRuntimeNpm(runtime, args, extraEnvironment = {}) {
   const invocation = hostNpmInvocation();
   const command = invocation.npmCli ? runtime.nodeBinary : invocation.command;
   const prefix = invocation.npmCli ? [invocation.npmCli] : [];
-  execute(command, [...prefix, ...args], { cwd: APP_ROOT, env: runtimeEnvironment(runtime) });
+  execute(command, [...prefix, ...args], {
+    cwd: APP_ROOT,
+    env: { ...runtimeEnvironment(runtime), ...extraEnvironment },
+  });
 }
 
 function probeNode(nodeBinary) {
@@ -388,7 +391,10 @@ async function build() {
     installDependencies(runtime);
     console.log("Building Nomreh with Node 22…");
     progress("Building the Nomreh production application with Next.js");
-    runRuntimeNpm(runtime, ["run", "build"]);
+    // Plesk's legacy libc cannot load Next's native SWC packages. Force the
+    // pinned WASM fallback in the parent and every child instead of repeatedly
+    // attempting incompatible native binaries during the same build.
+    runRuntimeNpm(runtime, ["run", "build"], { NEXT_TEST_WASM: "1" });
     if (!fs.existsSync(path.join(APP_ROOT, ".next", "BUILD_ID"))) throw new Error("The production build did not create .next/BUILD_ID; nothing was compacted.");
     progress("Removing development-only packages and regenerable build caches");
     compactProduction(runtime);

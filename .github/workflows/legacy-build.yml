@@ -1,0 +1,62 @@
+name: Verify legacy Plesk build
+
+on:
+  push:
+    branches:
+      - arena/f4b832aa-animation
+    paths:
+      - .github/workflows/legacy-build.yml
+      - next.config.ts
+      - package.json
+      - package-lock.json
+      - scripts/compact-production.cjs
+      - scripts/plesk-node22.cjs
+      - scripts/plesk-runtime/node-v22.22.3-linux-x64-glibc-217.tar.xz
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  legacy-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out the deployment branch
+        uses: actions/checkout@v4
+
+      - name: Prepare the pinned glibc-2.17 Node runtime
+        env:
+          NODE_VERSION: 22.22.3
+          EXPECTED_SHA256: 5de83ffe678e6c478b7be75708458c2a2f552c300c8a24fb4bdcd1574cb7e132
+          EXPECTED_SIZE: 31403312
+        run: |
+          set -euo pipefail
+          archive="scripts/plesk-runtime/node-v${NODE_VERSION}-linux-x64-glibc-217.tar.xz"
+          test "$(stat -c %s "$archive")" = "$EXPECTED_SIZE"
+          printf '%s  %s\n' "$EXPECTED_SHA256" "$archive" | sha256sum --check -
+          data="$RUNNER_TEMP/nomreh-legacy-data"
+          mkdir -p "$data/runtime/node"
+          tar -xJf "$archive" -C "$data/runtime/node" --strip-components=1
+          printf '{"nodeVersion":"%s","kind":"nodejs-unofficial-glibc-217"}\n' "$NODE_VERSION" > "$data/runtime/runtime.json"
+
+      - name: Run the complete Plesk build on CentOS 7 and glibc 2.17
+        env:
+          NODE_VERSION: 22.22.3
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/work" \
+            --volume "$RUNNER_TEMP/nomreh-legacy-data:/nomreh-data-legacy-check" \
+            --workdir /work \
+            --env NOMREH_DATA_DIR=../nomreh-data-legacy-check \
+            --env NODE_VERSION \
+            centos:7 \
+            /bin/bash -c '
+              set -euo pipefail
+              export PATH="/nomreh-data-legacy-check/runtime/node/bin:$PATH"
+              node --version
+              test "$(node --version)" = "v${NODE_VERSION}"
+              ldd --version | head -1
+              npm run build:plesk
+            '

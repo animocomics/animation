@@ -27,6 +27,10 @@ test("Plesk bootstrap pins Node 22 and delegates both build and production start
   assert.equal(version, "22.22.3");
   assert.equal(runtimePackage.dependencies.node, version);
   assert.equal(packageJson.scripts["build:plesk"], "node scripts/plesk-node22.cjs build");
+  assert.equal(packageJson.scripts.build, "next build --webpack");
+  assert.match(launcher, /NEXT_TEST_WASM: "1"/);
+  const nextConfig = fs.readFileSync(path.join(root, "next.config.ts"), "utf8");
+  assert.match(nextConfig, /webpackBuildWorker: false/);
   assert.match(packageJson.engines.node, />=22/);
   assert.match(server, /major >= 22/);
   assert.match(server, /launchServer\(\)/);
