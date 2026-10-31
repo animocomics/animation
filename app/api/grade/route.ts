@@ -11,6 +11,7 @@ import { getProviderConfig } from "@/lib/server/provider-config";
 import { buildGradingPrompt, callProvider, ProviderError } from "@/lib/server/providers";
 import { loadWorkspace } from "@/lib/server/workspace-store";
 import type { AuthUser, GradeApiRequest, GradingResult, ProviderId } from "@/lib/types";
+import type { ProviderNetworkConfig } from "@/lib/api-network";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -42,7 +43,7 @@ async function resolveGradeFiles(userId: string, files: GradeFileInput[]): Promi
 export async function POST(request: Request) {
   let user: AuthUser | undefined;
   let input: GradeApiRequest | undefined;
-  let config: { provider: ProviderId; model: string; apiKey: string } | undefined;
+  let config: { provider: ProviderId; model: string; apiKey: string; network: ProviderNetworkConfig } | undefined;
   let jobId: string | undefined;
   const startedAt = Date.now();
 

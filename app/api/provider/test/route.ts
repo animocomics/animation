@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { AuthError, requireAdmin } from "@/lib/server/auth";
-import { getProviderConfig } from "@/lib/server/provider-config";
+import { getProviderConfig, getProviderNetworkConfig } from "@/lib/server/provider-config";
+import { providerFetch } from "@/lib/server/provider-network";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -16,6 +17,7 @@ export async function POST(request: Request) {
   try {
     await requireAdmin();
     const input = schema.parse(await request.json());
+    const network = await getProviderNetworkConfig();
     let apiKey = input.apiKey?.trim() || "";
     if (!apiKey) {
       const stored = await getProviderConfig();
@@ -70,7 +72,7 @@ export async function POST(request: Request) {
                 stream: false,
               }
             : undefined;
-    const response = await fetch(url, {
+    const response = await providerFetch(url, {
       method: isChat || isInkling ? "POST" : "GET",
       headers: isInkling
         ? { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "Content-Type": "application/json" }

@@ -1,6 +1,9 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "crypto";
 import type { ProviderId, ProviderPublicStatus } from "@/lib/types";
-import { DEFAULT_MODELS, PROVIDER_LABELS } from "./providers";
+import { ApiNetworkError, ensureApiNetworkActivated, getApiNetworkConfig, type ProviderNetworkConfig } from "./api-network";
+import { DEFAULT_MODELS, PROVIDER_LABELS, ProviderError } from "./providers";
+import { decryptSecret, encryptSecret } from "./secret-crypto";
+
+const PROVIDER_SECRET_PURPOSE = "nomreh-provider-v1";
 
 interface ProviderRow {
   provider: ProviderId;
@@ -8,37 +11,6 @@ interface ProviderRow {
   encrypted_api_key: string;
   key_hint: string;
   updated_at: string;
-}
-
-async function encryptionKey(): Promise<Buffer> {
-  const configured = process.env.NOMREH_SECRET_KEY;
-  if (configured) return createHash("sha256").update(configured).digest();
-  const [{ readFileSync, writeFileSync }, { default: path }, { DATA_DIRECTORY }] = await Promise.all([import("fs"), import("path"), import("./db")]);
-  const keyPath = path.join(DATA_DIRECTORY, ".provider-secret");
-  try {
-    return Buffer.from(readFileSync(keyPath, "utf8").trim(), "hex");
-  } catch {
-    const key = randomBytes(32);
-    writeFileSync(keyPath, key.toString("hex"), { mode: 0o600 });
-    return key;
-  }
-}
-
-async function encrypt(value: string): Promise<string> {
-  const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", await encryptionKey(), iv);
-  cipher.setAAD(Buffer.from("nomreh-provider-v1"));
-  const encrypted = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
-  return [iv, cipher.getAuthTag(), encrypted].map((part) => part.toString("base64url")).join(".");
-}
-
-async function decrypt(payload: string): Promise<string> {
-  const [iv, tag, encrypted] = payload.split(".");
-  if (!iv || !tag || !encrypted) throw new Error("فرمت کلید ذخیره‌شده معتبر نیست.");
-  const decipher = createDecipheriv("aes-256-gcm", await encryptionKey(), Buffer.from(iv, "base64url"));
-  decipher.setAAD(Buffer.from("nomreh-provider-v1"));
-  decipher.setAuthTag(Buffer.from(tag, "base64url"));
-  return Buffer.concat([decipher.update(Buffer.from(encrypted, "base64url")), decipher.final()]).toString("utf8");
 }
 
 async function findProviderRow(): Promise<ProviderRow | undefined> {
@@ -58,22 +30,33 @@ export async function getProviderStatus(includeKeyHint = false): Promise<Provide
   };
 }
 
-export async function getProviderConfig(): Promise<{ provider: ProviderId; model: string; apiKey: string }> {
-  const row = await findProviderRow();
+export async function getProviderNetworkConfig(): Promise<ProviderNetworkConfig> {
+  try {
+    const network = await getApiNetworkConfig();
+    if (network.enabled) await ensureApiNetworkActivated(network);
+    return { enabled: network.enabled, plan: network.plan, servers: network.servers };
+  } catch (error) {
+    if (error instanceof ApiNetworkError) throw new ProviderError(error.message, error.status);
+    throw error;
+  }
+}
+
+export async function getProviderConfig(): Promise<{ provider: ProviderId; model: string; apiKey: string; network: ProviderNetworkConfig }> {
+  const [row, network] = await Promise.all([findProviderRow(), getProviderNetworkConfig()]);
   if (!row?.encrypted_api_key) throw new Error("اتصال هوش مصنوعی هنوز توسط مدیر سامانه پیکربندی نشده است.");
-  return { provider: row.provider, model: row.model, apiKey: await decrypt(row.encrypted_api_key) };
+  return { provider: row.provider, model: row.model, apiKey: await decryptSecret(row.encrypted_api_key, PROVIDER_SECRET_PURPOSE), network };
 }
 
 export async function saveProviderConfig(input: { provider: ProviderId; model?: string; apiKey?: string }, userId: string): Promise<ProviderPublicStatus> {
   if (!["openai", "gemini", "deepseek", "zai", "minimax", "inkling", "mistral"].includes(input.provider)) throw new Error("ارائه‌دهنده انتخاب‌شده معتبر نیست.");
   const previous = await findProviderRow();
   const providerChanged = previous && previous.provider !== input.provider;
-  const apiKey = input.apiKey?.trim() || (!providerChanged && previous ? await decrypt(previous.encrypted_api_key) : "");
+  const apiKey = input.apiKey?.trim() || (!providerChanged && previous ? await decryptSecret(previous.encrypted_api_key, PROVIDER_SECRET_PURPOSE) : "");
   if (!apiKey) throw new Error("کلید API را وارد کنید.");
   if (apiKey.length < 12) throw new Error("کلید API کوتاه‌تر از حد انتظار است.");
   const model = input.model?.trim() || DEFAULT_MODELS[input.provider];
   const hint = `•••• ${apiKey.slice(-4)}`;
-  const values = [input.provider, model, await encrypt(apiKey), hint, new Date().toISOString(), userId];
+  const values = [input.provider, model, await encryptSecret(apiKey, PROVIDER_SECRET_PURPOSE), hint, new Date().toISOString(), userId];
   const sql = `INSERT INTO provider_settings (id, provider, model, encrypted_api_key, key_hint, updated_at, updated_by)
     VALUES (1, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET provider=excluded.provider, model=excluded.model,

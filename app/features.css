@@ -89,6 +89,23 @@
 .key-hint { margin-right:8px; color:var(--muted); font-size:9px; font-weight:400; }
 .admin-security-note { margin-top:18px; padding:14px; display:flex; align-items:flex-start; gap:10px; border:1px solid #dbe9e0; border-radius:12px; background:#f5faf7; color:var(--brand); }
 .admin-security-note strong { font-size:11px; }.admin-security-note p { margin-top:3px; color:var(--muted); font-size:10px; line-height:1.9; }
+.admin-network-divider { margin:27px 0 18px; padding:22px 0 18px; display:flex; align-items:center; gap:11px; border-top:1px solid var(--line); }
+.admin-network-divider h3 { font-size:14px; }.admin-network-divider p { margin-top:3px; color:var(--muted); font-size:10px; }
+.api-network-connection { display:grid; gap:14px; }
+.api-network-status { padding:14px 15px; display:flex; align-items:flex-start; gap:11px; border:1px solid var(--line); border-radius:12px; background:#fafbfa; }
+.api-network-status.enabled { border-color:#cce3d5; background:#f3faf5; }.api-network-status.has-error:not(.enabled) { border-color:#eed8ca; background:#fffaf6; }
+.api-network-status-icon { width:34px; height:34px; display:grid; place-items:center; flex-shrink:0; border-radius:10px; background:#edf1ed; color:var(--muted); }
+.api-network-status.enabled .api-network-status-icon { color:var(--brand); background:var(--mint); }.api-network-status.has-error:not(.enabled) .api-network-status-icon { color:var(--amber); background:var(--amber-bg); }
+.api-network-status > div { flex:1; min-width:0; }.api-network-status strong { font-size:11px; }.api-network-status p { margin-top:3px; color:var(--muted); font-size:10px; line-height:1.85; }.api-network-status small { display:block; margin-top:4px; color:var(--muted-2); font-size:8px; }
+.api-network-status > .badge { flex-shrink:0; }
+.api-network-explainer { display:flex; align-items:flex-start; gap:8px; padding:0 3px; color:var(--brand); }.api-network-explainer svg { flex-shrink:0; margin-top:2px; }.api-network-explainer p { color:var(--muted); font-size:10px; line-height:1.9; }
+.api-network-plan { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.api-network-plan > button { position:relative; padding:14px 15px; display:grid; gap:4px; border:1px solid var(--line); border-radius:12px; background:white; text-align:right; cursor:pointer; }.api-network-plan > button.selected { border-color:#9bcbb5; background:#f4faf6; box-shadow:inset 0 0 0 1px #d8ede0; }.api-network-plan > button:disabled { opacity:.6; cursor:wait; }
+.api-network-plan strong { color:var(--ink); font-size:11px; }.api-network-plan span { color:var(--muted); font-size:9px; }.api-network-plan small { margin-top:3px; color:var(--brand); font-size:9px; text-align:right; }
+.api-network-update-field { padding:14px; border:1px solid #e7e3f0; border-radius:12px; background:#fbfaff; }.api-network-update-field label small { margin-right:6px; color:var(--muted); font-size:8px; font-weight:400; }.api-network-update-field .form-hint a { color:var(--brand); text-decoration:underline; text-underline-offset:2px; }
+.api-network-dns-details { border:1px solid var(--line); border-radius:10px; background:#fcfdfc; }.api-network-dns-details summary { padding:10px 13px; color:var(--muted); font-size:9px; cursor:pointer; }.api-network-dns-details[open] summary { border-bottom:1px solid var(--line); }.api-network-dns-details .api-fields { padding:13px; }
+.api-network-error { display:flex; align-items:flex-start; gap:8px; padding:11px 13px; border:1px solid #eed8ca; border-radius:10px; background:#fff8f3; color:var(--red); font-size:10px; line-height:1.8; }.api-network-error svg { flex-shrink:0; margin-top:2px; }
+.api-network-actions { margin-top:0; }.api-network-help { margin-right:auto; color:var(--brand); font-size:9px; text-decoration:underline; text-underline-offset:3px; }.api-network-footnote { margin-top:-5px; color:var(--muted-2); font-size:9px; line-height:1.9; }
 .admin-section-heading { padding:20px 22px; display:flex; align-items:center; justify-content:space-between; gap:16px; border-bottom:1px solid var(--line); }
 .admin-section-heading h3 { font-size:14px; }.admin-section-heading p { margin-top:3px; color:var(--muted); font-size:10px; }
 .table-scroll { width:100%; overflow-x:auto; }
@@ -173,6 +190,7 @@
   .admin-overview { padding:17px; flex-direction:column; }.admin-shield { width:43px; height:43px; }.admin-overview h2 { font-size:16px; }.admin-overview p { font-size:9px; }
   .admin-overview-actions { width:100%; }.admin-overview-actions .btn { flex:1; justify-content:center; }
   .admin-tabs,.class-tabs { width:100%; }.admin-tabs button,.class-tabs button { flex:1; padding:7px 9px; font-size:9px; }
+  .api-network-plan { grid-template-columns:1fr; }.api-network-status > .badge { display:none; }.api-network-actions { align-items:stretch; flex-direction:column; }.api-network-actions .btn { width:100%; justify-content:center; }.api-network-help { margin:0; text-align:center; }
   .admin-section-heading { align-items:flex-start; flex-direction:column; padding:16px; }.admin-section-heading > .btn { width:100%; }
   .class-list { grid-template-columns:1fr; }
   .class-header-card { align-items:flex-start; padding:14px; }.class-header-card > div:first-child { align-items:flex-start; }.class-hero-icon { width:38px; height:38px; }.class-title-line h2 { font-size:14px; }.class-header-actions .btn { font-size:0; width:35px; padding:0; }.class-header-actions .btn svg { margin:0; }

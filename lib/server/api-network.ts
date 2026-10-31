@@ -1,0 +1,230 @@
+import { isIPv4 } from "node:net";
+import type { ApiNetworkPublicStatus } from "../types";
+import { SHECAN_DNS, type ProviderNetworkConfig } from "../api-network";
+import { closeProviderNetwork, providerFetch, ProviderNetworkError } from "./provider-network";
+import { decryptSecret, encryptSecret } from "./secret-crypto";
+
+const UPDATE_URL_PURPOSE = "nomreh-api-network-v1";
+const ACTIVATION_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const TEST_HOST = "generativelanguage.googleapis.com";
+
+export type { ProviderNetworkConfig } from "../api-network";
+
+interface ApiNetworkRow {
+  plan: "free" | "pro";
+  dns_primary: string;
+  dns_secondary: string;
+  enabled: number;
+  encrypted_update_url: string;
+  last_test_status: "idle" | "success" | "error";
+  last_test_message: string;
+  last_tested_at?: string;
+  last_test_latency_ms?: number;
+  last_activated_at?: string;
+  updated_at: string;
+}
+
+export interface ApiNetworkConfig extends ProviderNetworkConfig {
+  updateUrl: string;
+  lastActivatedAt?: string;
+}
+
+export interface SaveApiNetworkInput {
+  enabled: boolean;
+  plan: "free" | "pro";
+  servers: [string, string];
+  updateUrl?: string;
+}
+
+interface ActivationGlobal {
+  __nomrehShecanActivation?: { key: string; promise: Promise<string> };
+}
+
+const globalStore = globalThis as typeof globalThis & ActivationGlobal;
+
+export class ApiNetworkError extends Error {
+  status: number;
+
+  constructor(message: string, status = 502, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "ApiNetworkError";
+    this.status = status;
+  }
+}
+
+async function findRow(): Promise<ApiNetworkRow | undefined> {
+  return (await import("./db")).getDb().prepare("SELECT * FROM api_network_settings WHERE id = 1").get() as ApiNetworkRow | undefined;
+}
+
+export async function getApiNetworkStatus(): Promise<ApiNetworkPublicStatus> {
+  const row = await findRow();
+  if (!row) return {
+    configured: false,
+    enabled: false,
+    plan: "free",
+    servers: [...SHECAN_DNS.free],
+    hasUpdateUrl: false,
+    lastTestStatus: "idle",
+    lastTestMessage: "شکن خاموش است؛ درخواست‌های AI مستقیم به سرویس‌دهنده ارسال می‌شوند.",
+  };
+  return {
+    configured: true,
+    enabled: Boolean(row.enabled),
+    plan: row.plan,
+    servers: [row.dns_primary, row.dns_secondary],
+    hasUpdateUrl: Boolean(row.encrypted_update_url),
+    lastTestStatus: row.last_test_status,
+    lastTestMessage: row.last_test_message,
+    lastTestedAt: row.last_tested_at || undefined,
+    lastTestLatencyMs: row.last_test_latency_ms ?? undefined,
+    lastActivatedAt: row.last_activated_at || undefined,
+    updatedAt: row.updated_at,
+  };
+}
+
+export async function getApiNetworkConfig(): Promise<ApiNetworkConfig> {
+  const row = await findRow();
+  if (!row) return { enabled: false, plan: "free", servers: [...SHECAN_DNS.free], updateUrl: "" };
+  let updateUrl = "";
+  if (row.enabled && row.encrypted_update_url) {
+    try {
+      updateUrl = await decryptSecret(row.encrypted_update_url, UPDATE_URL_PURPOSE);
+    } catch (error) {
+      throw new ApiNetworkError("لینک به‌روزرسان ذخیره‌شده باز نشد؛ آن را دوباره در مدیریت سامانه وارد و ذخیره کنید.", 500, { cause: error });
+    }
+  }
+  return {
+    enabled: Boolean(row.enabled),
+    plan: row.plan,
+    servers: [row.dns_primary, row.dns_secondary],
+    updateUrl,
+    lastActivatedAt: row.last_activated_at || undefined,
+  };
+}
+
+function validateUpdateUrl(value: string): string {
+  let url: URL;
+  try { url = new URL(value); } catch { throw new ApiNetworkError("لینک به‌روزرسان معتبر نیست؛ همان لینک کامل داخل سفارش شکن را کپی کنید.", 400); }
+  const hostname = url.hostname.toLowerCase();
+  if (url.protocol !== "https:" || !(hostname === "shecan.ir" || hostname.endsWith(".shecan.ir")) || url.username || url.password) {
+    throw new ApiNetworkError("لینک به‌روزرسان باید HTTPS و متعلق به دامنهٔ رسمی shecan.ir باشد.", 400);
+  }
+  return url.toString();
+}
+
+async function activateUpdateUrl(updateUrl: string): Promise<string> {
+  let response: Response;
+  try {
+    response = await fetch(updateUrl, {
+      cache: "no-store",
+      redirect: "follow",
+      signal: AbortSignal.timeout(15_000),
+      headers: { "User-Agent": "Nomreh-Shecan-IP-Activation/1.0" },
+    });
+  } catch (error) {
+    throw new ApiNetworkError("فراخوانی لینک به‌روزرسان شکن ناموفق بود؛ لینک و دسترسی خروجی سرور به shecan.ir را بررسی کنید.", 502, { cause: error });
+  }
+  await response.arrayBuffer();
+  const finalUrl = new URL(response.url || updateUrl);
+  const finalHost = finalUrl.hostname.toLowerCase();
+  if (finalUrl.protocol !== "https:" || !(finalHost === "shecan.ir" || finalHost.endsWith(".shecan.ir"))) {
+    throw new ApiNetworkError("لینک به‌روزرسان به مقصد غیرمنتظره‌ای هدایت شد و پذیرفته نشد.", 400);
+  }
+  if (!response.ok) throw new ApiNetworkError(`شکن لینک به‌روزرسان را نپذیرفت (HTTP ${response.status}). لینک را از همان سفارش فعال دوباره کپی کنید.`, 400);
+  return new Date().toISOString();
+}
+
+export async function ensureApiNetworkActivated(network: ApiNetworkConfig): Promise<void> {
+  if (!network.enabled || network.plan !== "pro" || !network.updateUrl) return;
+  if (network.lastActivatedAt && Date.now() - Date.parse(network.lastActivatedAt) < ACTIVATION_INTERVAL_MS) return;
+  const key = network.updateUrl;
+  if (!globalStore.__nomrehShecanActivation || globalStore.__nomrehShecanActivation.key !== key) {
+    globalStore.__nomrehShecanActivation = { key, promise: activateUpdateUrl(key) };
+  }
+  const activation = globalStore.__nomrehShecanActivation;
+  try {
+    const activatedAt = await activation.promise;
+    (await import("./db")).getDb().prepare("UPDATE api_network_settings SET last_activated_at=? WHERE id=1").run(activatedAt);
+  } finally {
+    if (globalStore.__nomrehShecanActivation === activation) delete globalStore.__nomrehShecanActivation;
+  }
+}
+
+async function testGoogleThroughShecan(network: ProviderNetworkConfig): Promise<number> {
+  const startedAt = Date.now();
+  const response = await providerFetch(`https://${TEST_HOST}/v1beta/models`, {
+    cache: "no-store",
+    signal: AbortSignal.timeout(20_000),
+  }, { ...network, enabled: true });
+  const text = await response.text();
+  let payload: { error?: { message?: string }; models?: unknown[] } = {};
+  try { payload = text ? JSON.parse(text) as typeof payload : {}; } catch { /* An HTML response is not a successful API check. */ }
+  const providerMessage = payload.error?.message || "";
+  const expectedKeyResponse = [400, 401, 403].includes(response.status) && /api[ _-]?key|کلید/i.test(providerMessage);
+  if ((response.ok && Array.isArray(payload.models)) || expectedKeyResponse) return Date.now() - startedAt;
+  if (response.status === 403) {
+    throw new ApiNetworkError("Google هنوز دسترسی سرور را نمی‌پذیرد. برای شکن حرفه‌ای لینک به‌روزرسان را بررسی کنید و یک دقیقه پس از ثبت IP دوباره آزمایش کنید.", 502);
+  }
+  if (response.status === 429) throw new ApiNetworkError("سقف درخواست آزمایشی فعال است؛ کمی بعد دوباره تلاش کنید.", 429);
+  throw new ApiNetworkError(`پاسخ Google برای آزمایش شبکه معتبر نبود (HTTP ${response.status})؛ شکن فعال‌سازی نمی‌شود.`, 502);
+}
+
+export async function saveAndTestApiNetwork(input: SaveApiNetworkInput, userId: string): Promise<ApiNetworkPublicStatus> {
+  if (!input.servers.every((server) => isIPv4(server))) throw new ApiNetworkError("هر دو آدرس DNS باید IPv4 معتبر باشند.", 400);
+  const previous = await findRow();
+  const now = new Date().toISOString();
+  const suppliedUpdateUrl = input.updateUrl?.trim() || "";
+  if (suppliedUpdateUrl) validateUpdateUrl(suppliedUpdateUrl);
+  const encryptedUpdateUrl = input.plan === "free" ? "" : suppliedUpdateUrl
+    ? await encryptSecret(suppliedUpdateUrl, UPDATE_URL_PURPOSE)
+    : previous?.encrypted_update_url || "";
+  let updateUrl = "";
+  if (input.enabled && input.plan === "pro" && encryptedUpdateUrl) {
+    try {
+      updateUrl = suppliedUpdateUrl || await decryptSecret(encryptedUpdateUrl, UPDATE_URL_PURPOSE);
+    } catch (error) {
+      throw new ApiNetworkError("لینک ذخیره‌شده باز نشد؛ لینک به‌روزرسان را دوباره وارد کنید.", 400, { cause: error });
+    }
+  }
+  const network: ProviderNetworkConfig = { enabled: false, plan: input.plan, servers: input.servers };
+  let enabled = false;
+  let testStatus: "idle" | "success" | "error" = "idle";
+  let testMessage = "شکن خاموش است؛ درخواست‌های AI مستقیم به سرویس‌دهنده ارسال می‌شوند.";
+  let testedAt: string | undefined;
+  let latency: number | undefined;
+  let activatedAt = previous?.last_activated_at || undefined;
+  let failure: unknown;
+
+  if (input.enabled) {
+    try {
+      if (updateUrl) activatedAt = await activateUpdateUrl(updateUrl);
+      latency = await testGoogleThroughShecan(network);
+      enabled = true;
+      testStatus = "success";
+      testMessage = "DNS شکن و دسترسی Google Gemini از سرور تأیید شد. این تست بدون API Key انجام شده است.";
+      testedAt = now;
+    } catch (error) {
+      failure = error;
+      testStatus = "error";
+      testMessage = error instanceof Error ? error.message : "آزمایش شکن ناموفق بود و فعال‌سازی انجام نشد.";
+      testedAt = now;
+    }
+  }
+
+  const values = [input.plan, input.servers[0], input.servers[1], enabled ? 1 : 0, encryptedUpdateUrl, testStatus, testMessage, testedAt || null, latency ?? null, activatedAt || null, now, userId];
+  (await import("./db")).getDb().prepare(`INSERT INTO api_network_settings
+    (id, plan, dns_primary, dns_secondary, enabled, encrypted_update_url, last_test_status, last_test_message, last_tested_at, last_test_latency_ms, last_activated_at, updated_at, updated_by)
+    VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET plan=excluded.plan, dns_primary=excluded.dns_primary, dns_secondary=excluded.dns_secondary,
+      enabled=excluded.enabled, encrypted_update_url=excluded.encrypted_update_url, last_test_status=excluded.last_test_status,
+      last_test_message=excluded.last_test_message, last_tested_at=excluded.last_tested_at,
+      last_test_latency_ms=excluded.last_test_latency_ms, last_activated_at=excluded.last_activated_at,
+      updated_at=excluded.updated_at, updated_by=excluded.updated_by`).run(...values);
+  if (!enabled) closeProviderNetwork();
+  if (failure) {
+    if (failure instanceof ApiNetworkError || failure instanceof ProviderNetworkError) throw failure;
+    if (failure instanceof Error && failure.name === "TimeoutError") throw new ApiNetworkError("آزمایش اتصال بیش از حد طول کشید؛ شکن خاموش ماند و درخواست‌های AI همچنان مستقیم ارسال می‌شوند.", 504);
+    throw new ApiNetworkError("آزمایش شکن ناموفق بود و فعال‌سازی انجام نشد.", 502, { cause: failure });
+  }
+  return getApiNetworkStatus();
+}

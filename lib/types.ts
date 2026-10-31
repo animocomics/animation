@@ -39,6 +39,20 @@ export interface ProviderPublicStatus {
   updatedAt?: string;
 }
 
+export interface ApiNetworkPublicStatus {
+  configured: boolean;
+  enabled: boolean;
+  plan: "free" | "pro";
+  servers: [string, string];
+  hasUpdateUrl: boolean;
+  lastTestStatus: "idle" | "success" | "error";
+  lastTestMessage: string;
+  lastTestedAt?: string;
+  lastTestLatencyMs?: number;
+  lastActivatedAt?: string;
+  updatedAt?: string;
+}
+
 export type QuestionType =
   | "multiple_choice"
   | "multiple_response"

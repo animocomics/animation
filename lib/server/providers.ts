@@ -2,6 +2,8 @@ import { gradingJsonSchema, modelResultSchema, type ModelResult } from "./gradin
 import { ANSWER_KEY_IMPORT_SYSTEM_INSTRUCTIONS, answerKeyImportJsonSchema, answerKeyImportResultSchema, type AnswerKeyImportResult } from "./answer-key-import-schema";
 import { QUESTION_IMPORT_SYSTEM_INSTRUCTIONS, questionImportJsonSchema, questionImportResultSchema, type QuestionImportResult } from "./question-import-schema";
 import type { GradeApiRequest, ProviderId } from "../types";
+import type { ProviderNetworkConfig } from "../api-network";
+import { providerFetch, ProviderNetworkError } from "./provider-network";
 
 export const DEFAULT_MODELS: Record<ProviderId, string> = {
   openai: "gpt-4.1",
@@ -32,6 +34,7 @@ interface ProviderCallInput {
   prompt: string;
   files: GradeApiRequest["files"];
   task?: ProviderTask;
+  network?: ProviderNetworkConfig;
 }
 
 interface ProviderCallResult<T = ModelResult | QuestionImportResult | AnswerKeyImportResult> {
@@ -99,11 +102,11 @@ function friendlyProviderError(status: number, provider: string, rawMessage?: st
   return new ProviderError(`سرویس ${provider} موقتاً پاسخ نداد. برگه ذخیره شده و می‌توانید دوباره تلاش کنید.`, 502);
 }
 
-async function fetchWithTimeout(url: string, init: RequestInit, timeout = 240_000): Promise<Response> {
+async function fetchWithTimeout(url: string, init: RequestInit, network?: ProviderNetworkConfig, timeout = 240_000): Promise<Response> {
   let lastError: unknown;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      const response = await fetch(url, { ...init, signal: AbortSignal.timeout(timeout), cache: "no-store" });
+      const response = await providerFetch(url, { ...init, signal: AbortSignal.timeout(timeout), cache: "no-store" }, network);
       if (attempt === 0 && [429, 500, 502, 503, 504].includes(response.status)) {
         await response.arrayBuffer();
         await new Promise((resolve) => setTimeout(resolve, 900));
@@ -121,6 +124,7 @@ async function fetchWithTimeout(url: string, init: RequestInit, timeout = 240_00
   if (lastError instanceof Error && lastError.name === "TimeoutError") {
     throw new ProviderError("پاسخ مدل بیش از حد طول کشید. فایل‌ها را به دسته‌های کوچک‌تر تقسیم کنید و دوباره تلاش کنید.", 504);
   }
+  if (lastError instanceof ProviderNetworkError) throw new ProviderError(lastError.message, 502);
   throw new ProviderError("ارتباط با سرویس‌دهنده برقرار نشد. اتصال اینترنت سرور را بررسی کنید.", 502);
 }
 
@@ -241,7 +245,7 @@ async function callOpenAI(input: ProviderCallInput): Promise<ProviderCallResult>
       max_output_tokens: input.model.includes("gpt-4o") ? 16384 : 32768,
       ...(input.provider === "openai" ? { store: false } : {}),
     }),
-  });
+  }, input.network);
   const payload = await responseJson(response, providerName);
   let outputText = typeof payload.output_text === "string" ? payload.output_text : "";
   if (!outputText && Array.isArray(payload.output)) {
@@ -299,7 +303,7 @@ async function callZai(input: ProviderCallInput): Promise<ProviderCallResult> {
       max_tokens: 32768,
       stream: false,
     }),
-  });
+  }, input.network);
   const payload = await responseJson(response, PROVIDER_LABELS.zai);
   const choices = payload.choices as Array<{
     message?: { content?: unknown };
@@ -345,7 +349,7 @@ async function callMiniMax(input: ProviderCallInput): Promise<ProviderCallResult
       max_completion_tokens: 32768,
       stream: false,
     }),
-  });
+  }, input.network);
   const payload = await responseJson(response, PROVIDER_LABELS.minimax);
   const baseResponse = payload.base_resp as { status_code?: number; status_msg?: string } | undefined;
   if (typeof baseResponse?.status_code === "number" && baseResponse.status_code !== 0) {
@@ -378,7 +382,7 @@ async function callMistral(input: ProviderCallInput): Promise<ProviderCallResult
       max_tokens: 32768,
       stream: false,
     }),
-  });
+  }, input.network);
   const payload = await responseJson(response, PROVIDER_LABELS.mistral);
   const choices = payload.choices as Array<{ message?: { content?: unknown }; finish_reason?: string }> | undefined;
   const outputText = extractTextContent(choices?.[0]?.message?.content).trim();
@@ -418,7 +422,7 @@ async function callInkling(input: ProviderCallInput): Promise<ProviderCallResult
       output_config: { effort: "high" },
       max_tokens: 32768,
     }),
-  });
+  }, input.network);
   const payload = await responseJson(response, PROVIDER_LABELS.inkling);
   const outputText = extractTextContent(payload.content).trim();
   if (!outputText) {
@@ -454,6 +458,7 @@ async function callGemini(input: ProviderCallInput): Promise<ProviderCallResult>
         },
       }),
     },
+    input.network,
   );
   const payload = await responseJson(response, "Gemini");
   const candidates = payload.candidates as Array<{

@@ -1,6 +1,6 @@
 # مسترپلن «نمره» — پلتفرم چندکاربرهٔ تصحیح اوراق امتحانی
 
-> نسخه ۲.۰ — ۶ آبان ۱۴۰۵ / ۲۸ اکتبر ۲۰۲۶
+> نسخه ۲.۰ — ۹ آبان ۱۴۰۵ / ۳۱ اکتبر ۲۰۲۶
 > هدف: تصحیح چندوجهی با شاهد، تطبیق امن هویت، ثبت خودکار کارنامه و کنترل نهایی توسط معلم؛ بدون سرویس OCR جداگانه.
 
 ## ۱. چشم‌انداز و مرز محصول
@@ -24,6 +24,7 @@
 - مدیریت کاربر، فعال/غیرفعال‌سازی، تعیین رمز جدید و ابطال نشست‌ها.
 - فضای کاری جدا برای هر کاربر و فایل‌های جدا روی سرور.
 - مدیریت متمرکز OpenAI، Gemini، DeepSeek، Z.AI GLM، MiniMax، Inkling-Small و Mistral Large 4 با کلید رمزنگاری‌شده.
+- اتصال اختیاری شکن فقط برای APIهای Provider با Resolver اختصاصی، DNS رسمی رایگان/حرفه‌ای، لینک رمزنگاری‌شدهٔ ثبت IP، تست DNS/Google و خاموش‌سازی فوری؛ بدون تغییر DNS سرور یا ترافیک کاربران.
 - کلاس، سال تحصیلی، فهرست دستی/CSV، کد دانش‌آموزی و وضعیت فعال.
 - آزمون با کد یکتا، اتصال به کلاس، سؤال و Rubric تفصیلی.
 - خواندن چند عکس/PDF سؤال و کلید با نقش خودکار از روی دکمهٔ آپلود، ساخت پیش‌نویس قابل ویرایش و تأیید صریح معلم پیش از تصحیح؛ محتوای ناقص یا مبهم حدس زده نمی‌شود.
@@ -48,6 +49,7 @@
 - مستندات رسمی MiniMax برای M3.1-Flash/M3، تصویر و Chat Completions بررسی شده است؛ `reasoning_split` فعال است و JSON Schema در Prompt قرار می‌گیرد، نه در پارامتر پشتیبانی‌نشدهٔ M3. [13](https://platform.minimax.io/docs/api-reference/text-openai-api)
 - Inkling-Small از مسیر رسمی Tinker و مدل `thinkingmachines/Inkling-Small:peft:262144:sampling-nvfp4` با تصویر Base64 و Reasoning High پشتیبانی می‌شود. Serverless Inference این مسیر در **Beta** است و برای بار تولیدی سنگین توصیه نمی‌شود. [14](https://tinker-docs.thinkingmachines.ai/tinker/compatible-apis/anthropic/) [15](https://tinker-docs.thinkingmachines.ai/tinker/models/models_and_pricing/)
 - Mistral Large 4 با شناسهٔ `mistral-large-4`، تصویر، JSON Mode و `reasoning_effort: high` پشتیبانی می‌شود؛ این مدل در **Public Preview** است و از پاسخ فقط TextChunk نهایی خوانده می‌شود. [16](https://docs.mistral.ai/models/mistral-large-4-0) [17](https://docs.mistral.ai/studio/conversations/reasoning)
+- مستندات رسمی شکن نشان می‌دهد سرویس مبتنی بر DNS است و برای اشتراک حرفه‌ای ثبت IP با «لینک به‌روزرسان» سفارش انجام می‌شود؛ بنابراین در «نمره» Resolver اختصاصی و ذخیرهٔ رمزنگاری‌شدهٔ همان لینک پیاده شده، نه پروکسی یا رمز حساب فرضی. [18](https://shecan.ir/faq/) [19](https://shecan.ir/tutorials/tutorials-pro/)
 
 ## ۴. نقش‌ها و مسئولیت‌ها
 
@@ -56,6 +58,7 @@
 - ساخت حساب معلم/بازبین و مدیریت وضعیت دسترسی.
 - تعیین رمز جدید و بستن نشست‌های قبلی، از جمله برای حساب خود.
 - انتخاب Provider و مدل، ثبت کلید و آزمایش اتصال.
+- انتخاب DNS شکن، ثبت لینک محرمانهٔ اشتراک حرفه‌ای، آزمایش و فعال/غیرفعال‌سازی مسیر فقط برای APIهای AI.
 - مشاهدهٔ مصرف توکن، زمان پاسخ و خطاهای فنی بدون محتوای برگه یا پاسخ دانش‌آموز.
 - دسترسی به فضای آزمون خود، اما نه فضای کاری سایر معلم‌ها از مسیر محصول.
 
@@ -134,6 +137,14 @@ PostgreSQL، Object Storage سازگار با S3، صف و Worker، KMS، Retent
 - محدودیت حجم هر فایل ذخیره‌شده **۱۰۰ مگابایت (۱۰۰MiB)** است؛ سقف مجموع درخواست مدل جدا و تقریباً ۴۰MB برای OpenAI، ۱۴MB برای Gemini و ۲۴MB برای DeepSeek، Z.AI GLM، MiniMax، Inkling و Mistral است. فایل بزرگ بدون کنترل به Provider ارسال نمی‌شود. برای Providerهای تبدیل‌شونده و خواندن سؤال/کلید هر PDF حداکثر ۲۰ صفحه و هر درخواست حداکثر ۳۰ صفحه/فایل است و حجم پیش و پس از تبدیل نیز کنترل می‌شود.
 - اگر Provider خطا دهد، نتیجهٔ ساختگی جایگزین نمی‌شود؛ وضعیت خطا و امکان تلاش مجدد حفظ می‌شود.
 
+### مسیر اختصاصی شبکه و شکن
+
+- تنظیم در SQLite و در `GET/PUT /api/admin/api-network` فقط با نقش Admin نگهداری می‌شود؛ معلم به DNS، لینک اشتراک یا این API دسترسی ندارد.
+- DNSهای رایگان `178.22.122.100` و `185.51.200.2` و حرفه‌ای `178.22.122.101` و `185.51.200.1` پیش‌پر و قابل ویرایش‌اند. `dns.Resolver` مستقل و `undici.Agent` فقط به درخواست‌های هفت دامنهٔ Provider داده می‌شود؛ هیچ تغییر سراسری DNS یا Proxy روی Node، سیستم‌عامل، Plesk و مرورگر انجام نمی‌شود.
+- لینک به‌روزرسان حرفه‌ای فقط با HTTPS روی دامنهٔ `shecan.ir` پذیرفته و با AAD مستقل و AES-256-GCM رمزنگاری می‌شود. فراخوانی صریح هنگام اتصال و Refresh هر ۶ ساعت برای ثبت IP انجام می‌شود؛ خود لینک هرگز در Status یا پاسخ معلم ظاهر نمی‌شود.
+- فعال‌سازی فقط پس از پاسخ معتبر DNS و Endpoint واقعی Google Gemini انجام می‌شود. این تست بدون API Key است و با تست کلید/مدل Provider متفاوت است. خطای فعال‌سازی، DNS، HTTPS یا محدودیت جغرافیایی پیام جدا دارد و شکن را روشن نمی‌کند.
+- در حالت خاموش رفتار قبلی Fetch مستقیم حفظ می‌شود. در حالت روشن، خطای شکن Fallback پنهان به Direct ندارد. DNS دارای Cache کوتاه TTL است و Socketهای مسیر هنگام تغییر/خاموش‌سازی بسته می‌شوند.
+
 ## ۹. خط لولهٔ تصحیح و Rule Engine
 
 خواندن سؤال/کلید و خواندن کلید جدا دو Task مستقل با Schema و دستور عدم حدس دارند؛ فایل‌های ذخیره‌شده با شناسه و نقش مشخص خوانده می‌شوند، PDFها در صورت نیاز به تصویر صفحه تبدیل می‌شوند و خروجی فقط پیش‌نویس است. در کلید جدا، مدل صورت یا پاسخ قبلی را دریافت نمی‌کند و فقط شماره، نوع و تعداد گزینه‌ها را می‌بیند؛ برای تستی، شمارهٔ گزینهٔ علامت‌خورده استخراج و متن پاسخ از همان سؤال موجود برداشته می‌شود. علامت مبهم/چندگانه، شمارهٔ نامعتبر یا کلید جاافتاده کل عملیات را بدون تغییر جزئی متوقف می‌کند. تأیید صریح معلم پیش از اجرای تصحیح بررسی می‌شود.
@@ -172,6 +183,7 @@ PostgreSQL، Object Storage سازگار با S3، صف و Worker، KMS، Retent
 - `ReviewFlag`: نوع، شدت، سؤال/صفحه و شرح.
 - `Workspace`: Exams، Classes، Settings و Revision.
 - `AI Job`: Provider، مدل، توکن، Latency، وضعیت و خطای فنی بدون محتوای برگه.
+- `API Network Settings`: نوع شکن، DNS، وضعیت فعال، لینک Update رمزنگاری‌شده، آخرین ثبت IP و نتیجهٔ تست؛ فقط در مسیر مدیر.
 
 ## ۱۲. امنیت، حریم خصوصی و انصاف
 
@@ -181,6 +193,7 @@ PostgreSQL، Object Storage سازگار با S3، صف و Worker، KMS، Retent
 - RBAC سمت سرور برای Admin API و مالکیت برای Workspace/File/Exam.
 - نام‌گذاری امن فایل، محدودیت MIME/حجم، `nosniff` و Cache خصوصی.
 - API Key با AES-256-GCM رمزنگاری می‌شود؛ فقط آخرین چهار رقم و فقط برای مدیر نمایش داده می‌شود.
+- لینک به‌روزرسان شکن نیز با AES-256-GCM و AAD مستقل رمزنگاری می‌شود؛ Status فقط وجود لینک را نشان می‌دهد و مسیر آن Admin-only است.
 - کلید در LocalStorage، SessionStorage، Exam، Result یا پاسخ API به معلم ذخیره/ارسال نمی‌شود.
 - CSV در برابر Formula Injection ایمن‌سازی شده و HTML گزارش چاپی Escape می‌شود.
 - حالت ناشناس نام ثبت‌شده را وارد Prompt نمی‌کند؛ در هر حالت نام فقط برای تطبیق است.
@@ -202,7 +215,7 @@ PostgreSQL، Object Storage سازگار با S3، صف و Worker، KMS، Retent
 - `GET/PUT /api/workspace`
 - `POST/DELETE /api/files`, `GET/DELETE /api/files/[id]`
 - `GET/PUT /api/provider`, `POST /api/provider/test`
-- `GET/POST/PATCH /api/admin/users`, `GET /api/admin/usage`
+- `GET/POST/PATCH /api/admin/users`, `GET /api/admin/usage`, `GET/PUT /api/admin/api-network`
 - `POST /api/grade`
 
 همهٔ مسیرهای داده احراز هویت می‌شوند. مسیرهای مدیریت نقش Admin و مسیر تصحیح مالکیت Exam را بررسی می‌کند.
@@ -224,6 +237,7 @@ PostgreSQL، Object Storage سازگار با S3، صف و Worker، KMS، Retent
 - تست تطبیق هویت، نام تکراری، Confidence پایین، مغایرت کلاس و حفظ انتساب قبلی.
 - تست CSV فارسی، Quotation، Duplicate و Formula Injection.
 - تست Adapter هر هفت Provider با Fetch شبیه‌سازی‌شده؛ بدون هزینه یا کلید واقعی.
+- تست Resolver شکن، TTL، خطای بدون Fallback، Dispatcher فقط برای AI، رمزنگاری لینک Pro، فعال‌سازی پس از تست و خاموش‌سازی؛ همراه با Smoke واقعی Production روی HTTPS و DNS کنترل‌شده، بدون ادعای اتصال به سرویس واقعی.
 - تست یکپارچهٔ Login درست/اشتباه، Cookie، Logout، Disable/Reset، RBAC، Isolation، Revision و Rate Limit.
 - تست آپلود/خواندن/حذف فایل، Cross-user 404، MIME و حجم.
 - تست مرورگر کلاس، آزمون، Wizard، Preview، Score Override، Approval، Export و Print.

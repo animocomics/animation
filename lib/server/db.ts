@@ -47,6 +47,21 @@ function createDatabase(): Database.Database {
       updated_at TEXT NOT NULL,
       updated_by TEXT REFERENCES users(id)
     );
+    CREATE TABLE IF NOT EXISTS api_network_settings (
+      id INTEGER PRIMARY KEY CHECK(id = 1),
+      plan TEXT NOT NULL CHECK(plan IN ('free', 'pro')),
+      dns_primary TEXT NOT NULL,
+      dns_secondary TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 0,
+      encrypted_update_url TEXT NOT NULL DEFAULT '',
+      last_test_status TEXT NOT NULL DEFAULT 'idle',
+      last_test_message TEXT NOT NULL DEFAULT '',
+      last_tested_at TEXT,
+      last_test_latency_ms INTEGER,
+      last_activated_at TEXT,
+      updated_at TEXT NOT NULL,
+      updated_by TEXT REFERENCES users(id)
+    );
     CREATE TABLE IF NOT EXISTS workspaces (
       user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
       data_json TEXT NOT NULL,
