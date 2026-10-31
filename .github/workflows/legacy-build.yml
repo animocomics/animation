@@ -16,6 +16,7 @@ on:
 
 permissions:
   contents: read
+  checks: write
 
 jobs:
   legacy-build:
@@ -41,10 +42,12 @@ jobs:
           printf '{"nodeVersion":"%s","kind":"nodejs-unofficial-glibc-217"}\n' "$NODE_VERSION" > "$data/runtime/runtime.json"
 
       - name: Run the complete Plesk build on CentOS 7 and glibc 2.17
+        id: legacy
         env:
           NODE_VERSION: 22.22.3
         run: |
-          set -euo pipefail
+          set -uo pipefail
+          log="$RUNNER_TEMP/nomreh-legacy-build.log"
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:/work" \
             --volume "$RUNNER_TEMP/nomreh-legacy-data:/nomreh-data-legacy-check" \
@@ -59,4 +62,30 @@ jobs:
               test "$(node --version)" = "v${NODE_VERSION}"
               ldd --version
               npm run build:plesk
-            '
+            ' > "$log" 2>&1
+          status=$?
+          tail -100 "$log"
+          exit "$status"
+
+      - name: Publish the sanitized legacy build result
+        if: always() && steps.legacy.outcome != 'skipped'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUILD_CONCLUSION: ${{ steps.legacy.outcome }}
+        run: |
+          set -euo pipefail
+          conclusion=success
+          if [ "$BUILD_CONCLUSION" != success ]; then conclusion=failure; fi
+          summary='Legacy glibc 2.17 build completed.'
+          if [ "$conclusion" = failure ]; then summary='Legacy glibc 2.17 build failed. Last build output:'; fi
+          if [ -f "$RUNNER_TEMP/nomreh-legacy-build.log" ]; then
+            details="$(tail -c 55000 "$RUNNER_TEMP/nomreh-legacy-build.log" | tr '\r' '\n')"
+            summary="${summary}"$'\n\n```text\n'"${details}"$'\n```'
+          fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name="Legacy glibc 2.17 build" \
+            -f head_sha="${GITHUB_SHA}" \
+            -f status=completed \
+            -f conclusion="$conclusion" \
+            -f 'output[title]=Legacy Plesk build' \
+            --raw-field "output[summary]=${summary}" > /dev/null
