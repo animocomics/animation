@@ -78,6 +78,75 @@ test("Z.AI GLM adapter uses Chat Completions, native image parts, JSON mode and 
   });
 });
 
+test("MiniMax adapter uses M3.1 multimodal Chat Completions without unsupported JSON mode", async () => {
+  await mockFetch((url, init) => {
+    assert.equal(url, "https://api.minimax.io/v1/chat/completions");
+    assert.equal((init.headers as Record<string, string>).Authorization, "Bearer secret-minimax");
+    const body = JSON.parse(String(init.body));
+    assert.equal(body.model, "MiniMax-M3.1-Flash");
+    assert.equal(body.reasoning_effort, "max");
+    assert.deepEqual(body.thinking, { type: "adaptive" });
+    assert.equal(body.reasoning_split, true);
+    assert.equal(body.max_completion_tokens, 32768);
+    assert.ok(!("response_format" in body));
+    const image = body.messages[1].content.find((part: { type: string }) => part.type === "image_url");
+    assert.equal(image.image_url.url, "data:image/png;base64,cG5nLXRlc3QtZGF0YQ==");
+    assert.equal(image.image_url.detail, "high");
+    return Response.json({
+      choices: [{ message: { content: `<think>reasoning</think>\n${JSON.stringify(modelResult)}`, reasoning_content: "reasoning" }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 210, completion_tokens: 55 },
+    });
+  }, async () => {
+    const response = await callProvider({ provider: "minimax", model: "MiniMax-M3.1-Flash", apiKey: "secret-minimax", prompt: "prompt", files: files.slice(0, 1) });
+    assert.equal(response.result.detectedStudentName, "سارا محمدی");
+    assert.deepEqual(response.usage, { inputTokens: 210, outputTokens: 55 });
+  });
+});
+
+test("Mistral Large 4 adapter uses high reasoning, JSON mode, string image URLs and text chunks", async () => {
+  await mockFetch((url, init) => {
+    assert.equal(url, "https://api.mistral.ai/v1/chat/completions");
+    assert.equal((init.headers as Record<string, string>).Authorization, "Bearer secret-mistral");
+    const body = JSON.parse(String(init.body));
+    assert.equal(body.model, "mistral-large-4");
+    assert.equal(body.reasoning_effort, "high");
+    assert.deepEqual(body.response_format, { type: "json_object" });
+    const image = body.messages[1].content.find((part: { type: string }) => part.type === "image_url");
+    assert.equal(image.image_url, "data:image/png;base64,cG5nLXRlc3QtZGF0YQ==");
+    return Response.json({
+      choices: [{ message: { content: [{ type: "thinking", thinking: [{ type: "text", text: "reasoning" }] }, { type: "text", text: JSON.stringify(modelResult) }] }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 180, completion_tokens: 44 },
+    });
+  }, async () => {
+    const response = await callProvider({ provider: "mistral", model: "mistral-large-4", apiKey: "secret-mistral", prompt: "prompt", files: files.slice(0, 1) });
+    assert.equal(response.result.identityConfidence, 0.94);
+    assert.deepEqual(response.usage, { inputTokens: 180, outputTokens: 44 });
+  });
+});
+
+test("Inkling adapter uses official Tinker Messages image blocks, high effort and usage", async () => {
+  await mockFetch((url, init) => {
+    assert.equal(url, "https://tinker.thinkingmachines.dev/services/tinker-prod/anthropic/api/v1/messages");
+    assert.equal((init.headers as Record<string, string>)["x-api-key"], "secret-inkling");
+    assert.equal((init.headers as Record<string, string>)["anthropic-version"], "2023-06-01");
+    const body = JSON.parse(String(init.body));
+    assert.equal(body.model, "thinkingmachines/Inkling-Small:peft:262144:sampling-nvfp4");
+    assert.deepEqual(body.output_config, { effort: "high" });
+    assert.match(body.system, /JSON Schema/);
+    const image = body.messages[0].content.find((part: { type: string }) => part.type === "image");
+    assert.deepEqual(image.source, { type: "base64", media_type: "image/png", data: "cG5nLXRlc3QtZGF0YQ==" });
+    return Response.json({
+      content: [{ type: "thinking", thinking: "reasoning" }, { type: "text", text: JSON.stringify(modelResult) }],
+      stop_reason: "end_turn",
+      usage: { input_tokens: 160, output_tokens: 40 },
+    });
+  }, async () => {
+    const response = await callProvider({ provider: "inkling", model: "thinkingmachines/Inkling-Small:peft:262144:sampling-nvfp4", apiKey: "secret-inkling", prompt: "prompt", files: files.slice(0, 1) });
+    assert.equal(response.result.detectedStudentName, "سارا محمدی");
+    assert.deepEqual(response.usage, { inputTokens: 160, outputTokens: 40 });
+  });
+});
+
 test("Gemini adapter sends inline PDF/image data and parses fenced JSON", async () => {
   await mockFetch((url, init) => {
     assert.match(url, /gemini-2\.5-pro:generateContent$/);
@@ -93,7 +162,7 @@ test("Gemini adapter sends inline PDF/image data and parses fenced JSON", async 
 });
 
 test("provider errors and malformed model output never become grades", async () => {
-  for (const [provider, payload] of [["openai", { error: { message: "bad key" } }], ["gemini", { candidates: [{ content: { parts: [{ text: "not-json" }] } }] }], ["zai", { choices: [{ message: { content: "not-json" } }] }]] as Array<[ProviderId, unknown]>) {
+  for (const [provider, payload] of [["openai", { error: { message: "bad key" } }], ["gemini", { candidates: [{ content: { parts: [{ text: "not-json" }] } }] }], ["zai", { choices: [{ message: { content: "not-json" } }] }], ["minimax", { choices: [{ message: { content: "not-json" } }] }], ["mistral", { choices: [{ message: { content: "not-json" } }] }], ["inkling", { content: [{ type: "text", text: "not-json" }] }]] as Array<[ProviderId, unknown]>) {
     await mockFetch(() => Response.json(payload, { status: provider === "openai" ? 401 : 200 }), async () => {
       await assert.rejects(callProvider({ provider, model: "test", apiKey: "bad", prompt: "prompt", files: files.slice(0, 1) }), ProviderError);
     });

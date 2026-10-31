@@ -48,10 +48,10 @@ test("authenticated page preview can render one requested page without convertin
   assert.equal(output[0].type, "image/jpeg");
 });
 
-test("DeepSeek and Z.AI change PDF input; original images and other providers stay untouched", async () => {
+test("chat-vision providers change PDF input; original images and direct-PDF providers stay untouched", async () => {
   const image: GradeApiRequest["files"][number] = { name: "page.png", type: "image/png", data: "cG5nLXRlc3QtZGF0YQ==" };
   const input = [image, await makePdf(1)];
-  for (const provider of ["deepseek", "zai"] as const) {
+  for (const provider of ["deepseek", "zai", "minimax", "inkling", "mistral"] as const) {
     const converted = await prepareProviderFiles(input, provider);
     assert.equal(converted.length, 2);
     assert.equal(converted[0], image);

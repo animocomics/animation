@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 export const maxDuration = 30;
 
 const schema = z.object({
-  provider: z.enum(["openai", "gemini", "deepseek", "zai"]),
+  provider: z.enum(["openai", "gemini", "deepseek", "zai", "minimax", "inkling", "mistral"]),
   model: z.string().min(2).max(120),
   apiKey: z.string().max(500).optional(),
 });
@@ -22,25 +22,62 @@ export async function POST(request: Request) {
       if (stored.provider !== input.provider || stored.model !== input.model) throw new Error("برای مدل جدید، کلید را دوباره وارد کنید یا ابتدا تنظیمات را ذخیره کنید.");
       apiKey = stored.apiKey;
     }
-    const isZai = input.provider === "zai";
-    const url = isZai
-      ? "https://api.z.ai/api/paas/v4/chat/completions"
-      : input.provider === "openai"
-        ? `https://api.openai.com/v1/models/${encodeURIComponent(input.model)}`
-        : input.provider === "deepseek"
-          ? "https://api.deepseek.com/models"
-          : `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(input.model)}`;
+    const isChat = ["zai", "minimax", "mistral"].includes(input.provider);
+    const isInkling = input.provider === "inkling";
+    const url = isInkling
+      ? "https://tinker.thinkingmachines.dev/services/tinker-prod/anthropic/api/v1/messages"
+      : input.provider === "zai"
+        ? "https://api.z.ai/api/paas/v4/chat/completions"
+        : input.provider === "minimax"
+          ? "https://api.minimax.io/v1/chat/completions"
+          : input.provider === "mistral"
+            ? "https://api.mistral.ai/v1/chat/completions"
+            : input.provider === "openai"
+              ? `https://api.openai.com/v1/models/${encodeURIComponent(input.model)}`
+              : input.provider === "deepseek"
+                ? "https://api.deepseek.com/models"
+                : `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(input.model)}`;
+    const testBody = isInkling
+      ? {
+          model: input.model,
+          messages: [{ role: "user", content: "فقط OK بنویس." }],
+          output_config: { effort: "low" },
+          max_tokens: 32,
+        }
+      : input.provider === "minimax"
+        ? {
+            model: input.model,
+            messages: [{ role: "user", content: "فقط OK بنویس." }],
+            thinking: { type: "adaptive" },
+            ...(input.model.startsWith("MiniMax-M3.1") ? { reasoning_effort: "low" } : {}),
+            reasoning_split: true,
+            max_completion_tokens: 32,
+            stream: false,
+          }
+        : input.provider === "mistral"
+          ? {
+              model: input.model,
+              messages: [{ role: "user", content: "فقط OK بنویس." }],
+              reasoning_effort: "low",
+              max_tokens: 32,
+              stream: false,
+            }
+          : input.provider === "zai"
+            ? {
+                model: input.model,
+                messages: [{ role: "user", content: "فقط OK بنویس." }],
+                max_tokens: 8,
+                stream: false,
+              }
+            : undefined;
     const response = await fetch(url, {
-      method: isZai ? "POST" : "GET",
-      headers: isZai
-        ? { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", "Accept-Language": "en-US,en" }
-        : input.provider === "gemini" ? { "x-goog-api-key": apiKey } : { Authorization: `Bearer ${apiKey}` },
-      body: isZai ? JSON.stringify({
-        model: input.model,
-        messages: [{ role: "user", content: "فقط OK بنویس." }],
-        max_tokens: 8,
-        stream: false,
-      }) : undefined,
+      method: isChat || isInkling ? "POST" : "GET",
+      headers: isInkling
+        ? { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "Content-Type": "application/json" }
+        : isChat
+          ? { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", ...(input.provider === "zai" ? { "Accept-Language": "en-US,en" } : {}) }
+          : input.provider === "gemini" ? { "x-goog-api-key": apiKey } : { Authorization: `Bearer ${apiKey}` },
+      body: testBody ? JSON.stringify(testBody) : undefined,
       signal: AbortSignal.timeout(20_000),
       cache: "no-store",
     });
@@ -59,6 +96,11 @@ export async function POST(request: Request) {
       const payload = await response.json() as { data?: Array<{ id?: string }> };
       if (!payload.data?.some((item) => item.id === input.model)) {
         return NextResponse.json({ error: "کلید معتبر است اما این مدل در فهرست مدل‌های حساب DeepSeek دیده نمی‌شود." }, { status: 400 });
+      }
+    } else if (input.provider === "minimax") {
+      const payload = await response.json() as { base_resp?: { status_code?: number; status_msg?: string } };
+      if (payload.base_resp?.status_code && payload.base_resp.status_code !== 0) {
+        return NextResponse.json({ error: `MiniMax درخواست آزمایشی را قبول نکرد${payload.base_resp.status_msg ? `: ${payload.base_resp.status_msg.slice(0, 180)}` : "."}` }, { status: 400 });
       }
     } else await response.arrayBuffer();
     return NextResponse.json({ ok: true, message: "اتصال برقرار است و مدل در دسترس شماست." });

@@ -55,7 +55,7 @@ export async function POST(request: Request) {
   }
 
   const approximateFileBytes = input.files.reduce((sum, file) => sum + Math.floor(file.data.length * 0.75), 0);
-  const providerByteLimit = config.provider === "gemini" ? 14 * 1024 * 1024 : ["deepseek", "zai"].includes(config.provider) ? 24 * 1024 * 1024 : 40 * 1024 * 1024;
+  const providerByteLimit = config.provider === "gemini" ? 14 * 1024 * 1024 : ["deepseek", "zai", "minimax", "inkling", "mistral"].includes(config.provider) ? 24 * 1024 * 1024 : 40 * 1024 * 1024;
   if (approximateFileBytes > providerByteLimit) {
     return NextResponse.json({ error: "حجم کل فایل‌های این دانش‌آموز برای یک درخواست زیاد است؛ فایل را فشرده یا برگه را به دسته‌های کوچک‌تر تقسیم کنید." }, { status: 413 });
   }

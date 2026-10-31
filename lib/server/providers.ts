@@ -6,6 +6,9 @@ export const DEFAULT_MODELS: Record<ProviderId, string> = {
   gemini: "gemini-2.5-pro",
   deepseek: "deepseek-flash",
   zai: "glm-5.3-flash",
+  minimax: "MiniMax-M3.1-Flash",
+  inkling: "thinkingmachines/Inkling-Small:peft:262144:sampling-nvfp4",
+  mistral: "mistral-large-4",
 };
 
 export const PROVIDER_LABELS: Record<ProviderId, string> = {
@@ -13,6 +16,9 @@ export const PROVIDER_LABELS: Record<ProviderId, string> = {
   gemini: "Google Gemini",
   deepseek: "DeepSeek",
   zai: "Z.AI GLM",
+  minimax: "MiniMax",
+  inkling: "Inkling / Tinker",
+  mistral: "Mistral AI",
 };
 
 interface ProviderCallInput {
@@ -128,6 +134,38 @@ function parseModelResult(value: string): ModelResult {
     }
     throw new ProviderError("ساختار نتیجهٔ مدل کامل نیست. نتیجه ذخیره نشد تا نمرهٔ اشتباه ثبت نشود؛ دوباره تلاش کنید.", 502);
   }
+}
+
+function systemInstructionsWithSchema(): string {
+  return `${SYSTEM_INSTRUCTIONS}\n- ساختار خروجی باید از این JSON Schema پیروی کند:\n${JSON.stringify(gradingJsonSchema)}`;
+}
+
+function chatContent(input: ProviderCallInput, imageStyle: "object" | "string" = "object", detail?: "low" | "default" | "high"): Array<Record<string, unknown>> {
+  const content: Array<Record<string, unknown>> = [{ type: "text", text: input.prompt }];
+  for (const [index, file] of input.files.entries()) {
+    content.push({ type: "text", text: `فایل ${index + 1}: ${file.name}` });
+    const dataUrl = `data:${file.type};base64,${file.data}`;
+    content.push({
+      type: "image_url",
+      image_url: imageStyle === "string" ? dataUrl : { url: dataUrl, ...(detail ? { detail } : {}) },
+    });
+  }
+  return content;
+}
+
+function extractTextContent(rawContent: unknown): string {
+  if (typeof rawContent === "string") return rawContent;
+  if (!Array.isArray(rawContent)) return "";
+  return rawContent.map((part) => {
+    if (!part || typeof part !== "object" || !("text" in part) || typeof part.text !== "string") return "";
+    if ("type" in part && part.type === "thinking") return "";
+    return part.text;
+  }).join("");
+}
+
+function standardChatUsage(payload: Record<string, unknown>): { inputTokens: number; outputTokens: number } {
+  const usage = payload.usage as { prompt_tokens?: number; completion_tokens?: number } | undefined;
+  return { inputTokens: usage?.prompt_tokens ?? 0, outputTokens: usage?.completion_tokens ?? 0 };
 }
 
 async function callOpenAI(input: ProviderCallInput): Promise<ProviderCallResult> {
@@ -257,6 +295,115 @@ async function callZai(input: ProviderCallInput): Promise<ProviderCallResult> {
   };
 }
 
+async function callMiniMax(input: ProviderCallInput): Promise<ProviderCallResult> {
+  if (input.files.some((file) => file.type === "application/pdf")) {
+    throw new ProviderError("PDF برای MiniMax باید پیش از ارسال، داخل سامانه به تصویر صفحه تبدیل شود.", 400);
+  }
+  if (input.files.some((file) => Math.floor(file.data.length * 0.75) > 10 * 1024 * 1024)) {
+    throw new ProviderError("هر تصویر برای MiniMax باید کمتر از ۱۰ مگابایت باشد؛ تصویر را فشرده کنید.", 413);
+  }
+  const response = await fetchWithTimeout("https://api.minimax.io/v1/chat/completions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${input.apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: input.model,
+      messages: [
+        { role: "system", content: systemInstructionsWithSchema() },
+        { role: "user", content: chatContent(input, "object", "high") },
+      ],
+      thinking: { type: "adaptive" },
+      ...(input.model.startsWith("MiniMax-M3.1") ? { reasoning_effort: "max" } : {}),
+      reasoning_split: true,
+      max_completion_tokens: 32768,
+      stream: false,
+    }),
+  });
+  const payload = await responseJson(response, PROVIDER_LABELS.minimax);
+  const baseResponse = payload.base_resp as { status_code?: number; status_msg?: string } | undefined;
+  if (typeof baseResponse?.status_code === "number" && baseResponse.status_code !== 0) {
+    throw new ProviderError(`MiniMax درخواست را کامل نکرد${baseResponse.status_msg ? `: ${baseResponse.status_msg.slice(0, 180)}` : "."}`, 502);
+  }
+  const choices = payload.choices as Array<{ message?: { content?: unknown }; finish_reason?: string }> | undefined;
+  const outputText = extractTextContent(choices?.[0]?.message?.content).replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+  if (!outputText) {
+    const reason = choices?.[0]?.finish_reason;
+    throw new ProviderError(`MiniMax نتیجهٔ قابل استفاده برنگرداند${reason ? ` (${reason})` : ""}. ظرفیت پاسخ و دسترسی مدل را بررسی کنید.`, 502);
+  }
+  return { result: parseModelResult(outputText), usage: standardChatUsage(payload) };
+}
+
+async function callMistral(input: ProviderCallInput): Promise<ProviderCallResult> {
+  if (input.files.some((file) => file.type === "application/pdf")) {
+    throw new ProviderError("PDF برای Mistral باید پیش از ارسال، داخل سامانه به تصویر صفحه تبدیل شود.", 400);
+  }
+  const response = await fetchWithTimeout("https://api.mistral.ai/v1/chat/completions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${input.apiKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: input.model,
+      messages: [
+        { role: "system", content: systemInstructionsWithSchema() },
+        { role: "user", content: chatContent(input, "string") },
+      ],
+      response_format: { type: "json_object" },
+      reasoning_effort: "high",
+      max_tokens: 32768,
+      stream: false,
+    }),
+  });
+  const payload = await responseJson(response, PROVIDER_LABELS.mistral);
+  const choices = payload.choices as Array<{ message?: { content?: unknown }; finish_reason?: string }> | undefined;
+  const outputText = extractTextContent(choices?.[0]?.message?.content).trim();
+  if (!outputText) {
+    const reason = choices?.[0]?.finish_reason;
+    throw new ProviderError(`Mistral نتیجهٔ قابل استفاده برنگرداند${reason ? ` (${reason})` : ""}. ظرفیت پاسخ و دسترسی مدل را بررسی کنید.`, 502);
+  }
+  return { result: parseModelResult(outputText), usage: standardChatUsage(payload) };
+}
+
+async function callInkling(input: ProviderCallInput): Promise<ProviderCallResult> {
+  if (input.files.some((file) => file.type === "application/pdf")) {
+    throw new ProviderError("PDF برای Inkling باید پیش از ارسال، داخل سامانه به تصویر صفحه تبدیل شود.", 400);
+  }
+  if (input.files.some((file) => !["image/png", "image/jpeg"].includes(file.type))) {
+    throw new ProviderError("Inkling در این مسیر فقط تصویر PNG یا JPEG می‌پذیرد؛ فایل را با یکی از این قالب‌ها ارسال کنید.", 400);
+  }
+  const content: Array<Record<string, unknown>> = [{ type: "text", text: input.prompt }];
+  for (const [index, file] of input.files.entries()) {
+    content.push({ type: "text", text: `فایل ${index + 1}: ${file.name}` });
+    content.push({
+      type: "image",
+      source: { type: "base64", media_type: file.type, data: file.data },
+    });
+  }
+  const response = await fetchWithTimeout("https://tinker.thinkingmachines.dev/services/tinker-prod/anthropic/api/v1/messages", {
+    method: "POST",
+    headers: {
+      "x-api-key": input.apiKey,
+      "anthropic-version": "2023-06-01",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: input.model,
+      system: systemInstructionsWithSchema(),
+      messages: [{ role: "user", content }],
+      output_config: { effort: "high" },
+      max_tokens: 32768,
+    }),
+  });
+  const payload = await responseJson(response, PROVIDER_LABELS.inkling);
+  const outputText = extractTextContent(payload.content).trim();
+  if (!outputText) {
+    const reason = typeof payload.stop_reason === "string" ? payload.stop_reason : "";
+    throw new ProviderError(`Inkling نتیجهٔ قابل استفاده برنگرداند${reason ? ` (${reason})` : ""}. ظرفیت پاسخ و دسترسی Tinker را بررسی کنید.`, 502);
+  }
+  const usage = payload.usage as { input_tokens?: number; output_tokens?: number } | undefined;
+  return {
+    result: parseModelResult(outputText),
+    usage: { inputTokens: usage?.input_tokens ?? 0, outputTokens: usage?.output_tokens ?? 0 },
+  };
+}
+
 async function callGemini(input: ProviderCallInput): Promise<ProviderCallResult> {
   const parts: Array<Record<string, unknown>> = [{ text: input.prompt }];
   for (const [index, file] of input.files.entries()) {
@@ -300,6 +447,9 @@ async function callGemini(input: ProviderCallInput): Promise<ProviderCallResult>
 export function callProvider(input: ProviderCallInput): Promise<ProviderCallResult> {
   if (input.provider === "gemini") return callGemini(input);
   if (input.provider === "zai") return callZai(input);
+  if (input.provider === "minimax") return callMiniMax(input);
+  if (input.provider === "inkling") return callInkling(input);
+  if (input.provider === "mistral") return callMistral(input);
   return callOpenAI(input);
 }
 

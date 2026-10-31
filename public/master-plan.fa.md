@@ -23,7 +23,7 @@
 - ورود واقعی با حساب مستقل، نشست سروری و نقش مدیر/معلم/بازبین.
 - مدیریت کاربر، فعال/غیرفعال‌سازی، تعیین رمز جدید و ابطال نشست‌ها.
 - فضای کاری جدا برای هر کاربر و فایل‌های جدا روی سرور.
-- مدیریت متمرکز OpenAI، Gemini، DeepSeek و Z.AI GLM با کلید رمزنگاری‌شده.
+- مدیریت متمرکز OpenAI، Gemini، DeepSeek، Z.AI GLM، MiniMax، Inkling-Small و Mistral Large 4 با کلید رمزنگاری‌شده.
 - کلاس، سال تحصیلی، فهرست دستی/CSV، کد دانش‌آموزی و وضعیت فعال.
 - آزمون با کد یکتا، اتصال به کلاس، سؤال و Rubric تفصیلی.
 - آپلود چندفایلی، پیش‌نمایش سروری، تصحیح دوبرگه‌هم‌زمان، توقف و تلاش مجدد.
@@ -43,6 +43,9 @@
 - ورودی چندتصویری و PDF مستقیم در مسیر Provider قرار گرفته است. [5](https://developers.openai.com/api/docs/guides/images-vision) [6](https://developers.openai.com/api/docs/guides/file-inputs) [7](https://ai.google.dev/gemini-api/docs/document-processing)
 - مستندات DeepSeek برای Responses، تصویر و JSON Schema بررسی شده است؛ چون API آن PDF مستقیم نمی‌پذیرد، «نمره» صفحات PDF را با Renderer داخلی و بدون سرویس OCR/تبدیل خارجی به JPEG تبدیل و سپس ارسال می‌کند. [8](https://api-docs.deepseek.com/guides/vision/) [9](https://api-docs.deepseek.com/api/create-response/)
 - اتصال Z.AI بر اساس مستندات رسمی GLM-5.3-Flash و Chat Completions با Bearer Auth، ورودی `image_url`، JSON Mode و Thinking فعال پیاده شده است. [10](https://docs.z.ai/guides/vlm/glm-5.3-flash) [11](https://docs.z.ai/api-reference/llm/chat-completion) [12](https://docs.z.ai/guides/capabilities/struct-output)
+- مستندات رسمی MiniMax برای M3.1-Flash/M3، تصویر و Chat Completions بررسی شده است؛ `reasoning_split` فعال است و JSON Schema در Prompt قرار می‌گیرد، نه در پارامتر پشتیبانی‌نشدهٔ M3. [13](https://platform.minimax.io/docs/api-reference/text-openai-api)
+- Inkling-Small از مسیر رسمی Tinker و مدل `thinkingmachines/Inkling-Small:peft:262144:sampling-nvfp4` با تصویر Base64 و Reasoning High پشتیبانی می‌شود. Serverless Inference این مسیر در **Beta** است و برای بار تولیدی سنگین توصیه نمی‌شود. [14](https://tinker-docs.thinkingmachines.ai/tinker/compatible-apis/anthropic/) [15](https://tinker-docs.thinkingmachines.ai/tinker/models/models_and_pricing/)
+- Mistral Large 4 با شناسهٔ `mistral-large-4`، تصویر، JSON Mode و `reasoning_effort: high` پشتیبانی می‌شود؛ این مدل در **Public Preview** است و از پاسخ فقط TextChunk نهایی خوانده می‌شود. [16](https://docs.mistral.ai/models/mistral-large-4-0) [17](https://docs.mistral.ai/studio/conversations/reasoning)
 
 ## ۴. نقش‌ها و مسئولیت‌ها
 
@@ -120,10 +123,13 @@ PostgreSQL، Object Storage سازگار با S3، صف و Worker، KMS، Retent
 - `gemini`: GenerateContent، دادهٔ Inline تصویر/PDF، Response Schema و دمای پایین.
 - `deepseek`: Responses API و تصویر با مدل پیش‌فرض `deepseek-flash`؛ PDF با تبدیل خودکار داخلی صفحات به JPEG پشتیبانی می‌شود و فایل اصلی برای پیش‌نمایش حفظ می‌شود. پیش‌نمایش بازبینی نیز از همان Renderer امن و API احراز هویت استفاده می‌کند و به PDF viewer مرورگر وابسته نیست.
 - `zai`: Chat Completions رسمی Z.AI با مدل پیش‌فرض `glm-5.3-flash`، تصویر Base64 در `image_url`، JSON Schema در دستور سیستم و `response_format: json_object`؛ PDF مانند DeepSeek داخل سرور به JPEG تبدیل می‌شود.
+- `minimax`: Chat Completions رسمی MiniMax با M3.1-Flash/M3، Thinking تطبیقی، `reasoning_split` و تصویر با جزئیات High؛ خروجی با Schema موجود در دستور سیستم و Zod کنترل می‌شود.
+- `inkling`: Messages API رسمی Tinker با Inkling-Small، تصویر PNG/JPEG با Base64 و `output_config.effort: high`؛ وضعیت Beta در راهنما و مدیریت اعلام می‌شود.
+- `mistral`: Chat Completions رسمی Mistral با Large 4، Reasoning High و JSON Mode؛ PDF پیش از ارسال به JPEG تبدیل می‌شود.
 - انتخاب مدل و کلید فقط در API مدیریت؛ مسیر تصحیح کلید را از Store سرور می‌خواند.
 - Schema اعتبارسنجی ورودی و خروجی، Timeout، Retry محدود برای خطاهای موقت و پیام فارسی قابل اقدام.
-- آزمایش اتصال DeepSeek علاوه بر احراز اعتبار، فهرست مدل‌ها را برای وجود مدل انتخابی بررسی می‌کند؛ آزمایش Z.AI یک درخواست واقعی و کم‌حجم Chat Completions به مدل انتخابی ارسال می‌کند.
-- محدودیت حجم هر فایل ۱۵MB؛ سقف مجموع درخواست تقریباً ۴۰MB برای OpenAI، ۱۴MB برای Gemini و ۲۴MB برای DeepSeek و Z.AI GLM. برای DeepSeek و Z.AI GLM هر PDF حداکثر ۲۰ صفحه و هر تصحیح حداکثر ۳۰ صفحه/فایل است و حجم پس از تبدیل نیز کنترل می‌شود.
+- آزمایش اتصال DeepSeek علاوه بر احراز اعتبار، فهرست مدل‌ها را برای وجود مدل انتخابی بررسی می‌کند؛ Z.AI، MiniMax و Mistral یک Chat Completion کم‌حجم واقعی و Inkling یک Messages Request کم‌حجم واقعی ارسال می‌کنند.
+- محدودیت حجم هر فایل ۱۵MB؛ سقف مجموع درخواست تقریباً ۴۰MB برای OpenAI، ۱۴MB برای Gemini و ۲۴MB برای DeepSeek، Z.AI GLM، MiniMax، Inkling و Mistral. برای Providerهای تبدیل‌شونده هر PDF حداکثر ۲۰ صفحه و هر تصحیح حداکثر ۳۰ صفحه/فایل است و حجم پس از تبدیل نیز کنترل می‌شود.
 - اگر Provider خطا دهد، نتیجهٔ ساختگی جایگزین نمی‌شود؛ وضعیت خطا و امکان تلاش مجدد حفظ می‌شود.
 
 ## ۹. خط لولهٔ تصحیح و Rule Engine
@@ -213,7 +219,7 @@ PostgreSQL، Object Storage سازگار با S3، صف و Worker، KMS، Retent
 - تست واحد برای رمز، نرمال‌سازی، Rule Engine، Clamp، مرز قبولی و سؤال جاافتاده.
 - تست تطبیق هویت، نام تکراری، Confidence پایین، مغایرت کلاس و حفظ انتساب قبلی.
 - تست CSV فارسی، Quotation، Duplicate و Formula Injection.
-- تست Adapter هر چهار Provider با Fetch شبیه‌سازی‌شده؛ بدون هزینه یا کلید واقعی.
+- تست Adapter هر هفت Provider با Fetch شبیه‌سازی‌شده؛ بدون هزینه یا کلید واقعی.
 - تست یکپارچهٔ Login درست/اشتباه، Cookie، Logout، Disable/Reset، RBAC، Isolation، Revision و Rate Limit.
 - تست آپلود/خواندن/حذف فایل، Cross-user 404، MIME و حجم.
 - تست مرورگر کلاس، آزمون، Wizard، Preview، Score Override، Approval، Export و Print.

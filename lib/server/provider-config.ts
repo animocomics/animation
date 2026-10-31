@@ -70,7 +70,7 @@ export async function getProviderConfig(): Promise<{ provider: ProviderId; model
 }
 
 export async function saveProviderConfig(input: { provider: ProviderId; model?: string; apiKey?: string }, userId: string): Promise<ProviderPublicStatus> {
-  if (!["openai", "gemini", "deepseek", "zai"].includes(input.provider)) throw new Error("ارائه‌دهنده انتخاب‌شده معتبر نیست.");
+  if (!["openai", "gemini", "deepseek", "zai", "minimax", "inkling", "mistral"].includes(input.provider)) throw new Error("ارائه‌دهنده انتخاب‌شده معتبر نیست.");
   const previous = await findProviderRow();
   const providerChanged = previous && previous.provider !== input.provider;
   const apiKey = input.apiKey?.trim() || (!providerChanged && previous ? await decrypt(previous.encrypted_api_key) : "");

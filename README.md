@@ -2,7 +2,7 @@
 
 «نمره» یک محصول واقعی فارسی و RTL برای مدیریت کلاس، ساخت آزمون و بارم، خواندن عکس/PDF برگه با مدل چندوجهی، تطبیق هویت دانش‌آموز، ثبت نمره در کارنامه و تأیید نهایی توسط معلم است.
 
-> **بدون OCR جداگانه:** تصویر مستقیم به مدل چندوجهی داده می‌شود. PDF برای OpenAI/Gemini مستقیم و برای DeepSeek و Z.AI GLM پس از تبدیل خودکار صفحات به تصویر، داخل خود سرور «نمره» ارسال می‌شود. خروجی AI پیش‌نویس است؛ نمرهٔ نهایی با معلم است و دقت ۱۰۰٪ وعده داده نمی‌شود.
+> **بدون OCR جداگانه:** تصویر مستقیم به مدل چندوجهی داده می‌شود. PDF برای OpenAI/Gemini مستقیم و برای DeepSeek، Z.AI GLM، MiniMax، Inkling-Small و Mistral Large 4 پس از تبدیل خودکار صفحات به تصویر، داخل خود سرور «نمره» ارسال می‌شود. خروجی AI پیش‌نویس است؛ نمرهٔ نهایی با معلم است و دقت ۱۰۰٪ وعده داده نمی‌شود.
 
 ## امکانات نسخهٔ ۲
 
@@ -11,7 +11,7 @@
 - ورود واقعی با نام کاربری و رمز عبور و نشست `HttpOnly`
 - نقش‌های `admin`، `teacher` و `reviewer`
 - ساخت، فعال/غیرفعال‌سازی و تعیین رمز جدید کاربران توسط مدیر
-- پیکربندی OpenAI، Gemini، DeepSeek یا Z.AI GLM فقط توسط مدیر
+- پیکربندی OpenAI، Gemini، DeepSeek، Z.AI GLM، MiniMax، Inkling-Small یا Mistral Large 4 فقط توسط مدیر
 - ذخیرهٔ API Key با `AES-256-GCM` روی سرور؛ عدم ارسال کلید یا حتی راهنمای کلید به معلم
 - گزارش مصرف توکن، زمان پاسخ و رویدادهای ناموفق برای هر حساب، بدون نمایش محتوای برگه به مدیر
 
@@ -47,6 +47,9 @@
   - Gemini GenerateContent با Response Schema؛
   - DeepSeek Responses API برای تصویر و PDF با تبدیل خودکار صفحات به JPEG.
   - Z.AI GLM Chat Completions با مدل پیش‌فرض `glm-5.3-flash`، تصویر مستقیم و PDF با تبدیل خودکار صفحات به JPEG.
+  - MiniMax Chat Completions با `MiniMax-M3.1-Flash` یا `MiniMax-M3`، Thinking جداشده و تصویر/PDF تبدیل‌شده؛
+  - Inkling-Small روی Tinker با Messages API رسمی، تصویر PNG/JPEG با Base64 و Reasoning High؛ سرویس Serverless آن در وضعیت **Beta** است؛
+  - Mistral Large 4 با `reasoning_effort: high`، JSON Mode و تصویر/PDF تبدیل‌شده؛ مدل در **Public Preview** است.
 - رونوشت، شاهد/صفحه، نمرهٔ هر معیار، دلیل، اعتماد و هشدار
 - محاسبهٔ مجدد و Clamp سروری نمره‌ها و تطبیق قطعی سؤال‌های تستی
 - ممیزی دوم هدفمند در حالت متعادل/دقیق
@@ -156,8 +159,8 @@ Workflow در `.github/workflows/cloudflare-deploy.yml` با نشان `[cloudfla
 - ذخیرهٔ Workspace دارای Revision برای تشخیص نسخهٔ قدیمی است.
 - کلید Provider در کد، آزمون، نتیجه، LocalStorage یا SessionStorage ذخیره نمی‌شود و در پاسخ به معلم قرار نمی‌گیرد.
 - ارسال برگه به Provider مشمول سیاست نگهداری و پردازش دادهٔ همان سرویس است. برای دادهٔ واقعی از HTTPS و قرارداد/تنظیمات مناسب حریم خصوصی استفاده کنید.
-- حجم هر فایل حداکثر ۱۵MB است. محدودیت مجموع هر درخواست تقریباً ۴۰MB برای OpenAI، ۱۴MB برای Gemini و ۲۴MB برای DeepSeek و Z.AI GLM است.
-- **PDF برای هر چهار Provider پشتیبانی می‌شود.** OpenAI و Gemini فایل را مستقیم دریافت می‌کنند؛ برای DeepSeek و Z.AI GLM صفحات با Renderer داخلی و بدون سرویس خارجی به JPEG باکیفیت تبدیل می‌شوند و PDF اصلی برای پیش‌نمایش حفظ می‌شود. هر PDF تا ۲۰ صفحه و هر تصحیح تا ۳۰ صفحه/فایل پشتیبانی می‌شود. PDF رمزدار یا خراب باید دوباره و بدون رمز بارگذاری شود.
+- حجم هر فایل حداکثر ۱۵MB است. محدودیت مجموع هر درخواست تقریباً ۴۰MB برای OpenAI، ۱۴MB برای Gemini و ۲۴MB برای DeepSeek، Z.AI GLM، MiniMax، Inkling و Mistral است.
+- **PDF برای هر هفت Provider پشتیبانی می‌شود.** OpenAI و Gemini فایل را مستقیم دریافت می‌کنند؛ برای DeepSeek، Z.AI GLM، MiniMax، Inkling-Small و Mistral Large 4 صفحات با Renderer داخلی و بدون سرویس خارجی به JPEG باکیفیت تبدیل می‌شوند و PDF اصلی برای پیش‌نمایش حفظ می‌شود. هر PDF تا ۲۰ صفحه و هر تصحیح تا ۳۰ صفحه/فایل پشتیبانی می‌شود. PDF رمزدار یا خراب باید دوباره و بدون رمز بارگذاری شود.
 - «اعتماد مدل» احتمال کالیبره‌شدهٔ درستی نیست. برای آزمون مهم، نمونه‌برداری انسانی و کالیبراسیون با نمره‌های معلم لازم است.
 - اگر Provider یا کلید معتبر در دسترس نباشد، خطا نمایش داده می‌شود و نتیجهٔ ساختگی جایگزین تصحیح واقعی نمی‌شود.
 
@@ -186,8 +189,8 @@ lib/
   server/auth.ts         # نشست و RBAC
   server/db.ts           # SQLite و Seed اولیه
   server/provider-config.ts # AES-GCM و وضعیت عمومی/مدیر
-  server/providers.ts    # OpenAI / Gemini / DeepSeek / Z.AI GLM
-  server/pdf-vision.ts   # تبدیل داخلی PDF برای DeepSeek و Z.AI GLM و پیش‌نمایش صفحه‌ای
+  server/providers.ts    # OpenAI / Gemini / DeepSeek / Z.AI / MiniMax / Inkling / Mistral
+  server/pdf-vision.ts   # تبدیل داخلی PDF برای Providerهای Chat-Vision و پیش‌نمایش صفحه‌ای
   server/cloudflare.ts   # D1/KV bindings و schema ابری
   roster.ts              # تطبیق هویت، CSV و ردیف‌های کارنامه
 cloudflare/              # ورودی Worker و ماژول precompiled PDFium
