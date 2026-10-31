@@ -8,6 +8,8 @@ const nextConfig: NextConfig = {
     // Shared hosts can reject Next.js' default multi-process page-data build.
     cpus: 1,
     workerThreads: false,
+    // Avoid a separate compiler process on shared hosts with legacy libc.
+    webpackBuildWorker: false,
   },
 };
 
