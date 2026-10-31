@@ -4,11 +4,27 @@
 // Keep Plesk's remote deployment mirror shallow without touching the GitHub
 // repository, the published application, user data, or any other repository.
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 const APP_ROOT = path.resolve(__dirname, "..");
-const GIT_ROOTS = [path.join(path.dirname(APP_ROOT), "git"), path.join(path.dirname(APP_ROOT), ".git")];
+const HOME_DIRECTORY = os.homedir();
+const unique = (values) => [...new Set(values)];
+const GIT_ROOTS = unique([
+  path.join(HOME_DIRECTORY, "git"),
+  path.join(HOME_DIRECTORY, ".git"),
+  path.join(path.dirname(APP_ROOT), "git"),
+  path.join(path.dirname(APP_ROOT), ".git"),
+  path.join(path.sep, "git"),
+]);
+const DIRECT_REPOSITORIES = unique([
+  path.join(HOME_DIRECTORY, "git", "nomreh"),
+  path.join(HOME_DIRECTORY, ".git", "nomreh"),
+  path.join(path.dirname(APP_ROOT), "git", "nomreh"),
+  path.join(path.dirname(APP_ROOT), ".git", "nomreh"),
+  path.join(path.sep, "git", "nomreh"),
+]);
 
 function gitDirectoryFor(candidate) {
   return [candidate, path.join(candidate, ".git")].find((entry) =>
@@ -16,14 +32,26 @@ function gitDirectoryFor(candidate) {
   ) || "";
 }
 
-function isNomrehRemote(repository) {
-  const result = spawnSync("git", ["-C", repository, "remote", "get-url", "origin"], {
+function remoteNames(repository) {
+  const result = spawnSync("git", ["-C", repository, "remote"], {
     encoding: "utf8",
     env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
     timeout: 10000,
   });
-  if (result.error || result.status !== 0) return false;
-  const remote = result.stdout.trim();
+  if (result.error || result.status !== 0) return [];
+  return result.stdout.split(/\r?\n/).map((name) => name.trim()).filter(Boolean);
+}
+
+function remoteUrl(repository, remoteName) {
+  const result = spawnSync("git", ["-C", repository, "remote", "get-url", remoteName], {
+    encoding: "utf8",
+    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+    timeout: 10000,
+  });
+  return result.error || result.status !== 0 ? "" : result.stdout.trim();
+}
+
+function isNomrehUrl(remote) {
   if (/^git@github\.com:rayavc099\/animation(?:\.git)?\/?$/.test(remote)) return true;
   try {
     const parsed = new URL(remote);
@@ -34,12 +62,35 @@ function isNomrehRemote(repository) {
   }
 }
 
+function matchingRemote(repository) {
+  for (const name of remoteNames(repository)) {
+    if (isNomrehUrl(remoteUrl(repository, name))) return name;
+  }
+  return "";
+}
+
+function selectRemote(repository) {
+  const names = remoteNames(repository);
+  for (const name of names) {
+    if (isNomrehUrl(remoteUrl(repository, name))) return name;
+  }
+  if (names.includes("origin")) return "origin";
+  if (names.length === 1) return names[0];
+  throw new Error(`Nomreh's repository was found at ${repository}, but its remote could not be identified safely. Nothing was changed.`);
+}
+
 function discoverRepository() {
   if (process.env.NOMREH_GIT_DIR) return path.resolve(process.env.NOMREH_GIT_DIR);
+  for (const candidate of DIRECT_REPOSITORIES) {
+    if (gitDirectoryFor(candidate)) return candidate;
+  }
+
   const matches = [];
+  const seen = [];
   function walk(directory, depth) {
     if (gitDirectoryFor(directory)) {
-      if (isNomrehRemote(directory)) matches.push(directory);
+      seen.push(directory);
+      if (matchingRemote(directory)) matches.push(directory);
       return;
     }
     if (depth >= 5) return;
@@ -55,17 +106,14 @@ function discoverRepository() {
   }
   const uniqueMatches = [...new Set(matches)];
   if (uniqueMatches.length === 1) return uniqueMatches[0];
-  const roots = GIT_ROOTS.join(" and ");
-  if (uniqueMatches.length > 1) throw new Error(`Multiple Nomreh Plesk mirrors were found under ${roots}. Nothing was changed.`);
-  throw new Error(`No Plesk mirror for rayavc099/animation was found under ${roots}. Nothing was changed.`);
+  if (uniqueMatches.length > 1) throw new Error("Multiple Nomreh Plesk mirrors were found. Nothing was changed.");
+  throw new Error(`No Nomreh mirror was found. Home directory: ${HOME_DIRECTORY}. Repositories seen: ${[...new Set(seen)].join(", ") || "none"}. Nothing was changed.`);
 }
 
 const REPOSITORY = discoverRepository();
 const GIT_DIRECTORY = gitDirectoryFor(REPOSITORY);
-
-if (!GIT_DIRECTORY) {
-  throw new Error(`Nomreh's Plesk Git mirror was not found at ${REPOSITORY}. Nothing was changed.`);
-}
+if (!GIT_DIRECTORY) throw new Error(`Nomreh's Plesk Git mirror was not found at ${REPOSITORY}. Nothing was changed.`);
+const REMOTE_NAME = selectRemote(REPOSITORY);
 
 function git(args) {
   const result = spawnSync("git", ["-C", REPOSITORY, ...args], {
@@ -92,9 +140,8 @@ function format(kibibytes) {
   return kibibytes === null ? "unknown" : `${(kibibytes / 1024).toFixed(1)} MiB`;
 }
 
-// Validate without ever printing the remote URL, which may contain credentials.
 git(["rev-parse", "--git-dir"]);
-git(["remote", "get-url", "origin"]);
+git(["remote", "get-url", REMOTE_NAME]);
 let branch = process.env.NOMREH_GIT_BRANCH || "";
 if (!branch) {
   branch = git(["rev-parse", "--abbrev-ref", "HEAD"]);
@@ -103,11 +150,12 @@ if (!branch) {
 
 const before = sizeInKiB(GIT_DIRECTORY);
 console.log(`Compacting only Nomreh's Plesk mirror: ${REPOSITORY}`);
+console.log(`Using remote name: ${REMOTE_NAME}`);
 console.log(`Size before: ${format(before)}`);
 
 // Move the shallow boundary to the current remote tip. The deployment branch
 // itself is not reset, so the files just deployed by Plesk remain untouched.
-git(["fetch", "--depth=1", "origin", branch]);
+git(["fetch", "--depth=1", REMOTE_NAME, branch]);
 
 // Reflogs are unnecessary in a deployment mirror and would retain old objects.
 git(["config", "core.logAllRefUpdates", "false"]);

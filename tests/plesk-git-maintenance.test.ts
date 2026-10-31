@@ -75,6 +75,21 @@ test("Plesk mirror maintenance caps repeated deployment history without changing
     assert.equal(git(bareMirror, ["rev-list", "--count", "main"]), "1");
     assert.equal(fs.existsSync(path.join(bareMirror, "logs")), false);
     assert.equal(git(remote, ["rev-list", "--count", "main"]), "13");
+
+    const home = path.join(directory, "home");
+    const homeMirror = path.join(home, "git", "nomreh");
+    fs.mkdirSync(path.dirname(homeMirror), { recursive: true });
+    execute("git", ["clone", "-q", "--branch", "main", `file://${remote}`, homeMirror]);
+    git(homeMirror, ["remote", "rename", "origin", "upstream"]);
+    execute(process.execPath, [script], undefined, {
+      ...process.env,
+      HOME: home,
+      NOMREH_GIT_DIR: "",
+      NOMREH_GIT_BRANCH: "main",
+    });
+    assert.equal(git(homeMirror, ["rev-list", "--count", "HEAD"]), "1");
+    assert.equal(fs.readFileSync(path.join(homeMirror, "version.txt"), "utf8"), "13\n");
+    assert.equal(git(remote, ["rev-list", "--count", "main"]), "13");
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
