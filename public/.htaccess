@@ -1,6 +1,9 @@
 # Nomreh is served by the Plesk Node.js application (Passenger).
 # Do not proxy these requests to the legacy standalone runtime.
 
+# Leave room for multipart/Base64 overhead; the app still enforces 100 MiB per file.
+LimitRequestBody 157286400
+
 # Keep certificate renewal challenges on Apache.
 RewriteEngine On
 RewriteRule ^\.well-known/acme-challenge/ - [L]
