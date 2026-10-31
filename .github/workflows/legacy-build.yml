@@ -57,6 +57,6 @@ jobs:
               export PATH="/nomreh-data-legacy-check/runtime/node/bin:$PATH"
               node --version
               test "$(node --version)" = "v${NODE_VERSION}"
-              ldd --version | head -1
+              ldd --version
               npm run build:plesk
             '
