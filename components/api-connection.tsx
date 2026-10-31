@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Check, CheckCircle2, Eye, EyeOff, KeyRound, LoaderCircle, LockKeyhole, RefreshCw, ShieldCheck, Sparkles, TriangleAlert, Zap, BrainCircuit } from "lucide-react";
+import { Check, CheckCircle2, Eye, EyeOff, KeyRound, LoaderCircle, LockKeyhole, RefreshCw, ShieldCheck, Sparkles, TriangleAlert, Zap, BrainCircuit, ScanText } from "lucide-react";
 import { useApp } from "../lib/app-context";
 import type { ProviderId } from "../lib/types";
 
@@ -9,11 +9,13 @@ const MODEL_OPTIONS: Record<ProviderId, string[]> = {
   openai: ["gpt-4.1", "gpt-4.1-mini", "gpt-4o"],
   gemini: ["gemini-2.5-pro", "gemini-2.5-flash"],
   deepseek: ["deepseek-flash"],
+  zai: ["glm-5.3-flash", "glm-5.3-flashx"],
 };
 const PROVIDERS = {
   openai: { label: "OpenAI", hint: "Responses API · تصویر و PDF", icon: Sparkles },
   gemini: { label: "Google Gemini", hint: "GenerateContent · تصویر و PDF", icon: Zap },
   deepseek: { label: "DeepSeek", hint: "Responses API · تصویر و PDF با تبدیل خودکار", icon: BrainCircuit },
+  zai: { label: "Z.AI GLM", hint: "GLM 5.3 Flash · تصویر و PDF با تبدیل خودکار", icon: ScanText },
 } as const;
 
 export function ApiConnection() {
@@ -62,7 +64,7 @@ export function ApiConnection() {
 
   return (
     <div className="api-connection admin-api-connection">
-      <div className="provider-options three-providers" role="radiogroup" aria-label="سرویس‌دهندهٔ هوش مصنوعی">
+      <div className="provider-options four-providers" role="radiogroup" aria-label="سرویس‌دهندهٔ هوش مصنوعی">
         {(Object.keys(PROVIDERS) as ProviderId[]).map((id) => {
           const item = PROVIDERS[id]; const Icon = item.icon;
           return <button key={id} role="radio" aria-checked={provider === id} className={`provider-option ${provider === id ? "selected" : ""}`} onClick={() => selectProvider(id)}><span className={`provider-logo ${id}`}><Icon size={20} /></span><span><strong>{item.label}</strong><small>{item.hint}</small></span><i>{provider === id && <Check size={12} />}</i></button>;

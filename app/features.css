@@ -80,7 +80,9 @@
 .admin-tabs .admin-refresh { width:34px; padding:0; justify-content:center; margin-right:3px; }
 .admin-connection-card { max-width:1050px; width:100%; margin:0 auto; }
 .three-providers { grid-template-columns:repeat(3,1fr) !important; }
+.four-providers { grid-template-columns:repeat(2,1fr) !important; }
 .provider-logo.deepseek { color:#596da8; background:#eef0fb; }
+.provider-logo.zai { color:#7b5a37; background:#fbf3e8; }
 .key-hint { margin-right:8px; color:var(--muted); font-size:9px; font-weight:400; }
 .admin-security-note { margin-top:18px; padding:14px; display:flex; align-items:flex-start; gap:10px; border:1px solid #dbe9e0; border-radius:12px; background:#f5faf7; color:var(--brand); }
 .admin-security-note strong { font-size:11px; }.admin-security-note p { margin-top:3px; color:var(--muted); font-size:10px; line-height:1.9; }
@@ -158,7 +160,7 @@
   .class-list-note { display:none; }
   .admin-overview { align-items:flex-start; }
   .admin-role-badge { display:none; }
-  .three-providers { grid-template-columns:1fr !important; }
+  .three-providers, .four-providers { grid-template-columns:1fr !important; }
   .roster-subtoolbar { flex-wrap:wrap; }
   .roster-subtoolbar > span { width:100%; }
 }

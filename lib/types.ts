@@ -1,4 +1,4 @@
-export type ProviderId = "openai" | "gemini" | "deepseek";
+export type ProviderId = "openai" | "gemini" | "deepseek" | "zai";
 export type UserRole = "admin" | "teacher" | "reviewer";
 
 export interface AuthUser {

@@ -48,13 +48,15 @@ test("authenticated page preview can render one requested page without convertin
   assert.equal(output[0].type, "image/jpeg");
 });
 
-test("only DeepSeek changes PDF input; original images and other providers stay untouched", async () => {
+test("DeepSeek and Z.AI change PDF input; original images and other providers stay untouched", async () => {
   const image: GradeApiRequest["files"][number] = { name: "page.png", type: "image/png", data: "cG5nLXRlc3QtZGF0YQ==" };
   const input = [image, await makePdf(1)];
-  const deepseek = await prepareProviderFiles(input, "deepseek");
-  assert.equal(deepseek.length, 2);
-  assert.equal(deepseek[0], image);
-  assert.equal(deepseek[1].type, "image/jpeg");
+  for (const provider of ["deepseek", "zai"] as const) {
+    const converted = await prepareProviderFiles(input, provider);
+    assert.equal(converted.length, 2);
+    assert.equal(converted[0], image);
+    assert.equal(converted[1].type, "image/jpeg");
+  }
   assert.equal(await prepareProviderFiles(input, "openai"), input);
   assert.equal(await prepareProviderFiles(input, "gemini"), input);
 });
@@ -76,6 +78,25 @@ test("converted PDF reaches the DeepSeek adapter as JPEG images, never as input_
     const converted = await prepareProviderFiles([await makePdf(2)], "deepseek");
     await callProvider({ provider: "deepseek", model: "deepseek-flash", apiKey: "test-deepseek-key", prompt: "prompt", files: converted });
     assert.equal(attachmentCount, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("converted PDF reaches Z.AI GLM as JPEG image_url parts, never as a PDF", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body));
+    const content = body.messages[1].content as Array<{ type: string; image_url?: { url?: string } }>;
+    const images = content.filter((part) => part.type === "image_url");
+    assert.equal(images.length, 2);
+    assert.ok(images.every((part) => part.image_url?.url?.startsWith("data:image/jpeg;base64,")));
+    assert.ok(!content.some((part) => part.type === "input_file"));
+    return Response.json({ choices: [{ message: { content: JSON.stringify({ detectedStudentName: "", detectedClassName: "", identityConfidence: 0, summary: "آزمون اتصال", strengths: [], improvements: [], overallConfidence: 0.9, questions: [], flags: [] }) } }] });
+  }) as typeof fetch;
+  try {
+    const converted = await prepareProviderFiles([await makePdf(2)], "zai");
+    await callProvider({ provider: "zai", model: "glm-5.3-flash", apiKey: "test-zai-key", prompt: "prompt", files: converted });
   } finally {
     globalThis.fetch = originalFetch;
   }

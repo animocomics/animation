@@ -5,12 +5,14 @@ export const DEFAULT_MODELS: Record<ProviderId, string> = {
   openai: "gpt-4.1",
   gemini: "gemini-2.5-pro",
   deepseek: "deepseek-flash",
+  zai: "glm-5.3-flash",
 };
 
 export const PROVIDER_LABELS: Record<ProviderId, string> = {
   openai: "OpenAI",
   gemini: "Google Gemini",
   deepseek: "DeepSeek",
+  zai: "Z.AI GLM",
 };
 
 interface ProviderCallInput {
@@ -103,7 +105,8 @@ async function responseJson(response: Response, provider: string): Promise<Recor
   }
   if (!response.ok) {
     const errorObject = payload.error as { message?: string } | undefined;
-    throw friendlyProviderError(response.status, provider, errorObject?.message);
+    const rawMessage = errorObject?.message || (typeof payload.message === "string" ? payload.message : undefined);
+    throw friendlyProviderError(response.status, provider, rawMessage);
   }
   return payload;
 }
@@ -193,6 +196,67 @@ async function callOpenAI(input: ProviderCallInput): Promise<ProviderCallResult>
   };
 }
 
+async function callZai(input: ProviderCallInput): Promise<ProviderCallResult> {
+  if (input.files.some((file) => file.type === "application/pdf")) {
+    throw new ProviderError("PDF برای Z.AI GLM باید پیش از ارسال، داخل سامانه به تصویر صفحه تبدیل شود.", 400);
+  }
+  const content: Array<Record<string, unknown>> = [{ type: "text", text: input.prompt }];
+  for (const [index, file] of input.files.entries()) {
+    content.push({ type: "text", text: `فایل ${index + 1}: ${file.name}` });
+    content.push({
+      type: "image_url",
+      image_url: { url: `data:${file.type};base64,${file.data}` },
+    });
+  }
+
+  const response = await fetchWithTimeout("https://api.z.ai/api/paas/v4/chat/completions", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${input.apiKey}`,
+      "Content-Type": "application/json",
+      "Accept-Language": "en-US,en",
+    },
+    body: JSON.stringify({
+      model: input.model,
+      messages: [
+        {
+          role: "system",
+          content: `${SYSTEM_INSTRUCTIONS}\n- ساختار خروجی باید از این JSON Schema پیروی کند:\n${JSON.stringify(gradingJsonSchema)}`,
+        },
+        { role: "user", content },
+      ],
+      response_format: { type: "json_object" },
+      thinking: { type: "enabled", clear_thinking: false },
+      reasoning_effort: "max",
+      temperature: 1,
+      top_p: 0.95,
+      max_tokens: 32768,
+      stream: false,
+    }),
+  });
+  const payload = await responseJson(response, PROVIDER_LABELS.zai);
+  const choices = payload.choices as Array<{
+    message?: { content?: unknown };
+    finish_reason?: string;
+  }> | undefined;
+  const rawContent = choices?.[0]?.message?.content;
+  let outputText = typeof rawContent === "string" ? rawContent : "";
+  if (!outputText && Array.isArray(rawContent)) {
+    outputText = rawContent.map((part) => (
+      part && typeof part === "object" && "text" in part && typeof part.text === "string" ? part.text : ""
+    )).join("");
+  }
+  if (!outputText) {
+    const reason = choices?.[0]?.finish_reason;
+    throw new ProviderError(`Z.AI GLM نتیجهٔ قابل استفاده برنگرداند${reason ? ` (${reason})` : ""}. ظرفیت پاسخ، فایل و مدل را بررسی و دوباره تلاش کنید.`, 502);
+  }
+  const usage = payload.usage as { prompt_tokens?: number; completion_tokens?: number } | undefined;
+  return {
+    result: parseModelResult(outputText),
+    usage: { inputTokens: usage?.prompt_tokens ?? 0, outputTokens: usage?.completion_tokens ?? 0 },
+  };
+}
+
 async function callGemini(input: ProviderCallInput): Promise<ProviderCallResult> {
   const parts: Array<Record<string, unknown>> = [{ text: input.prompt }];
   for (const [index, file] of input.files.entries()) {
@@ -234,7 +298,9 @@ async function callGemini(input: ProviderCallInput): Promise<ProviderCallResult>
 }
 
 export function callProvider(input: ProviderCallInput): Promise<ProviderCallResult> {
-  return input.provider === "gemini" ? callGemini(input) : callOpenAI(input);
+  if (input.provider === "gemini") return callGemini(input);
+  if (input.provider === "zai") return callZai(input);
+  return callOpenAI(input);
 }
 
 export function buildGradingPrompt(request: GradeApiRequest, previousResult?: ModelResult): string {

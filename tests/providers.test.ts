@@ -49,6 +49,35 @@ test("DeepSeek adapter uses its Responses endpoint and accepts image content", a
   });
 });
 
+test("Z.AI GLM adapter uses Chat Completions, native image parts, JSON mode and usage", async () => {
+  await mockFetch((url, init) => {
+    assert.equal(url, "https://api.z.ai/api/paas/v4/chat/completions");
+    assert.equal(init.method, "POST");
+    assert.equal((init.headers as Record<string, string>).Authorization, "Bearer secret-zai");
+    const body = JSON.parse(String(init.body));
+    assert.equal(body.model, "glm-5.3-flash");
+    assert.equal(body.stream, false);
+    assert.deepEqual(body.response_format, { type: "json_object" });
+    assert.deepEqual(body.thinking, { type: "enabled", clear_thinking: false });
+    assert.equal(body.reasoning_effort, "max");
+    assert.equal(body.messages[0].role, "system");
+    assert.match(body.messages[0].content, /JSON Schema/);
+    const content = body.messages[1].content;
+    assert.ok(content.some((part: { type: string }) => part.type === "text"));
+    const image = content.find((part: { type: string }) => part.type === "image_url");
+    assert.equal(image.image_url.url, "data:image/png;base64,cG5nLXRlc3QtZGF0YQ==");
+    assert.ok(!content.some((part: { type: string }) => part.type === "input_file"));
+    return Response.json({
+      choices: [{ message: { content: JSON.stringify(modelResult) }, finish_reason: "stop" }],
+      usage: { prompt_tokens: 140, completion_tokens: 35 },
+    });
+  }, async () => {
+    const response = await callProvider({ provider: "zai", model: "glm-5.3-flash", apiKey: "secret-zai", prompt: "prompt", files: files.slice(0, 1) });
+    assert.equal(response.result.detectedStudentName, "سارا محمدی");
+    assert.deepEqual(response.usage, { inputTokens: 140, outputTokens: 35 });
+  });
+});
+
 test("Gemini adapter sends inline PDF/image data and parses fenced JSON", async () => {
   await mockFetch((url, init) => {
     assert.match(url, /gemini-2\.5-pro:generateContent$/);
@@ -64,7 +93,7 @@ test("Gemini adapter sends inline PDF/image data and parses fenced JSON", async 
 });
 
 test("provider errors and malformed model output never become grades", async () => {
-  for (const [provider, payload] of [["openai", { error: { message: "bad key" } }], ["gemini", { candidates: [{ content: { parts: [{ text: "not-json" }] } }] }]] as Array<[ProviderId, unknown]>) {
+  for (const [provider, payload] of [["openai", { error: { message: "bad key" } }], ["gemini", { candidates: [{ content: { parts: [{ text: "not-json" }] } }] }], ["zai", { choices: [{ message: { content: "not-json" } }] }]] as Array<[ProviderId, unknown]>) {
     await mockFetch(() => Response.json(payload, { status: provider === "openai" ? 401 : 200 }), async () => {
       await assert.rejects(callProvider({ provider, model: "test", apiKey: "bad", prompt: "prompt", files: files.slice(0, 1) }), ProviderError);
     });

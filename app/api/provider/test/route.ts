@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 export const maxDuration = 30;
 
 const schema = z.object({
-  provider: z.enum(["openai", "gemini", "deepseek"]),
+  provider: z.enum(["openai", "gemini", "deepseek", "zai"]),
   model: z.string().min(2).max(120),
   apiKey: z.string().max(500).optional(),
 });
@@ -22,13 +22,25 @@ export async function POST(request: Request) {
       if (stored.provider !== input.provider || stored.model !== input.model) throw new Error("برای مدل جدید، کلید را دوباره وارد کنید یا ابتدا تنظیمات را ذخیره کنید.");
       apiKey = stored.apiKey;
     }
-    const url = input.provider === "openai"
-      ? `https://api.openai.com/v1/models/${encodeURIComponent(input.model)}`
-      : input.provider === "deepseek"
-        ? "https://api.deepseek.com/models"
-        : `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(input.model)}`;
+    const isZai = input.provider === "zai";
+    const url = isZai
+      ? "https://api.z.ai/api/paas/v4/chat/completions"
+      : input.provider === "openai"
+        ? `https://api.openai.com/v1/models/${encodeURIComponent(input.model)}`
+        : input.provider === "deepseek"
+          ? "https://api.deepseek.com/models"
+          : `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(input.model)}`;
     const response = await fetch(url, {
-      headers: input.provider === "gemini" ? { "x-goog-api-key": apiKey } : { Authorization: `Bearer ${apiKey}` },
+      method: isZai ? "POST" : "GET",
+      headers: isZai
+        ? { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", "Accept-Language": "en-US,en" }
+        : input.provider === "gemini" ? { "x-goog-api-key": apiKey } : { Authorization: `Bearer ${apiKey}` },
+      body: isZai ? JSON.stringify({
+        model: input.model,
+        messages: [{ role: "user", content: "فقط OK بنویس." }],
+        max_tokens: 8,
+        stream: false,
+      }) : undefined,
       signal: AbortSignal.timeout(20_000),
       cache: "no-store",
     });
