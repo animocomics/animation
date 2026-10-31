@@ -194,6 +194,7 @@ async function downloadVerified(url, destination, expectedSha256, redirects = 0)
   }
   const hash = crypto.createHash("sha256");
   let size = 0;
+  let nextProgress = 8 * 1024 * 1024;
   const meter = new Transform({
     transform(chunk, encoding, callback) {
       size += chunk.length;
@@ -202,16 +203,41 @@ async function downloadVerified(url, destination, expectedSha256, redirects = 0)
         return;
       }
       hash.update(chunk);
+      if (size >= nextProgress) {
+        console.log(`Downloaded ${Math.floor(size / (1024 * 1024))} MiB of the compatible Node runtime…`);
+        nextProgress += 8 * 1024 * 1024;
+      }
       callback(null, chunk);
     },
   });
   try {
     await pipeline(response, meter, fs.createWriteStream(destination, { flags: "wx", mode: 0o600 }));
     if (hash.digest("hex") !== expectedSha256) throw new Error("The Node runtime archive failed SHA-256 verification.");
+    console.log(`Verified the ${Math.ceil(size / (1024 * 1024))} MiB Node runtime download.`);
   } catch (error) {
     if (fs.existsSync(destination)) fs.unlinkSync(destination);
     throw error;
   }
+}
+
+async function downloadVerifiedWithRetry(url, destination, expectedSha256) {
+  let lastError;
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    try {
+      if (attempt > 1) console.log(`Retrying the compatible Node runtime download (${attempt}/4)…`);
+      await downloadVerified(url, destination, expectedSha256);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 4) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`Download attempt ${attempt} did not complete: ${message}`);
+        await new Promise((resolve) => setTimeout(resolve, attempt * 2000));
+      }
+    }
+  }
+  const message = lastError instanceof Error ? lastError.message : String(lastError);
+  throw new Error(`The compatible Node runtime download failed after 4 attempts. Last error: ${message}`);
 }
 
 async function installLegacyRuntime() {
@@ -223,7 +249,7 @@ async function installLegacyRuntime() {
   ensureDirectory(staging);
   try {
     console.log("Standard Node is not compatible; trying the Node.js community glibc-2.17 build with checksum verification…");
-    await downloadVerified(LEGACY_NODE.url, archive, LEGACY_NODE.sha256);
+    await downloadVerifiedWithRetry(LEGACY_NODE.url, archive, LEGACY_NODE.sha256);
     execute("tar", ["-xJf", archive, "-C", staging], { cwd: RUNTIME_ROOT, timeout: 120000 });
     const sourceRoot = path.join(staging, LEGACY_NODE.directory);
     return activateBinary(path.join(sourceRoot, "bin", "node"), "nodejs-unofficial-glibc-217", path.join(sourceRoot, "LICENSE"));
