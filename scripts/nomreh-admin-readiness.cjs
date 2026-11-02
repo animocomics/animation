@@ -621,6 +621,19 @@ async function main() {
   if (await page.locator("#admin-model").inputValue() !== "gemini-manual-future-vision") throw new Error("The model control rejected a manually entered future model ID.");
   lines.push("- Gemini 2.5, 3.7, 3.8 and 4 remain together after account discovery; legacy retention and manual future-model entry passed in the real browser without saving a key or provider setting.");
 
+  const invalidKeyResponse = await context.request.post(`${ORIGIN}/api/provider/test`, {
+    headers: { Accept: "application/json" },
+    data: { provider: "gemini", model: "gemini-3.8-flash", apiKey: "readiness-invalid-key-not-a-secret" },
+  });
+  const invalidKeyBody = await invalidKeyResponse.text();
+  const invalidKeyContentType = invalidKeyResponse.headers()["content-type"] || "none";
+  lines.push(`- Deliberately invalid Gemini test response: HTTP ${invalidKeyResponse.status()}; content type ${clean(invalidKeyContentType)}.`);
+  if (!/application\/json/i.test(invalidKeyContentType)) throw new Error(`The provider test returned HTML instead of JSON (HTTP ${invalidKeyResponse.status()}).`);
+  let invalidKeyPayload;
+  try { invalidKeyPayload = JSON.parse(invalidKeyBody); } catch { throw new Error("The provider test returned an invalid JSON error body."); }
+  if (invalidKeyResponse.ok() || typeof invalidKeyPayload.error !== "string" || !invalidKeyPayload.error) throw new Error("The deliberately invalid provider key did not produce a structured error.");
+  lines.push("- Invalid provider-key failures are structured JSON; no provider configuration was saved.");
+
   await page.getByRole("radio", { name: /Z\.AI GLM/ }).click();
   const modelOptions = await readModelOptions();
   if (!modelOptions.includes("glm-5.3-flash")) throw new Error("GLM 5.3 Flash was not available in the actual admin model catalog.");
