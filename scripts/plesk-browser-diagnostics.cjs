@@ -387,6 +387,40 @@ async function main() {
           page.off("response", responseHandler);
         }
       }
+      if (ACTION === "status") {
+        lines.push("## Read-only Passenger application status", "");
+        const statusResult = await page.evaluate(async (url) => {
+          const response = await fetch(url, { credentials: "same-origin", cache: "no-store" });
+          return { status: response.status, body: (await response.text()).slice(0, 20000) };
+        }, `${panel}/modules/nodejs/index.php/api/application-status/domainId/145`).catch((error) => ({ status: 0, body: "", error: error.message }));
+        lines.push(`- Application status endpoint: HTTP ${statusResult.status || "unavailable"}`);
+        try {
+          const payload = JSON.parse(statusResult.body);
+          const statusEntries = [];
+          const inspect = (value, path, depth = 0) => {
+            if (depth > 4 || statusEntries.length >= 30 || value === null || value === undefined) return;
+            if (Array.isArray(value)) {
+              value.slice(0, 5).forEach((entry, index) => inspect(entry, `${path}[${index}]`, depth + 1));
+              return;
+            }
+            if (typeof value === "object") {
+              for (const [key, entry] of Object.entries(value)) inspect(entry, path ? `${path}.${key}` : key, depth + 1);
+              return;
+            }
+            const key = path.split(".").pop() || path;
+            if (/status|state|running|enabled|uptime|pid|error|message/i.test(key) && !/secret|token|password|credential|api.key/i.test(path)) {
+              statusEntries.push(`${path} = ${typeof value === "string" ? value.slice(0, 220) : JSON.stringify(value)}`);
+            }
+          };
+          inspect(payload, "");
+          for (const entry of statusEntries) lines.push(`- Passenger status: ${sanitize(entry)}`);
+          if (!statusEntries.length && payload && typeof payload === "object") lines.push(`- Passenger status fields: ${sanitize(Object.keys(payload).slice(0, 25).join(", "))}`);
+        } catch {
+          lines.push(`- Application status response was not JSON (${String(statusResult.body || "").length} bytes).`);
+        }
+        if (statusResult.error) lines.push(`- Status read error: ${sanitize(statusResult.error)}`);
+        lines.push("- Read-only status request; no command, restart, or setting change was attempted.", "");
+      }
       if (["diagnose", "build", "status", "disk"].includes(ACTION) && nomrehConsoleLink && await nomrehConsoleLink.count()) {
         const consoleResponsePromise = page.waitForResponse((item) => item.url().includes("/modules/nodejs/index.php/domain/console") && item.request().isNavigationRequest(), { timeout: 15000 }).catch(() => null);
         await nomrehConsoleLink.click({ timeout: 8000 }).catch(() => undefined);

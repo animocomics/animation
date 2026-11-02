@@ -2,6 +2,8 @@
 "use strict";
 
 const fs = require("node:fs");
+const dns = require("node:dns").promises;
+const https = require("node:https");
 
 const ORIGIN = "https://nomreh.arounidea.com";
 const OUTPUT = process.env.NOMREH_LIVE_OUTPUT || "";
@@ -18,19 +20,52 @@ function fail(message) {
 }
 
 async function request(pathname) {
-  const response = await fetch(`${ORIGIN}${pathname}`, {
-    redirect: "follow",
-    cache: "no-store",
-    headers: {
-      Accept: pathname.startsWith("/api/") ? "application/json" : "text/html,application/xhtml+xml",
-      "Cache-Control": "no-cache",
-      "User-Agent": "Nomreh-Live-Validation/1.0",
-    },
-    signal: AbortSignal.timeout(25000),
+  const fetchOnce = (url, redirects = 0) => new Promise((resolve, reject) => {
+    const request = https.request(url, {
+      method: "GET",
+      family: 4,
+      servername: url.hostname,
+      rejectUnauthorized: true,
+      headers: {
+        Accept: url.pathname.startsWith("/api/") ? "application/json" : "text/html,application/xhtml+xml",
+        "Cache-Control": "no-cache",
+        "User-Agent": "Nomreh-Live-Validation/1.0",
+      },
+    }, (response) => {
+      const chunks = [];
+      let size = 0;
+      response.on("data", (chunk) => {
+        size += chunk.length;
+        if (size <= 2_000_000) chunks.push(chunk);
+        else request.destroy(new Error(`${pathname} returned an unexpectedly large response.`));
+      });
+      response.on("error", reject);
+      response.on("end", () => {
+        const body = Buffer.concat(chunks).toString("utf8");
+        const status = response.statusCode || 0;
+        const location = response.headers.location;
+        if (status >= 300 && status < 400 && location) {
+          if (redirects >= 5) { reject(new Error(`${pathname} exceeded five redirects.`)); return; }
+          const next = new URL(location, url);
+          if (next.origin !== ORIGIN) { reject(new Error(`${pathname} redirected outside Nomreh's HTTPS origin.`)); return; }
+          resolve(fetchOnce(next, redirects + 1));
+          return;
+        }
+        resolve({
+          response: {
+            status,
+            url: url.toString(),
+            headers: { get: (name) => response.headers[String(name).toLowerCase()] || null },
+          },
+          body,
+        });
+      });
+    });
+    request.setTimeout(20000, () => request.destroy(new Error(`IPv4 HTTPS socket timeout for ${pathname}.`)));
+    request.on("error", reject);
+    request.end();
   });
-  const body = await response.text();
-  if (body.length > 2_000_000) throw new Error(`${pathname} returned an unexpectedly large response.`);
-  return { response, body };
+  return fetchOnce(new URL(`${ORIGIN}${pathname}`));
 }
 
 function validateLogin(result, label) {
@@ -51,6 +86,13 @@ function validateLogin(result, label) {
 
 async function main() {
   lines.push("## Public application responses", "");
+  try {
+    const addresses = await dns.lookup("nomreh.arounidea.com", { all: true, verbatim: true });
+    lines.push(`- Public DNS addresses: ${addresses.map((entry) => `IPv${entry.family} ${entry.address}`).join(", ")}`);
+    lines.push("- HTTPS validation uses the public IPv4 route with normal certificate verification.");
+  } catch (error) {
+    fail(`Public DNS lookup failed: ${error.message}`);
+  }
   try {
     const root = await request("/");
     validateLogin(root, "Root");
