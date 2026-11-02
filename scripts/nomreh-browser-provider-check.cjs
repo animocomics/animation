@@ -57,6 +57,13 @@ async function api(page, pathname, body) {
   }, { pathname, body });
 }
 
+async function rawApi(page, pathname, rawBody) {
+  return page.evaluate(async ({ pathname: path, rawBody: bodyText }) => {
+    const response = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: bodyText, credentials: "same-origin" });
+    return { status: response.status, contentType: response.headers.get("content-type") || "none", text: await response.text() };
+  }, { pathname, rawBody });
+}
+
 async function run() {
   browser = await chromium.launch({ headless: true });
   context = await browser.newContext({ locale: "fa-IR" });
@@ -84,6 +91,15 @@ async function run() {
 
   const malformed = await api(page, "/api/provider/test", {});
   lines.push(`- Real browser malformed local-only probe: HTTP ${malformed.status}; ${malformed.status === 400 ? "route JSON validation reached" : summarize(malformed)}.`);
+  const malformedJson = await rawApi(page, "/api/provider/test", "{\"provider\":");
+  let malformedJsonClass = "unclassified";
+  try {
+    const payload = JSON.parse(malformedJson.text);
+    malformedJsonClass = typeof payload.error === "string"
+      ? /پاسخ JSON معتبر/.test(payload.error) ? "safe Persian parser message" : /Unexpected|JSON\\.parse|not valid JSON/i.test(payload.error) ? "raw parser message" : "other JSON error"
+      : "JSON response without error";
+  } catch { malformedJsonClass = "non-JSON response"; }
+  lines.push(`- Real browser malformed-JSON probe: HTTP ${malformedJson.status}; ${malformedJsonClass}.`);
   const test = await api(page, "/api/provider/test", { provider: status.provider, model: status.model });
   lines.push(`- Real browser stored-key provider test: HTTP ${test.status}; ${test.status === 200 ? "success" : summarize(test)}.`);
   lines.push(`- Provider test non-sensitive response headers: server ${clean(test.server)}; x-powered-by ${clean(test.poweredBy)}; via ${clean(test.via)}.`);
