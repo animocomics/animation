@@ -123,7 +123,7 @@ async function main() {
           const tools = await page.locator("a").evaluateAll((anchors) => anchors.map((anchor) => ({
             text: (anchor.textContent || "").trim().replace(/\s+/g, " "),
             href: anchor.getAttribute("href") || "",
-          })).filter((item) => /^(Git|Node\.js|File Manager|Hosting Settings|Dashboard)/i.test(item.text)).slice(0, 20));
+          })).filter((item) => /^(Git|Node\.js|Files|File Manager|Hosting Settings|Dashboard)/i.test(item.text)).slice(0, 20));
           for (const tool of tools) {
             lines.push(`- Tool: ${sanitize(tool.text)}${tool.href.startsWith("/") ? ` (${sanitize(new URL(tool.href, page.url()).pathname)})` : ""}`);
           }
@@ -152,7 +152,26 @@ async function main() {
           lines.push(`- Control: ${sanitize(control.text)}${control.href.startsWith("/") ? ` (${sanitize(new URL(control.href, page.url()).pathname)})` : ""}`);
         }
         if (controls.length) lines.push("");
+        if (label === "Node.js") {
+          const fields = await page.locator("input, select, textarea").evaluateAll((elements) => elements.map((element) => {
+            const name = element.getAttribute("name") || element.id || "";
+            const labelElement = element.id ? document.querySelector(`label[for="${element.id}"]`) : null;
+            const labelText = (labelElement?.textContent || "").trim().replace(/\s+/g, " ");
+            const value = element.tagName === "SELECT"
+              ? (element.selectedOptions[0]?.textContent || "").trim()
+              : (element.getAttribute("value") || "");
+            return { name, labelText, value, type: element.getAttribute("type") || element.tagName.toLowerCase() };
+          }).filter((field) => /document|root|startup|version|mode|package|url|node|npm/i.test(`${field.name} ${field.labelText}`) && !/password|secret|token|credential|api.key/i.test(`${field.name} ${field.labelText}`)).slice(0, 30));
+          for (const field of fields) lines.push(`- Node field: ${sanitize(field.labelText || field.name)} = ${sanitize(field.value)}`);
+          if (fields.length) lines.push("");
+        }
       }
+      const fileLinks = await page.locator("a").evaluateAll((anchors) => anchors.map((anchor) => ({
+        text: (anchor.textContent || "").trim().replace(/\s+/g, " "),
+        href: anchor.getAttribute("href") || "",
+      })).filter((item) => /filemng|file-manager|file_manager|\/files/i.test(item.href)).slice(0, 10));
+      for (const link of fileLinks) lines.push(`- File tool: ${sanitize(link.text)} (${sanitize(new URL(link.href, page.url()).pathname)})`);
+      if (fileLinks.length) lines.push("");
     }
     lines.push("## Result", "", domainFound
       ? "Plesk web login succeeded and the Nomreh domain was found. No remediation was attempted."
