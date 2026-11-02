@@ -96,6 +96,12 @@ async function run() {
 
   const before = await api(page, "/api/admin/api-network");
   lines.push(`- ${networkLine("Shecan before the requested test", before)}`);
+  let suppliedHost = "unrecognized";
+  try {
+    const candidate = new URL(UPDATE_URL);
+    if (candidate.protocol === "https:" && (candidate.hostname === "shecan.ir" || candidate.hostname.endsWith(".shecan.ir"))) suppliedHost = candidate.hostname;
+  } catch { /* The server performs the authoritative validation; never print the secret. */ }
+  lines.push(`- Supplied SHECAN endpoint host only (path and token withheld): ${clean(suppliedHost)}.`);
   const beforeUsage = await usage(page);
 
   const current = payloadOf(before)?.status;
@@ -106,9 +112,8 @@ async function run() {
   }
   const updateField = page.locator("#shecan-update-url");
   await updateField.waitFor({ state: "visible", timeout: 10000 });
-  const useStoredUpdateUrl = Boolean(current?.hasUpdateUrl);
-  if (!useStoredUpdateUrl) await updateField.fill(UPDATE_URL);
-  lines.push(`- Activation input: ${useStoredUpdateUrl ? "the existing encrypted update link, with no URL repeated in the request body" : "the supplied SHECAN secret"}.`);
+  await updateField.fill(UPDATE_URL);
+  lines.push("- Activation input: the supplied SHECAN secret; its path and token are withheld from the report.");
   const saveButton = page.locator(".api-network-connection button.btn-primary").filter({ hasText: /آزمایش/ }).first();
   await saveButton.waitFor({ state: "visible", timeout: 10000 });
   const responsePromise = page.waitForResponse((response) => response.url() === `${ORIGIN}/api/admin/api-network` && response.request().method() === "POST", { timeout: 90000 });
