@@ -226,12 +226,15 @@ async function main() {
             const responsePromise = page.waitForResponse((item) => item.url().includes("/smb/file-manager/") && item.request().isNavigationRequest(), { timeout: 15000 }).catch(() => null);
             await nomrehFileManagerLink.click({ timeout: 10000 }).catch(() => undefined);
             response = await responsePromise;
-          } else {
+          } else if (filePath) {
             response = await page.goto(`${panel}${filePath}`, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => null);
           }
           await page.waitForTimeout(2000);
+          const fileBody = await page.locator("body").innerText().catch(() => "");
           const currentFileUrl = new URL(page.url());
           lines.push("## Nomreh File Manager", "", `- HTTP status: ${response ? response.status() : "unavailable"}`, `- Current page: ${sanitize(`${currentFileUrl.pathname}${currentFileUrl.search}`)}`, "");
+          const fileMessages = toolLines(fileBody);
+          if (fileMessages.length) lines.push(...fileMessages.map((line) => `- ${line}`), "");
           const fileLinks = await page.locator("a").evaluateAll((anchors) => anchors.map((anchor) => ({
             text: (anchor.textContent || "").trim().replace(/\s+/g, " "),
             href: anchor.getAttribute("href") || "",
@@ -242,6 +245,13 @@ async function main() {
           if (depth === 0 && appLink && appLink.href.startsWith("/")) {
             const appUrl = new URL(appLink.href, page.url());
             filePath = `${appUrl.pathname}${appUrl.search}`;
+            continue;
+          }
+          const domainFolder = page.getByText(DOMAIN, { exact: false }).first();
+          if (depth === 0 && await domainFolder.count()) {
+            await domainFolder.click({ timeout: 8000 }).catch(() => undefined);
+            await page.waitForTimeout(1500);
+            filePath = "";
             continue;
           }
           break;
