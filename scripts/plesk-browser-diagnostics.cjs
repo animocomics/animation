@@ -62,14 +62,16 @@ function labelValues(text, labels) {
 }
 
 async function main() {
-  if (!["diagnose", "upload", "extract", "build", "status"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
+  if (!["diagnose", "upload", "extract", "build", "status", "disk"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
   const panel = normalizePanelUrl(process.env.PLESK_PANEL_URL || "");
   const readOnly = ACTION === "diagnose" || ACTION === "status";
   const actionDescription = ACTION === "upload"
     ? "Controlled action: upload one validated application archive to Nomreh only. No extraction, build, restart, or settings change is attempted."
     : ACTION === "extract"
       ? "Controlled action: extract the validated archive inside the Nomreh application root only. Persistent data, uploads, environment files, build, restart, and settings changes are not touched."
-      : "Controlled action: run the validated Nomreh production build with its domain-local Node 22 runtime. Node.js enablement and restart remain pending.";
+      : ACTION === "disk"
+        ? "Controlled read-only action: run Nomreh's disk report only. No build, deletion, restart, or settings change is attempted."
+        : "Controlled action: run the validated Nomreh production build with its domain-local Node 22 runtime. Node.js enablement and restart remain pending.";
   const lines = ["# Plesk browser diagnostics", "", readOnly
     ? "Read-only browser inspection. No settings, deployments or files were changed."
     : actionDescription, ""];
@@ -235,7 +237,7 @@ async function main() {
           if (fields.length || values.length) lines.push("");
         }
       }
-      if (["diagnose", "build", "status"].includes(ACTION) && nomrehConsoleLink && await nomrehConsoleLink.count()) {
+      if (["diagnose", "build", "status", "disk"].includes(ACTION) && nomrehConsoleLink && await nomrehConsoleLink.count()) {
         const consoleResponsePromise = page.waitForResponse((item) => item.url().includes("/modules/nodejs/index.php/domain/console") && item.request().isNavigationRequest(), { timeout: 15000 }).catch(() => null);
         await nomrehConsoleLink.click({ timeout: 8000 }).catch(() => undefined);
         const consoleResponse = await consoleResponsePromise;
@@ -272,6 +274,75 @@ async function main() {
             for (const line of safeOutput) lines.push(`- Existing output: ${sanitize(line.slice(0, 400))}`);
           }
           lines.push("- Inspection only: no command was entered or executed.", "");
+        }
+        if (ACTION === "disk") {
+          if (!consoleBody.includes(`Node.js on ${DOMAIN}`) || !consoleBody.includes("/nomreh.arounidea.com")) {
+            throw new Error("The Node command console is not scoped to Nomreh. The read-only disk report was not started.");
+          }
+          const commandInput = page.getByPlaceholder(/Pick a script or command/i).first();
+          const executeButton = page.locator("button[title='Execute command'], button[aria-label='Execute command']").first();
+          const outputElement = page.locator("pre.pul-console-output").first();
+          if (!await commandInput.count() || !await executeButton.count() || !await outputElement.count()) throw new Error("The Nomreh command controls were not found. The disk report was not started.");
+          const command = "run space:plesk";
+          const responseSummaries = [];
+          let responseOutput = "";
+          let capturing = false;
+          const responseHandler = async (response) => {
+            if (!capturing) return;
+            try {
+              const target = new URL(response.url());
+              if (target.origin !== new URL(panel).origin || !/nodejs|console|npm|command/i.test(target.pathname)) return;
+              responseSummaries.push(`${response.request().method()} ${target.pathname} -> HTTP ${response.status()}`);
+              const text = await response.text().catch(() => "");
+              const safeLines = text.split(/\r?\n/).map((line) => line.trim()).filter((line) => /Nomreh read-only disk|Application total|Persistent data total|Dependencies|Production build|Regenerable|Public files|Local Node runtime|Teacher uploads|Available space|Runtime temporary|Report complete|npm ERR|failed|error/i.test(line) && !/secret|token|password|credential|api.key/i.test(line)).slice(0, 100);
+              if (safeLines.length) responseOutput += `\n${safeLines.join("\n")}`;
+            } catch { /* A non-essential diagnostic response was unavailable. */ }
+          };
+          page.on("response", responseHandler);
+          try {
+            lines.push("## Controlled read-only Nomreh disk report", "", `- Command: ${command}`, "");
+            await commandInput.click({ timeout: 8000 });
+            await commandInput.press("Control+A");
+            await commandInput.press("Backspace");
+            await commandInput.pressSequentially(command, { delay: 45 });
+            await page.waitForTimeout(500);
+            const enteredCommand = await commandInput.inputValue();
+            if (enteredCommand !== command) throw new Error("Plesk did not retain the exact read-only disk command. Nothing was executed.");
+            const optionTexts = await page.locator("[role='option']:visible, .pul-dropdown__item:visible, .select2-results__option:visible").allTextContents();
+            for (const option of optionTexts.map((text) => text.trim()).filter(Boolean).slice(0, 15)) lines.push(`- Command suggestion: ${sanitize(option.slice(0, 200))}`);
+            await commandInput.press("Tab");
+            if (await commandInput.inputValue() !== command) throw new Error("Plesk changed the read-only disk command before execution. Nothing was executed.");
+            capturing = true;
+            await executeButton.click({ timeout: 8000 });
+            const diskStartedAt = Date.now();
+            let completedOutput = "";
+            let diskSucceeded = false;
+            while (Date.now() - diskStartedAt < 6 * 60 * 1000) {
+              await page.waitForTimeout(2000);
+              const consoleOutput = await outputElement.innerText().catch(() => "");
+              const currentBody = await page.locator("body").innerText().catch(() => "");
+              const combined = `${consoleOutput}\n${responseOutput}\n${currentBody}`;
+              if (/Report complete\. No files were changed or deleted\./i.test(combined)) {
+                diskSucceeded = true;
+                completedOutput = combined;
+                break;
+              }
+              const failure = combined.split(/\r?\n/).find((line) => /npm ERR!|Command failed|another.*command.*running|quota exceeded|permission denied/i.test(line));
+              if (failure) throw new Error(`The read-only Nomreh disk report could not run: ${sanitize(failure.slice(0, 350))}`);
+              if (!responseSummaries.length && !consoleOutput.trim() && Date.now() - diskStartedAt > 45000) {
+                throw new Error("Plesk did not issue an execution request or display output after the command button was clicked. The disk report did not start.");
+              }
+            }
+            if (!diskSucceeded) throw new Error("The read-only Nomreh disk report did not complete within 6 minutes. No build or settings change was attempted.");
+            for (const response of responseSummaries.slice(0, 20)) lines.push(`- Execution response: ${sanitize(response)}`);
+            const diskLines = completedOutput.split(/\r?\n/).map((line) => line.trim()).filter((line) => /Nomreh read-only disk|Application total|Persistent data total|Git history|Dependencies|Production build|Regenerable|Public files|Local Node runtime|Teacher uploads|Available space|Runtime temporary|Report complete|MiB|GiB/i.test(line) && !/secret|token|password|credential|api.key/i.test(line)).slice(-80);
+            for (const line of diskLines) lines.push(`- Disk report: ${sanitize(line.slice(0, 350))}`);
+            lines.push("- The read-only disk command completed; no build, deletion, restart, or settings change was attempted.", "");
+            actionCompleted = true;
+          } finally {
+            capturing = false;
+            page.off("response", responseHandler);
+          }
         }
         if (ACTION === "build") {
           if (!consoleBody.includes(`Node.js on ${DOMAIN}`) || !consoleBody.includes("/nomreh.arounidea.com")) {
@@ -586,7 +657,7 @@ async function main() {
         }
       }
     }
-    if (["upload", "extract", "build", "status"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Node.js was not enabled or restarted.`);
+    if (["upload", "extract", "build", "status", "disk"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Node.js was not enabled or restarted.`);
     lines.push("## Result", "", ACTION === "upload"
       ? "The validated application archive was uploaded to Nomreh. Extraction, dependency installation, build, and Node.js enablement remain pending."
       : ACTION === "extract"
@@ -595,7 +666,9 @@ async function main() {
           ? "The validated Nomreh production build and runtime smoke tests succeeded. Node.js enablement and live validation remain pending."
           : ACTION === "status"
             ? "The read-only Nomreh console and persistent-data inspection completed. No command, build, deletion, restart, or settings change was attempted."
-            : domainFound
+            : ACTION === "disk"
+              ? "The read-only Nomreh disk report completed. No build, deletion, restart, or settings change was attempted."
+              : domainFound
         ? "Plesk web login succeeded and the Nomreh domain was found. No remediation was attempted."
         : "Plesk web login completed, but the Nomreh domain was not visible on the inspected pages. No remediation was attempted.", "");
   } catch (error) {
