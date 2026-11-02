@@ -87,7 +87,16 @@ async function main() {
     const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1680, height: 1050 } });
     const page = await context.newPage();
     page.setDefaultTimeout(15000);
-    await page.goto(`${panel}/login_up.php`, { waitUntil: "domcontentloaded", timeout: 30000 });
+    let loginPageLoaded = false;
+    for (let attempt = 1; attempt <= 2 && !loginPageLoaded; attempt += 1) {
+      try {
+        await page.goto(`${panel}/login_up.php`, { waitUntil: "domcontentloaded", timeout: 45000 });
+        loginPageLoaded = true;
+      } catch (error) {
+        if (attempt === 2) throw error;
+        lines.push("- The initial Plesk login page load failed; retrying once before credentials or host commands.", "");
+      }
+    }
 
     const cookieButton = page.getByRole("button", { name: /Accept necessary cookies/i }).first();
     if (await cookieButton.count() && await cookieButton.isVisible().catch(() => false)) {

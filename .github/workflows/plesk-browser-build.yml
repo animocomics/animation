@@ -19,7 +19,7 @@ concurrency:
 jobs:
   production-build:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 50
     steps:
       - name: Check private Plesk browser configuration
         id: config
