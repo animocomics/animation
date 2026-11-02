@@ -63,7 +63,7 @@ function labelValues(text, labels) {
 }
 
 async function main() {
-  if (!["diagnose", "upload", "extract", "build", "status", "disk", "fix-node-version", "update-package", "retire-obsolete"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
+  if (!["diagnose", "upload", "extract", "build", "status", "disk", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
   const panel = normalizePanelUrl(process.env.PLESK_PANEL_URL || "");
   const readOnly = ACTION === "diagnose" || ACTION === "status";
   const actionDescription = ACTION === "upload"
@@ -76,6 +76,8 @@ async function main() {
           ? "Controlled action: preserve Nomreh's Node override backups and pin its untracked .node-version file only to a verified installed nodenv version. No application source, persistent data, build, restart, or other domain is touched."
           : ACTION === "update-package"
             ? "Controlled action: preserve Nomreh's current package.json as package.json.pre-npm-node-fix and upload only the hash-validated replacement. No other application file, persistent data, build, restart, or other domain is touched."
+          : ACTION === "update-tsconfig"
+            ? "Controlled action: preserve Nomreh's current tsconfig.json as tsconfig.json.pre-obsolete-exclusion and upload only the hash-validated replacement. No other application file, persistent data, build, restart, or other domain is touched."
             : ACTION === "retire-obsolete"
               ? "Controlled action: rename only three verified obsolete Cloudflare/better-sqlite3 host artifacts to non-TypeScript backup names. No current source, persistent data, build, restart, or other domain is touched."
               : "Controlled action: run the validated Nomreh production build with its domain-local Node 22 runtime. Node.js enablement and restart remain pending.";
@@ -723,6 +725,145 @@ async function main() {
               lines.push("- Nomreh package.json was replaced only with the validated npm-node launcher fix and verified after upload; the previous file remains preserved as package.json.pre-npm-node-fix.", "- No other application file, persistent data, build, restart, or other domain was changed.", "");
               actionCompleted = true;
             }
+            if (ACTION === "update-tsconfig") {
+              lines.push("## Controlled Nomreh TypeScript configuration update", "");
+              if (!fileBody.includes("package.json") || !fileBody.includes("server.js") || !fileBody.includes(ARCHIVE_NAME)) {
+                throw new Error("The File Manager is not verified at Nomreh's application root. tsconfig.json was not changed.");
+              }
+              const localConfig = path.resolve(__dirname, "..", "tsconfig.json");
+              const expectedConfigSha256 = process.env.PLESK_TSCONFIG_SHA256 || "";
+              if (!/^[a-f0-9]{64}$/.test(expectedConfigSha256)) throw new Error("The validated tsconfig.json SHA-256 was not provided. No file was uploaded.");
+              const configBytes = fs.readFileSync(localConfig);
+              const actualConfigSha256 = crypto.createHash("sha256").update(configBytes).digest("hex");
+              if (actualConfigSha256 !== expectedConfigSha256) throw new Error("The local tsconfig.json does not match the validated legacy-build commit. No file was uploaded.");
+              const configBackupName = "tsconfig.json.pre-obsolete-exclusion";
+              const existingConfigLink = page.getByText("tsconfig.json", { exact: true }).first();
+              const existingConfigCount = await existingConfigLink.count();
+              const configBackupCount = await page.getByText(configBackupName, { exact: true }).count();
+              if (configBackupCount && existingConfigCount) throw new Error("Both tsconfig.json and its pre-exclusion backup are present. No overwrite was attempted; inspect the active configuration before continuing.");
+              if (configBackupCount && !existingConfigCount) {
+                lines.push("- The original tsconfig.json is already preserved as a backup; uploading the validated replacement without overwriting it.");
+              } else {
+                if (!existingConfigCount) throw new Error("Neither tsconfig.json nor its preserved backup was found. No file was changed.");
+                const configRow = existingConfigLink.locator("xpath=ancestor::*[.//input[@type='checkbox']][1]");
+                const configCheckbox = configRow.locator("input[type='checkbox']").first();
+                if (!await configCheckbox.count()) throw new Error("The tsconfig.json row could not be selected. No file was changed.");
+                await configCheckbox.check({ force: true, timeout: 5000 }).catch(async () => configCheckbox.click({ force: true, timeout: 5000 }));
+                if (!await configCheckbox.isChecked().catch(() => false)) throw new Error("The tsconfig.json row was not selected. No file was changed.");
+                let renameChoice = null;
+                const rowActions = configRow.locator("button[title='Actions'], button[aria-label='Actions']").first();
+                if (await rowActions.count()) {
+                  await rowActions.click({ timeout: 5000 });
+                  await page.waitForTimeout(400);
+                  renameChoice = page.locator("a:visible, button:visible").filter({ hasText: /^Rename$/i }).first();
+                }
+                if (!renameChoice || !await renameChoice.count()) {
+                  const moreButton = page.getByRole("button", { name: /^More/i }).first();
+                  if (await moreButton.count()) {
+                    await moreButton.click({ timeout: 5000 }).catch(() => undefined);
+                    await page.waitForTimeout(400);
+                    renameChoice = page.locator("a:visible, button:visible").filter({ hasText: /^Rename$/i }).first();
+                  }
+                }
+                if (!renameChoice || !await renameChoice.count()) throw new Error("The Rename command was not available for tsconfig.json. No file was changed.");
+                await renameChoice.evaluate((element) => element.click());
+                await page.waitForTimeout(700);
+                let renameInput = page.locator('input:not([type="checkbox"]):not([type="hidden"])[value="tsconfig.json"]:visible').first();
+                if (!await renameInput.count()) {
+                  const candidates = page.locator("input:not([type='checkbox']):not([type='hidden']):visible");
+                  for (let index = 0; index < Math.min(await candidates.count(), 30); index += 1) {
+                    const candidate = candidates.nth(index);
+                    if (await candidate.inputValue().catch(() => "") === "tsconfig.json") {
+                      renameInput = candidate;
+                      break;
+                    }
+                  }
+                }
+                if (!await renameInput.count()) throw new Error("The tsconfig.json Rename input was not found. Rename was not confirmed.");
+                await renameInput.fill(configBackupName);
+                if (await renameInput.inputValue() !== configBackupName) throw new Error("The tsconfig.json backup name was not retained. Rename was not confirmed.");
+                const dialog = page.locator("[role='dialog']:visible, .pul-modal:visible, .modal:visible").last();
+                const scope = await dialog.count() ? dialog : page;
+                const confirmRename = scope.getByRole("button", { name: /^(OK|Rename|Confirm)$/i }).last();
+                if (!await confirmRename.count()) throw new Error("The tsconfig.json Rename confirmation was not found. Rename was not confirmed.");
+                await confirmRename.click({ timeout: 8000 });
+                await page.waitForTimeout(2500);
+                lines.push(`- Preserved the previous hosted tsconfig.json as ${configBackupName}.`);
+              }
+              lines.push(`- Validated tsconfig.json bytes: ${configBytes.length}`, `- Validated tsconfig.json SHA-256: ${actualConfigSha256}`, "");
+              const configDialogHandler = async (dialog) => {
+                const message = dialog.message();
+                lines.push(`- Browser upload confirmation: ${sanitize(message.slice(0, 350))}`);
+                if (dialog.type() === "confirm" && /overwrite|replace|already exists/i.test(message) && (/tsconfig\.json/i.test(message) || !/[a-z0-9_-]+\.[a-z0-9]+/i.test(message.replace(/tsconfig\.json/ig, "")))) {
+                  await dialog.accept();
+                } else {
+                  await dialog.dismiss();
+                }
+              };
+              page.on("dialog", configDialogHandler);
+              const addNewButton = page.getByRole("button", { name: "Add New", exact: true }).first();
+              if (!await addNewButton.count()) throw new Error("The Add New control was not found. tsconfig.json was not uploaded.");
+              await addNewButton.click({ timeout: 5000 });
+              await page.waitForTimeout(500);
+              const configUpload = page.locator("input[type='file']").first();
+              if (!await configUpload.count()) throw new Error("The File Manager upload input was not found. tsconfig.json was not uploaded.");
+              await configUpload.setInputFiles(localConfig);
+              await page.waitForTimeout(1500);
+              const confirmUpload = page.locator("button:visible").filter({ hasText: /^Upload/i }).first();
+              if (await confirmUpload.count()) await confirmUpload.click({ timeout: 5000 }).catch(() => undefined);
+              await page.waitForTimeout(1800);
+              const overwriteBody = await page.locator("body").innerText().catch(() => "");
+              const overwriteLines = overwriteBody.split(/\r?\n/).map((line) => line.trim()).filter((line) => /tsconfig\.json|overwrite|replace existing|already exists/i.test(line) && !/secret|token|password|credential/i.test(line)).slice(0, 20);
+              for (const line of overwriteLines) lines.push(`- Upload form: ${sanitize(line.slice(0, 300))}`);
+              if (/overwrite|replace existing|already exists/i.test(overwriteBody)) {
+                if (!/tsconfig\.json/i.test(overwriteBody)) throw new Error("The overwrite prompt did not explicitly identify tsconfig.json. Overwrite was not confirmed.");
+                const overwriteControl = page.getByLabel(/overwrite existing files|replace existing files/i).first();
+                if (await overwriteControl.count()) await overwriteControl.check({ force: true, timeout: 5000 }).catch(() => undefined);
+                const dialog = page.locator("[role='dialog']:visible, .pul-modal:visible, .modal:visible").last();
+                const scope = await dialog.count() ? dialog : page;
+                const confirmOverwrite = scope.getByRole("button", { name: /^(Overwrite|Replace|Yes|OK|Confirm)$/i }).last();
+                if (!await confirmOverwrite.count()) throw new Error("The tsconfig.json overwrite confirmation control was not found. Overwrite was not confirmed.");
+                await confirmOverwrite.click({ timeout: 8000 });
+                await page.waitForTimeout(2500);
+              }
+              await page.waitForTimeout(3500);
+              await page.reload({ waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => undefined);
+              await page.waitForTimeout(1500);
+              const appFolder = page.locator("a.tree-item-content").filter({ hasText: DOMAIN }).first();
+              if (await appFolder.count()) {
+                await appFolder.click({ timeout: 8000 }).catch(() => undefined);
+                await page.waitForTimeout(2000);
+              }
+              if (!await page.getByText(configBackupName, { exact: true }).count()) throw new Error("The preserved tsconfig.json backup was not visible after upload. No build or further host change was attempted.");
+              const uploadedConfigLink = page.getByText("tsconfig.json", { exact: true }).first();
+              if (!await uploadedConfigLink.count()) throw new Error("tsconfig.json was not visible after upload. No build or further host change was attempted.");
+              const downloadPromise = page.waitForEvent("download", { timeout: 6000 }).catch(() => null);
+              await uploadedConfigLink.click({ timeout: 8000 }).catch(() => undefined);
+              const download = await downloadPromise;
+              let verified = false;
+              if (download) {
+                const downloadPath = await download.path();
+                if (downloadPath) {
+                  const hostedBytes = fs.readFileSync(downloadPath);
+                  const hostedSha256 = crypto.createHash("sha256").update(hostedBytes).digest("hex");
+                  if (hostedSha256 !== actualConfigSha256) throw new Error("The hosted tsconfig.json hash does not match the validated file. No build or restart was attempted.");
+                  verified = true;
+                }
+              } else {
+                await page.waitForTimeout(1200);
+                const editorBody = await page.locator("body").innerText().catch(() => "");
+                if (editorBody.includes("open-next.config.ts") && editorBody.includes("lib/server/cloudflare.ts") && editorBody.includes("tests/cloudflare-seed.test.ts") && editorBody.includes("exclude")) verified = true;
+              }
+              if (!verified) {
+                const unverifiedBody = await page.locator("body").innerText().catch(() => "");
+                const configLines = unverifiedBody.split(/\r?\n/).map((line) => line.trim()).filter((line) => /open-next\.config|lib\/server\/cloudflare|tests\/cloudflare-seed|"exclude"/i.test(line) && !/secret|token|password|credential/i.test(line)).slice(0, 20);
+                for (const line of configLines) lines.push(`- Unverified configuration content: ${sanitize(line.slice(0, 300))}`);
+                throw new Error("The hosted tsconfig.json exclusions could not be verified. No build or restart was attempted.");
+              }
+              page.off("dialog", configDialogHandler);
+              lines.push("- Nomreh tsconfig.json was replaced only with the validated obsolete-artifact exclusions and verified after upload; the previous file remains preserved as tsconfig.json.pre-obsolete-exclusion.", "- No other application file, persistent data, build, restart, or other domain was changed.", "");
+              actionCompleted = true;
+            }
             if (ACTION === "fix-node-version") {
               const originalName = ".node-version";
               const backupName = process.env.PLESK_NODE_BACKUP_NAME || ".node-version.nomreh-backup";
@@ -1072,7 +1213,7 @@ async function main() {
         }
       }
     }
-    if (["upload", "extract", "build", "status", "disk", "fix-node-version", "update-package", "retire-obsolete"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Node.js was not enabled or restarted.`);
+    if (["upload", "extract", "build", "status", "disk", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Node.js was not enabled or restarted.`);
     lines.push("## Result", "", ACTION === "upload"
       ? "The validated application archive was uploaded to Nomreh. Extraction, dependency installation, build, and Node.js enablement remain pending."
       : ACTION === "extract"
@@ -1087,7 +1228,9 @@ async function main() {
                 ? "Nomreh's Node override fix completed with the original contents preserved. No build or restart was attempted; read-only command verification remains pending."
                 : ACTION === "update-package"
                   ? "Nomreh's validated package.json npm launcher fix was uploaded and verified. No build or restart was attempted; disk verification remains pending."
-                  : ACTION === "retire-obsolete"
+                  : ACTION === "update-tsconfig"
+                    ? "Nomreh's validated tsconfig.json obsolete-artifact exclusions were uploaded and verified. No build or restart was attempted; the controlled production build remains pending."
+                    : ACTION === "retire-obsolete"
                     ? "All three obsolete Nomreh Cloudflare/better-sqlite3 artifacts were preserved as non-TypeScript backups and verified. No build or restart was attempted."
                     : domainFound
         ? "Plesk web login succeeded and the Nomreh domain was found. No remediation was attempted."
