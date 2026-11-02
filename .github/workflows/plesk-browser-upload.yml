@@ -43,8 +43,8 @@ jobs:
         if: steps.config.outputs.configured == 'true'
         run: |
           set -euo pipefail
-          source_sha=6d2832bfa0a1d44fe180b6c64c26391b91c00184
-          archive="$RUNNER_TEMP/nomreh-deploy-shecan-headers-v16c.zip"
+          source_sha=a8eef6d117bffe0c2d8561e95dea02c908fbdc47
+          archive="$RUNNER_TEMP/nomreh-deploy-shecan-dns-first-v17.zip"
           git archive --format=zip --output="$archive" "$source_sha"
           for required in package.json package-lock.json server.js lib/server/sqlite.ts scripts/plesk-node22.cjs scripts/plesk-runtime/node-v22.22.3-linux-x64-glibc-217.tar.xz; do
             unzip -Z1 "$archive" | grep -Fx "$required" > /dev/null
@@ -81,8 +81,8 @@ jobs:
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
           PLESK_BROWSER_ACTION: upload
-          PLESK_ARCHIVE_NAME: nomreh-deploy-shecan-headers-v16c.zip
-          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-shecan-headers-v16c.zip
+          PLESK_ARCHIVE_NAME: nomreh-deploy-shecan-dns-first-v17.zip
+          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-shecan-dns-first-v17.zip
           PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-plesk-upload.md
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
         run: node scripts/plesk-browser-diagnostics.cjs
