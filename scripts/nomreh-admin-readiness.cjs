@@ -418,7 +418,11 @@ async function testTeacherAccess() {
     if (!teacherWorkspace.ok()) throw new Error("The teacher workspace read API was not available.");
     const forbiddenProviderSave = await teacherContext.request.put(`${ORIGIN}/api/provider`, { data: {} });
     if (forbiddenProviderSave.status() !== 403) throw new Error("A teacher provider save was not rejected with HTTP 403.");
-    lines.push("- Teacher workspace API remains available; provider save is read-only for the teacher (HTTP 403).");
+    for (const pathname of ["/api/provider/test", "/api/provider/models"]) {
+      const response = await teacherContext.request.post(`${ORIGIN}${pathname}`, { data: {} });
+      if (response.status() !== 403) throw new Error(`Teacher access to ${pathname} was not rejected with HTTP 403.`);
+    }
+    lines.push("- Teacher workspace API remains available; provider save, connection test and account-model discovery are admin-only (HTTP 403).");
 
     await teacherPage.goto(`${ORIGIN}/review`, { waitUntil: "domcontentloaded", timeout: 30000 });
     await teacherPage.locator(".workspace-loading").waitFor({ state: "hidden", timeout: 20000 }).catch(() => undefined);
@@ -594,10 +598,31 @@ async function main() {
   if (!providerResponse.ok() || !providerPayload.status) throw new Error("The provider status API was not available to the authenticated admin.");
   lines.push(`- Provider configured: ${providerPayload.status.configured ? "yes" : "no"}.`, `- Selected provider/model: ${clean(providerPayload.status.providerLabel)} / ${clean(providerPayload.status.model)}.`, "- API Key entry, connection test, and secure-save controls are visible to the admin.");
 
+  const readModelOptions = () => page.locator("#admin-model-options option").evaluateAll((options) => options.map((option) => option.getAttribute("value") || ""));
+  await page.getByRole("radio", { name: /Google Gemini/ }).click();
+  const geminiOptions = await readModelOptions();
+  for (const id of ["gemini-3.7-flash", "gemini-3.8-flash", "gemini-4-argon"]) {
+    if (!geminiOptions.includes(id)) throw new Error(`${id} was not available in the actual admin model catalog.`);
+  }
+  await page.route(`${ORIGIN}/api/provider/models`, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ models: ["gemini-3.8-flash", "gemini-4-argon", "gemini-future-vision"] }) });
+  });
+  await page.getByRole("button", { name: "دریافت مدل‌های حساب", exact: true }).click();
+  await page.getByText("۳ مدل از حساب خوانده شد. هیچ کلید یا تنظیمی ذخیره نشد.", { exact: true }).waitFor({ state: "visible" });
+  const discoveredGeminiOptions = await readModelOptions();
+  if (!discoveredGeminiOptions.includes("gemini-future-vision")) throw new Error("Live account model discovery did not extend the real admin model catalog.");
+  for (const id of ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-3.7-flash", "gemini-3.8-flash"]) {
+    if (!discoveredGeminiOptions.includes(id)) throw new Error(`Account discovery removed legacy model ${id} instead of extending the catalog.`);
+  }
+  await page.unroute(`${ORIGIN}/api/provider/models`);
+  await page.locator("#admin-model").fill("gemini-manual-future-vision");
+  if (await page.locator("#admin-model").inputValue() !== "gemini-manual-future-vision") throw new Error("The model control rejected a manually entered future model ID.");
+  lines.push("- Gemini 2.5, 3.7, 3.8 and 4 remain together after account discovery; legacy retention and manual future-model entry passed in the real browser without saving a key or provider setting.");
+
   await page.getByRole("radio", { name: /Z\.AI GLM/ }).click();
-  const modelOptions = await page.locator("#admin-model option").allTextContents();
-  if (!modelOptions.includes("glm-5.3-flash")) throw new Error("GLM 5.3 Flash was not available in the actual admin model selector.");
-  lines.push("- Z.AI model selector includes glm-5.3-flash. No provider setting was saved.");
+  const modelOptions = await readModelOptions();
+  if (!modelOptions.includes("glm-5.3-flash")) throw new Error("GLM 5.3 Flash was not available in the actual admin model catalog.");
+  lines.push("- Z.AI model catalog includes glm-5.3-flash. No provider setting was saved.");
 
   const networkResponse = await context.request.get(`${ORIGIN}/api/admin/api-network`);
   const networkPayload = await networkResponse.json();
@@ -655,7 +680,7 @@ async function main() {
 
   await logout();
   await testTeacherAccess();
-  lines.push("", "## Result", "", "Real admin login, management-only routes and APIs, provider controls, GLM 5.3 Flash, Shecan configuration controls, teacher workspace/review scoring, and teacher access boundaries are operational. External provider-key validity and Shecan activation were not changed or tested; no real grading job was run without a configured provider.");
+  lines.push("", "## Result", "", "Real admin login, management-only routes and APIs, legacy-preserving account-model discovery, manual model entry, GLM 5.3 Flash, Shecan configuration controls, teacher workspace/review scoring, and teacher access boundaries are operational. External provider-key validity and Shecan activation were not changed or tested; no real grading job was run without a configured provider.");
 }
 
 main().catch(async (error) => {

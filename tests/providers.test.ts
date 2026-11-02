@@ -189,14 +189,14 @@ test("Inkling adapter uses official Tinker Messages image blocks, high effort an
 
 test("Gemini adapter sends inline PDF/image data and parses fenced JSON", async () => {
   await mockFetch((url, init) => {
-    assert.match(url, /gemini-2\.5-pro:generateContent$/);
+    assert.match(url, /gemini-3\.8-flash:generateContent$/);
     assert.equal((init.headers as Record<string, string>)["x-goog-api-key"], "secret-gemini");
     const body = JSON.parse(String(init.body));
     assert.equal(body.generationConfig.responseMimeType, "application/json");
     assert.equal(body.contents[0].parts.filter((part: { inline_data?: unknown }) => part.inline_data).length, 2);
     return Response.json({ candidates: [{ content: { parts: [{ text: `\`\`\`json\n${JSON.stringify(modelResult)}\n\`\`\`` }] } }], usageMetadata: { promptTokenCount: 80, candidatesTokenCount: 20 } });
   }, async () => {
-    const response = await callProvider({ provider: "gemini", model: "gemini-2.5-pro", apiKey: "secret-gemini", prompt: "prompt", files });
+    const response = await callProvider({ provider: "gemini", model: "gemini-3.8-flash", apiKey: "secret-gemini", prompt: "prompt", files });
     assert.deepEqual(response.usage, { inputTokens: 80, outputTokens: 20 });
   });
 });

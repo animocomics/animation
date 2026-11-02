@@ -2,7 +2,9 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { AuthError, requireAdmin } from "@/lib/server/auth";
 import { getProviderConfig, getProviderNetworkConfig } from "@/lib/server/provider-config";
-import { providerFetch } from "@/lib/server/provider-network";
+import { providerFetch, ProviderNetworkError } from "@/lib/server/provider-network";
+import { providerResponseError } from "@/lib/server/provider-models";
+import { ProviderError } from "@/lib/server/providers";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -21,7 +23,7 @@ export async function POST(request: Request) {
     let apiKey = input.apiKey?.trim() || "";
     if (!apiKey) {
       const stored = await getProviderConfig();
-      if (stored.provider !== input.provider || stored.model !== input.model) throw new Error("برای مدل جدید، کلید را دوباره وارد کنید یا ابتدا تنظیمات را ذخیره کنید.");
+      if (stored.provider !== input.provider) throw new ProviderError("برای آزمایش این سرویس، کلید همان سرویس را وارد کنید.", 400);
       apiKey = stored.apiKey;
     }
     const isChat = ["zai", "minimax", "mistral"].includes(input.provider);
@@ -82,18 +84,8 @@ export async function POST(request: Request) {
       body: testBody ? JSON.stringify(testBody) : undefined,
       signal: AbortSignal.timeout(20_000),
       cache: "no-store",
-    });
-    if (!response.ok) {
-      await response.arrayBuffer();
-      const message = response.status === 401 || response.status === 403
-        ? "کلید معتبر نیست یا اجازهٔ استفاده از این مدل را ندارد."
-        : response.status === 404
-          ? "این مدل برای حساب شما پیدا نشد؛ نام مدل را بررسی کنید."
-          : response.status === 429
-            ? "سهمیه یا محدودیت درخواست سرویس‌دهنده فعال است."
-            : "بررسی اتصال ناموفق بود؛ کمی بعد دوباره تلاش کنید.";
-      return NextResponse.json({ error: message }, { status: response.status === 404 ? 400 : response.status });
-    }
+    }, network);
+    if (!response.ok) throw await providerResponseError(response, input.provider, apiKey);
     if (input.provider === "deepseek") {
       const payload = await response.json() as { data?: Array<{ id?: string }> };
       if (!payload.data?.some((item) => item.id === input.model)) {
@@ -109,6 +101,8 @@ export async function POST(request: Request) {
   } catch (error) {
     if (error instanceof z.ZodError) return NextResponse.json({ error: "Provider و مدل را کامل وارد کنید." }, { status: 400 });
     if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.status });
+    if (error instanceof ProviderError) return NextResponse.json({ error: error.message }, { status: error.status });
+    if (error instanceof ProviderNetworkError) return NextResponse.json({ error: error.message }, { status: 502 });
     const message = error instanceof Error && error.name === "TimeoutError"
       ? "بررسی اتصال بیش از حد طول کشید."
       : error instanceof Error && !error.message.includes("fetch") ? error.message : "ارتباط با سرویس‌دهنده برقرار نشد؛ اتصال اینترنت سرور را بررسی کنید.";

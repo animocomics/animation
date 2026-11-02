@@ -3,17 +3,10 @@ import { ANSWER_KEY_IMPORT_SYSTEM_INSTRUCTIONS, answerKeyImportJsonSchema, answe
 import { QUESTION_IMPORT_SYSTEM_INSTRUCTIONS, questionImportJsonSchema, questionImportResultSchema, type QuestionImportResult } from "./question-import-schema";
 import type { GradeApiRequest, ProviderId } from "../types";
 import type { ProviderNetworkConfig } from "../api-network";
+import { RECOMMENDED_MODELS } from "../provider-catalog";
 import { providerFetch, ProviderNetworkError } from "./provider-network";
 
-export const DEFAULT_MODELS: Record<ProviderId, string> = {
-  openai: "gpt-4.1",
-  gemini: "gemini-2.5-pro",
-  deepseek: "deepseek-flash",
-  zai: "glm-5.3-flash",
-  minimax: "MiniMax-M3.1-Flash",
-  inkling: "thinkingmachines/Inkling-Small:peft:262144:sampling-nvfp4",
-  mistral: "mistral-large-4",
-};
+export const DEFAULT_MODELS: Record<ProviderId, string> = RECOMMENDED_MODELS;
 
 export const PROVIDER_LABELS: Record<ProviderId, string> = {
   openai: "OpenAI",

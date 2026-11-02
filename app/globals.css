@@ -776,7 +776,14 @@ input[type="number"] { font-variant-numeric: tabular-nums; }
 .provider-option small { color: var(--muted); font-size: 7px; margin-top: 1px; }
 .provider-option > i { position: absolute; top: 7px; left: 7px; width: 17px; height: 17px; display: grid; place-items: center; border-radius: 50%; background: var(--brand); color: white; }
 .provider-option > i:empty { display: none; }
-.api-fields { display: grid; grid-template-columns: 0.75fr 1.25fr; gap: 13px; margin-top: 15px; }
+.api-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 13px; margin-top: 15px; }
+.model-input-row { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.model-name-input { min-width: 0; width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; text-align: left; }
+.model-discovery-button { flex: 0 0 auto; min-height: 38px; padding-inline: 10px; font-size: 8px; white-space: nowrap; }
+.model-discovery-message { line-height: 1.8; }
+.model-discovery-message.success { color: var(--brand); }
+.model-discovery-message.error { color: var(--red); }
+.model-alias-hint { color: var(--amber); }
 .api-key-input { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; text-align: left; }
 .form-hint:has(svg) { display: flex; align-items: center; gap: 4px; }
 .api-test-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 15px; }

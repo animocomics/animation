@@ -164,7 +164,7 @@ function makeResult(
     questions: questionResults,
     flags,
     provider,
-    model: provider === "openai" ? "gpt-4.1" : "gemini-2.5-pro",
+    model: provider === "openai" ? "gpt-6.1-terra" : "gemini-3.8-flash",
     gradedAt: "2026-10-26T09:30:00.000Z",
     verification: flags.length ? "verified" : "not_requested",
     usage: { inputTokens: 12840, outputTokens: 1640 },
@@ -326,7 +326,7 @@ export function createDemoWorkspace(): WorkspaceData {
 
 export const DEFAULT_WORKSPACE_SETTINGS: WorkspaceSettings = {
   provider: "openai",
-  model: "gpt-4.1",
+  model: "gpt-6.1-terra",
   gradingMode: "precise",
   reviewThreshold: 0.8,
   anonymize: true,
