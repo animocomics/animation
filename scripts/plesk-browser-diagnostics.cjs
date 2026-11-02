@@ -124,6 +124,7 @@ async function main() {
     let nomrehFilesPath = "";
     let nomrehNodeLink = null;
     let nomrehFileManagerLink = null;
+    let nomrehConsoleLink = null;
     for (const inspectPath of pagesToInspect) {
       const response = await page.goto(`${panel}${inspectPath}`, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => null);
       await page.waitForTimeout(1500);
@@ -201,6 +202,9 @@ async function main() {
         }
         if (controls.length) lines.push("");
         if (label === "Node.js") {
+          const consoleCandidates = page.locator("a[href*='/modules/nodejs/index.php/domain/console']");
+          const namedConsoleLink = consoleCandidates.filter({ hasText: /Run Node\.js commands/i }).first();
+          nomrehConsoleLink = await namedConsoleLink.count() ? namedConsoleLink : (await consoleCandidates.count() ? consoleCandidates.first() : null);
           const managerLinks = await page.locator("a[href*='/smb/file-manager/']").evaluateAll((anchors) => anchors.map((anchor) => ({
             text: (anchor.textContent || "").trim().replace(/\s+/g, " "),
             href: anchor.getAttribute("href") || "",
@@ -228,6 +232,29 @@ async function main() {
           for (const value of values) lines.push(`- Node value: ${value}`);
           if (fields.length || values.length) lines.push("");
         }
+      }
+      if (ACTION === "diagnose" && nomrehConsoleLink && await nomrehConsoleLink.count()) {
+        const consoleResponsePromise = page.waitForResponse((item) => item.url().includes("/modules/nodejs/index.php/domain/console") && item.request().isNavigationRequest(), { timeout: 15000 }).catch(() => null);
+        await nomrehConsoleLink.click({ timeout: 8000 }).catch(() => undefined);
+        const consoleResponse = await consoleResponsePromise;
+        await page.waitForTimeout(1200);
+        const consoleBody = await page.locator("body").innerText().catch(() => "");
+        lines.push("## Node command console inspection", "", `- HTTP status: ${consoleResponse ? consoleResponse.status() : "unavailable"}`, `- Current page: ${sanitize(new URL(page.url()).pathname)}`, "");
+        const consoleLines = consoleBody.split(/\r?\n/).map((line) => line.trim()).filter((line) => /command|npm|node|application root|script|package manager|run/i.test(line) && !/secret|token|password|credential|api.key|environment/i.test(line)).slice(0, 45);
+        for (const line of consoleLines) lines.push(`- Console text: ${sanitize(line.slice(0, 250))}`);
+        const consoleFields = await page.locator("input, select, textarea").evaluateAll((elements) => elements.map((element) => ({
+          tag: element.tagName,
+          name: element.getAttribute("name") || element.id || "",
+          label: element.getAttribute("placeholder") || element.getAttribute("aria-label") || "",
+          value: element.tagName === "SELECT" ? (element.selectedOptions[0]?.textContent || "").trim() : (element.getAttribute("value") || ""),
+        })).filter((field) => /command|script|package|manager|args|npm|node|cwd|root/i.test(`${field.name} ${field.label}`) && !/password|secret|token|credential|environment/i.test(`${field.name} ${field.label}`)).slice(0, 30));
+        for (const field of consoleFields) lines.push(`- Console field: ${sanitize(JSON.stringify(field))}`);
+        const consoleButtons = await page.locator("button, input[type='submit']").evaluateAll((elements) => elements.map((element) => ({
+          text: (element.textContent || element.getAttribute("value") || "").trim().replace(/\s+/g, " "),
+          title: element.getAttribute("title") || element.getAttribute("aria-label") || "",
+        })).filter((item) => /run|execute|npm|build/i.test(`${item.text} ${item.title}`)).slice(0, 20));
+        for (const button of consoleButtons) lines.push(`- Console button: ${sanitize(JSON.stringify(button))}`);
+        lines.push("- Inspection only: no command was entered or executed.", "");
       }
       if (nomrehFilesPath) {
         let filePath = nomrehFilesPath;
