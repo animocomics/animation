@@ -262,6 +262,7 @@ async function readConfiguredAdminFromPlesk() {
         if (await page.getByText(name, { exact: true }).count()) knownEntries.push(name);
       }
       lines.push(`- Known entries visible at the inspected scoped File Manager location: ${knownEntries.length ? knownEntries.join(", ") : "none"}.`);
+      const serverFileHref = await page.getByText("server.js", { exact: true }).first().getAttribute("href").catch(() => "");
       const environmentFileNames = [".env", ".env.local", ".env.production", ".env.production.local"];
       const visibleEnvironmentFiles = [];
       for (const name of environmentFileNames) {
@@ -285,6 +286,47 @@ async function readConfiguredAdminFromPlesk() {
         configuredPassword = configuredPassword || dotenvValue(environmentText, "NOMREH_ADMIN_PASSWORD");
         lines.push(`- Environment editor sources containing Nomreh variable names: body=${/NOMREH_[A-Z0-9_]+/.test(bodyText) ? "yes" : "no"}; textareas=${textAreas.length}; code-editors=${codeEditors.length}.`);
         lines.push(`- Admin fields parsed from the in-memory environment view: username=${configuredUsername ? "yes" : "no"}; password=${configuredPassword ? "yes" : "no"}.`);
+      }
+      if ((!configuredUsername || !configuredPassword) && serverFileHref && !/^(?:javascript:|data:|#)/i.test(serverFileHref)) {
+        lines.push("- Read-only hidden-environment lookup derived from the scoped server.js file link: yes.");
+        for (const name of environmentFileNames) {
+          if (configuredUsername && configuredPassword) break;
+          const derivedHref = serverFileHref.replace(/server\.js/g, name);
+          if (derivedHref === serverFileHref) continue;
+          const target = new URL(derivedHref, fileManagerLocation);
+          if (target.origin !== new URL(panel).origin) continue;
+          const result = await page.evaluate(async (url) => {
+            try {
+              const response = await fetch(url, { credentials: "same-origin", cache: "no-store" });
+              const text = (await response.text()).slice(0, 2000000);
+              const candidates = [text];
+              try {
+                const parsed = JSON.parse(text);
+                let visited = 0;
+                const collect = (value) => {
+                  if (visited++ > 4000 || candidates.length >= 20) return;
+                  if (typeof value === "string") candidates.push(value);
+                  else if (Array.isArray(value)) for (const entry of value) collect(entry);
+                  else if (value && typeof value === "object") for (const entry of Object.values(value)) collect(entry);
+                };
+                collect(parsed);
+              } catch { /* HTML or raw environment content. */ }
+              if (/<(?:html|textarea|body|pre)\b/i.test(text)) {
+                const documentNode = new DOMParser().parseFromString(text, "text/html");
+                candidates.push(documentNode.body?.innerText || "");
+                for (const area of documentNode.querySelectorAll("textarea")) candidates.push(area.value || "");
+              }
+              return { status: response.status, texts: [...new Set(candidates.filter((value) => /NOMREH_[A-Z0-9_]+/.test(value)).map((value) => value.slice(0, 2000000)))].slice(0, 20) };
+            } catch {
+              return { status: 0, texts: [] };
+            }
+          }, target.toString());
+          for (const text of result.texts) {
+            configuredUsername = configuredUsername || dotenvValue(text, "NOMREH_ADMIN_USERNAME");
+            configuredPassword = configuredPassword || dotenvValue(text, "NOMREH_ADMIN_PASSWORD");
+          }
+          lines.push(`- Scoped ${name} read: HTTP ${result.status}; Nomreh environment content=${result.texts.length ? "yes" : "no"}; admin username=${configuredUsername ? "yes" : "no"}; admin password=${configuredPassword ? "yes" : "no"}. No file was saved.`);
+        }
       }
     }
     if (!configuredUsername || !configuredPassword) return null;
@@ -322,7 +364,7 @@ async function main() {
   let credentials = initialAccess
     ? { username: "admin", password: "Admin@1405" }
     : (secretUsername || secretPassword
-      ? { username: secretUsername || "admin", password: secretPassword || "Admin@1405" }
+      ? { username: secretUsername, password: secretPassword }
       : await readConfiguredAdminFromPlesk());
   if (!credentials) throw new Error("Initial accounts are hidden and no configured admin credential fields were available in existing Secrets or Nomreh's scoped settings. No password was attempted.");
   if (!credentials.username || !credentials.password) throw new Error("The configured admin login was incomplete. No password was attempted.");
