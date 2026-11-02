@@ -58,7 +58,7 @@ jobs:
           source_sha=03c3b2c470d98fe09d07d267eb749594dadd9152
           archive="$RUNNER_TEMP/nomreh-deploy-shecan-async-v20-delta.zip"
           expected='app/api/admin/api-network/route.ts components/api-network-connection.tsx lib/server/api-network.ts'
-          runtime_changes="$(git diff --name-only "$base_sha" "$source_sha" -- app lib | tr '\n' ' ' | sed 's/ $//')"
+          runtime_changes="$(git diff --name-only "$base_sha" "$source_sha" -- app components lib | tr '\n' ' ' | sed 's/ $//')"
           test "$runtime_changes" = "$expected"
           git archive --format=zip --output="$archive" "$source_sha" $expected
           for required in $expected; do
