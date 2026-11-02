@@ -116,6 +116,19 @@ async function readConfiguredAdminFromPlesk() {
   try {
     const page = await pleskContext.newPage();
     page.setDefaultTimeout(18000);
+    const scopedPayloads = [];
+    const scopedResponseReads = [];
+    let captureNodeResponses = false;
+    page.on("response", (response) => {
+      if (!captureNodeResponses || !response.url().includes("/modules/nodejs/index.php/api/")) return;
+      const contentType = response.headers()["content-type"] || "";
+      if (!/json|text\/plain/i.test(contentType)) return;
+      const read = response.text().then((text) => {
+        if (text.length > 2000000 || scopedPayloads.length >= 30) return;
+        try { scopedPayloads.push(JSON.parse(text)); } catch { /* Non-JSON endpoint response. */ }
+      }).catch(() => undefined);
+      scopedResponseReads.push(read);
+    });
     await page.goto(`${panel}/login_up.php`, { waitUntil: "domcontentloaded", timeout: 45000 });
     const cookieButton = page.getByRole("button", { name: /Accept necessary cookies/i }).first();
     if (await cookieButton.count() && await cookieButton.isVisible().catch(() => false)) await cookieButton.click().catch(() => undefined);
@@ -147,6 +160,7 @@ async function readConfiguredAdminFromPlesk() {
       const nodeScope = await domainCard.count() ? domainCard : domainElement.locator("xpath=ancestor::*[.//a[contains(@href, '/modules/nodejs/')]][1]");
       const nodeLink = await nodeScope.count() ? nodeScope.locator("a[href*='/modules/nodejs/']").first() : null;
       if (!nodeLink || !await nodeLink.count()) continue;
+      captureNodeResponses = true;
       await nodeLink.click({ timeout: 10000 });
       domainFound = true;
       break;
@@ -171,6 +185,15 @@ async function readConfiguredAdminFromPlesk() {
     const payload = JSON.parse(result.body);
     let configuredUsername = nestedValue(payload, "NOMREH_ADMIN_USERNAME") || "";
     let configuredPassword = nestedValue(payload, "NOMREH_ADMIN_PASSWORD") || "";
+    const applyCapturedAdmin = () => {
+      for (const captured of scopedPayloads) {
+        configuredUsername = configuredUsername || nestedValue(captured, "NOMREH_ADMIN_USERNAME") || "";
+        configuredPassword = configuredPassword || nestedValue(captured, "NOMREH_ADMIN_PASSWORD") || "";
+      }
+    };
+    await Promise.allSettled([...scopedResponseReads]);
+    applyCapturedAdmin();
+    lines.push(`- Scoped Node.js JSON responses inspected in memory: ${scopedPayloads.length}.`);
     if (!configuredUsername || !configuredPassword) {
       lines.push(`- Scoped application API admin fields available: ${configuredUsername || configuredPassword ? "partially" : "no"}.`);
       const dom = await readAdminFromNodeDom(page);
@@ -186,7 +209,10 @@ async function readConfiguredAdminFromPlesk() {
         if (editCount) {
           await editControls.first().click({ timeout: 10000 });
           await page.waitForTimeout(1800);
+          await Promise.allSettled([...scopedResponseReads]);
+          applyCapturedAdmin();
           const editDom = await readAdminFromNodeDom(page);
+          lines.push(`- Scoped Node.js JSON responses inspected after opening Edit: ${scopedPayloads.length}.`);
           lines.push(`- Relevant environment variable names visible after opening Edit: ${editDom.visibleKeys.length ? editDom.visibleKeys.join(", ") : "none"}.`);
           lines.push(`- Admin credential values readable after opening Edit: username=${editDom.values.NOMREH_ADMIN_USERNAME ? "yes" : "no"}; password=${editDom.values.NOMREH_ADMIN_PASSWORD ? "yes" : "no"}.`);
           lines.push(`- Controls visible after opening Edit: ${editDom.controls.length ? editDom.controls.join(", ") : "none identified"}. No Save or Apply control was used.`);
