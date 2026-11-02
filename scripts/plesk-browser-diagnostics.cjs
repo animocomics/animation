@@ -297,7 +297,7 @@ async function main() {
               await extractChoice.click({ timeout: 8000 });
               await page.waitForTimeout(1000);
               const extractBody = await page.locator("body").innerText().catch(() => "");
-              const extractLines = extractBody.split(/\r?\n/).map((line) => line.trim()).filter((line) => /extract|overwrite|destination|target directory|extract to/i.test(line) && !/secret|token|password|credential/i.test(line)).slice(0, 30);
+              const extractLines = extractBody.split(/\r?\n/).map((line) => line.trim()).filter((line) => /extract|overwrite|replace existing|destination|target directory|extract to/i.test(line) && !/secret|token|password|credential/i.test(line)).slice(0, 30);
               for (const line of extractLines) lines.push(`- Extract form: ${sanitize(line.slice(0, 300))}`);
               const pathFields = await page.locator("input:visible").evaluateAll((elements) => elements.map((element) => ({
                 name: element.getAttribute("name") || element.id || "",
@@ -308,11 +308,11 @@ async function main() {
                 lines.push(`- Extract path field: ${sanitize(JSON.stringify(field))}`);
                 if (field.value.startsWith("/") && !field.value.includes(DOMAIN)) throw new Error(`The extraction path is outside Nomreh: ${sanitize(field.value)}`);
               }
-              const overwriteControl = page.getByLabel(/overwrite existing files/i).first();
+              const overwriteControl = page.getByLabel(/overwrite existing files|replace existing files/i).first();
               if (await overwriteControl.count()) await overwriteControl.check({ force: true, timeout: 5000 }).catch(() => undefined);
               const namedOverwrite = page.locator("input[name*='overwrite' i], input[id*='overwrite' i]").first();
               if (await namedOverwrite.count()) await namedOverwrite.check({ force: true, timeout: 5000 }).catch(() => undefined);
-              const hasConfirmationForm = /overwrite existing files|destination directory|extract to|target directory/i.test(extractBody);
+              const hasConfirmationForm = /overwrite existing files|replace existing files|destination directory|extract files to the following directory|extract to|target directory/i.test(extractBody);
               if (hasConfirmationForm) {
                 const confirmExtract = page.getByRole("button", { name: /^(OK|Confirm|Extract|Extract Files|Overwrite)/i }).last();
                 if (!await confirmExtract.count()) throw new Error("The extraction confirmation control was not found; extraction was not confirmed.");
