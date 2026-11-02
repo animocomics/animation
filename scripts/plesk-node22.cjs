@@ -355,6 +355,25 @@ function installDependencies(runtime) {
   runRuntimeNpm(runtime, ["install", "--ignore-scripts", "--engine-strict=false", "--no-audit", "--no-fund"]);
 }
 
+function stashObsoleteRouteConflicts(root = APP_ROOT) {
+  const obsolete = path.join(root, "app", "(workspace)", "admin", "page.tsx");
+  const replacement = path.join(root, "app", "admin", "page.tsx");
+  if (!fs.existsSync(obsolete) || !fs.existsSync(replacement)) return { obsolete, backup: "", moved: false };
+  const backup = `${obsolete}.nomreh-obsolete`;
+  if (!inside(root, obsolete) || !inside(root, backup) || fs.existsSync(backup)) {
+    throw new Error("Refusing to replace an existing obsolete-route backup.");
+  }
+  // Archive extraction intentionally preserves deleted files. Keep the old
+  // source as a non-route backup instead of deleting it or losing rollback.
+  fs.renameSync(obsolete, backup);
+  return { obsolete, backup, moved: true };
+}
+
+function restoreObsoleteRouteConflicts(stash) {
+  if (!stash?.moved || !fs.existsSync(stash.backup) || fs.existsSync(stash.obsolete)) return;
+  fs.renameSync(stash.backup, stash.obsolete);
+}
+
 function stashPublicStaticForBuild(root = APP_ROOT) {
   const publicNext = path.join(root, "public", "_next");
   const backup = path.join(root, `.nomreh-public-next-backup-${process.pid}-${Date.now()}`);
@@ -454,6 +473,7 @@ async function build() {
   progressStartedAt = Date.now();
   progressEnabled = true;
   let staticStash = null;
+  let routeStash = null;
   try {
     console.log("Nomreh Passenger-aware launcher is active for this build.");
     progress("Checking or installing the private Node 22 runtime");
@@ -467,6 +487,7 @@ async function build() {
     // attempting incompatible native binaries during the same build.
     // Next refuses an existing public/_next directory. Move only Nomreh's
     // generated public directory aside, then restore it for the guarded sync.
+    routeStash = stashObsoleteRouteConflicts();
     staticStash = stashPublicStaticForBuild();
     runRuntimeNpm(runtime, ["run", "build"], { NEXT_TEST_WASM: "1" });
     if (!fs.existsSync(path.join(APP_ROOT, ".next", "BUILD_ID"))) throw new Error("The production build did not create .next/BUILD_ID; nothing was compacted.");
@@ -483,6 +504,7 @@ async function build() {
     try { fs.unlinkSync(PROGRESS_FILE); } catch { /* The successful build is already complete. */ }
   } catch (error) {
     try { restorePublicStaticAfterBuild(staticStash); } catch (restoreError) { console.error(`The previous public static assets could not be restored: ${restoreError.message}`); }
+    try { restoreObsoleteRouteConflicts(routeStash); } catch (restoreError) { console.error(`The previous route source could not be restored: ${restoreError.message}`); }
     progress(error instanceof Error ? error.message : String(error), "FAILED");
     throw error;
   } finally {
@@ -568,4 +590,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { build, discardPublicStaticBackup, ensureRuntime, launchServer, passengerLaunchArguments, probeNode, readActiveRuntime, restorePublicStaticAfterBuild, smokeRuntime, stashPublicStaticForBuild, syncPublicStatic };
+module.exports = { build, discardPublicStaticBackup, ensureRuntime, launchServer, passengerLaunchArguments, probeNode, readActiveRuntime, restoreObsoleteRouteConflicts, restorePublicStaticAfterBuild, smokeRuntime, stashObsoleteRouteConflicts, stashPublicStaticForBuild, syncPublicStatic };

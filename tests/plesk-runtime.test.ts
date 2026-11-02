@@ -7,7 +7,7 @@ import { spawnSync } from "node:child_process";
 
 const root = path.resolve(__dirname, "..");
 const launcherPath = path.join(root, "scripts", "plesk-node22.cjs");
-const { discardPublicStaticBackup, passengerLaunchArguments, probeNode, restorePublicStaticAfterBuild, stashPublicStaticForBuild, syncPublicStatic } = require(launcherPath);
+const { discardPublicStaticBackup, passengerLaunchArguments, probeNode, restoreObsoleteRouteConflicts, restorePublicStaticAfterBuild, stashObsoleteRouteConflicts, stashPublicStaticForBuild, syncPublicStatic } = require(launcherPath);
 
 function fakeNode(directory: string, version: string) {
   const binary = path.join(directory, "node");
@@ -98,6 +98,26 @@ test("Plesk build publishes only generated Next.js assets for nginx and preserve
     syncPublicStatic(directory);
     assert.equal(fs.readFileSync(path.join(target, "chunks", "app.js"), "utf8"), "next-build");
     assert.equal(fs.readdirSync(path.join(directory, "public", "_next")).some((entry) => entry.startsWith(".static-")), false);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("Plesk build preserves an extraction-retained obsolete route without a parallel-page conflict", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nomreh-route-stash-"));
+  try {
+    const obsolete = path.join(directory, "app", "(workspace)", "admin", "page.tsx");
+    const replacement = path.join(directory, "app", "admin", "page.tsx");
+    fs.mkdirSync(path.dirname(obsolete), { recursive: true });
+    fs.mkdirSync(path.dirname(replacement), { recursive: true });
+    fs.writeFileSync(obsolete, "old-route");
+    fs.writeFileSync(replacement, "new-route");
+    const stash = stashObsoleteRouteConflicts(directory);
+    assert.equal(fs.existsSync(obsolete), false);
+    assert.equal(fs.readFileSync(`${obsolete}.nomreh-obsolete`, "utf8"), "old-route");
+    restoreObsoleteRouteConflicts(stash);
+    assert.equal(fs.readFileSync(obsolete, "utf8"), "old-route");
+    assert.equal(fs.existsSync(`${obsolete}.nomreh-obsolete`), false);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
