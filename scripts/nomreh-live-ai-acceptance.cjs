@@ -157,8 +157,14 @@ async function removeTemporaryExam(id) {
 }
 
 async function run() {
-  admin = await request.newContext({ extraHTTPHeaders: { Accept: "application/json" } });
-  teacher = await request.newContext({ extraHTTPHeaders: { Accept: "application/json" } });
+  const browserHeaders = {
+    Accept: "application/json",
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    Origin: ORIGIN,
+    Referer: `${ORIGIN}/`,
+  };
+  admin = await request.newContext({ extraHTTPHeaders: browserHeaders });
+  teacher = await request.newContext({ extraHTTPHeaders: browserHeaders });
   const adminUsername = process.env.NOMREH_ADMIN_USERNAME || "admin";
   const adminPassword = process.env.NOMREH_ADMIN_PASSWORD || "Admin@1405";
   const teacherUsername = process.env.NOMREH_TEACHER_USERNAME || "teacher";
@@ -187,6 +193,8 @@ async function run() {
   lines.push(usageLine(beforeUsage, "Recorded usage before this check"));
 
   if (provider.configured && !SKIP_PROVIDER_TEST) {
+    const schemaProbe = await api(admin, "POST", "/api/provider/test", { provider: provider.provider, model: "" });
+    lines.push(`- Schema-only provider route probe (no provider call): HTTP ${schemaProbe.status}; ${schemaProbe.payload ? "JSON response" : errorText(schemaProbe)}.`);
     const testResult = await api(admin, "POST", "/api/provider/test", { provider: provider.provider, model: provider.model });
     lines.push(`- Stored-key provider test: HTTP ${testResult.status}; ${testResult.response.ok() ? "provider accepted the model/key test" : `failed: ${errorText(testResult)}`}.`);
     if (testResult.status === 429) lines.push("- The provider returned HTTP 429; this is a quota/rate-limit signal, not a measurement of the remaining quota.");
