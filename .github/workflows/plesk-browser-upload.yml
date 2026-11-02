@@ -43,8 +43,8 @@ jobs:
         if: steps.config.outputs.configured == 'true'
         run: |
           set -euo pipefail
-          source_sha=085075f835ce4c87ce8cbb2a1f1f354c375e6194
-          archive="$RUNNER_TEMP/nomreh-deploy-role-management.zip"
+          source_sha=f34e3aea27a0b9049d6b9e0707c8b7436b591960
+          archive="$RUNNER_TEMP/nomreh-deploy-role-management-v2.zip"
           git archive --format=zip --output="$archive" "$source_sha"
           for required in package.json package-lock.json server.js lib/server/sqlite.ts scripts/plesk-node22.cjs scripts/plesk-runtime/node-v22.22.3-linux-x64-glibc-217.tar.xz; do
             unzip -Z1 "$archive" | grep -Fx "$required" > /dev/null
@@ -81,8 +81,8 @@ jobs:
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
           PLESK_BROWSER_ACTION: upload
-          PLESK_ARCHIVE_NAME: nomreh-deploy-role-management.zip
-          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-role-management.zip
+          PLESK_ARCHIVE_NAME: nomreh-deploy-role-management-v2.zip
+          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-role-management-v2.zip
           PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-plesk-upload.md
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
         run: node scripts/plesk-browser-diagnostics.cjs
