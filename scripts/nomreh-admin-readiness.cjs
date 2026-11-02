@@ -167,6 +167,21 @@ async function readConfiguredAdminFromPlesk() {
       lines.push(`- Relevant environment view controls: ${dom.controls.length ? dom.controls.join(", ") : "none identified"}.`);
       configuredUsername = configuredUsername || dom.values.NOMREH_ADMIN_USERNAME || "";
       configuredPassword = configuredPassword || dom.values.NOMREH_ADMIN_PASSWORD || "";
+      if (!configuredUsername || !configuredPassword) {
+        const editControls = page.locator("a, button").filter({ hasText: /^\s*edit\s*$/i });
+        const editCount = await editControls.count();
+        lines.push(`- Scoped Edit controls available for read-only inspection: ${editCount}.`);
+        if (editCount) {
+          await editControls.first().click({ timeout: 10000 });
+          await page.waitForTimeout(1800);
+          const editDom = await readAdminFromNodeDom(page);
+          lines.push(`- Relevant environment variable names visible after opening Edit: ${editDom.visibleKeys.length ? editDom.visibleKeys.join(", ") : "none"}.`);
+          lines.push(`- Admin credential values readable after opening Edit: username=${editDom.values.NOMREH_ADMIN_USERNAME ? "yes" : "no"}; password=${editDom.values.NOMREH_ADMIN_PASSWORD ? "yes" : "no"}.`);
+          lines.push(`- Controls visible after opening Edit: ${editDom.controls.length ? editDom.controls.join(", ") : "none identified"}. No Save or Apply control was used.`);
+          configuredUsername = configuredUsername || editDom.values.NOMREH_ADMIN_USERNAME || "";
+          configuredPassword = configuredPassword || editDom.values.NOMREH_ADMIN_PASSWORD || "";
+        }
+      }
     }
     if (!configuredUsername || !configuredPassword) {
       await page.goto(`${panel}/smb/file-manager/list/domainId/145`, { waitUntil: "domcontentloaded", timeout: 30000 });
