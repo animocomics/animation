@@ -262,7 +262,7 @@ async function readConfiguredAdminFromPlesk() {
         if (await page.getByText(name, { exact: true }).count()) knownEntries.push(name);
       }
       lines.push(`- Known entries visible at the inspected scoped File Manager location: ${knownEntries.length ? knownEntries.join(", ") : "none"}.`);
-      const serverFileHref = await page.locator("a").evaluateAll((anchors) => {
+      let serverFileHref = await page.locator("a").evaluateAll((anchors) => {
         const match = anchors.find((anchor) => (anchor.textContent || "").trim().replace(/\s+/g, " ") === "server.js");
         return match ? match.getAttribute("href") || "" : "";
       }).catch(() => "");
@@ -289,6 +289,24 @@ async function readConfiguredAdminFromPlesk() {
         configuredPassword = configuredPassword || dotenvValue(environmentText, "NOMREH_ADMIN_PASSWORD");
         lines.push(`- Environment editor sources containing Nomreh variable names: body=${/NOMREH_[A-Z0-9_]+/.test(bodyText) ? "yes" : "no"}; textareas=${textAreas.length}; code-editors=${codeEditors.length}.`);
         lines.push(`- Admin fields parsed from the in-memory environment view: username=${configuredUsername ? "yes" : "no"}; password=${configuredPassword ? "yes" : "no"}.`);
+      }
+      if ((!configuredUsername || !configuredPassword) && (!serverFileHref || /^(?:javascript:|data:|#)/i.test(serverFileHref))) {
+        const serverFileLink = page.locator("a").filter({ hasText: /^\s*server\.js\s*$/ }).first();
+        if (await serverFileLink.count()) {
+          const downloadPromise = page.waitForEvent("download", { timeout: 8000 }).catch(() => null);
+          const responsePromise = page.waitForResponse((response) => response.url().includes("server.js"), { timeout: 8000 }).catch(() => null);
+          await serverFileLink.click({ timeout: 8000 }).catch(() => undefined);
+          const [download, response] = await Promise.all([downloadPromise, responsePromise]);
+          if (download) {
+            serverFileHref = download.url();
+            await download.cancel().catch(() => undefined);
+          } else if (response) {
+            serverFileHref = response.url();
+          } else if (page.url().includes("server.js")) {
+            serverFileHref = page.url();
+          }
+          lines.push(`- Scoped server.js read target acquired without saving a download: ${serverFileHref && !/^(?:javascript:|data:|#)/i.test(serverFileHref) ? "yes" : "no"}.`);
+        }
       }
       if ((!configuredUsername || !configuredPassword) && serverFileHref && !/^(?:javascript:|data:|#)/i.test(serverFileHref)) {
         lines.push("- Read-only hidden-environment lookup derived from the scoped server.js file link: yes.");
