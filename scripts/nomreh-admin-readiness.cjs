@@ -637,7 +637,9 @@ async function main() {
   await page.route(`${ORIGIN}/api/provider/test`, async (route) => {
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ message: "mocked readiness success" }) });
   });
+  let providerSaveBrowserMethod = "";
   await page.route(`${ORIGIN}/api/provider`, async (route) => {
+    providerSaveBrowserMethod = route.request().method();
     if (route.request().method() === "POST") await route.fulfill({ status: 403, contentType: "text/html", body: "<!DOCTYPE html><html><body>Readiness gateway fixture</body></html>" });
     else await route.continue();
   });
@@ -646,9 +648,10 @@ async function main() {
   await safeHtmlError.waitFor({ state: "visible", timeout: 15000 });
   const safeHtmlErrorText = await safeHtmlError.innerText();
   if (!safeHtmlErrorText.includes("۴۰۳") || /Unexpected token|<!DOCTYPE|not valid JSON/i.test(safeHtmlErrorText)) throw new Error("The real admin UI exposed a raw JSON parser error for an HTML provider-save response.");
+  if (providerSaveBrowserMethod !== "POST") throw new Error(`The real admin UI used ${providerSaveBrowserMethod || "an unknown method"} instead of POST for provider save.`);
   await page.unroute(`${ORIGIN}/api/provider/test`);
   await page.unroute(`${ORIGIN}/api/provider`);
-  lines.push("- An intercepted HTML 403 save response is shown as a safe Persian HTTP error, never as a raw JSON parser failure; both provider requests were mocked.");
+  lines.push("- The real admin UI used POST for provider save; an intercepted HTML 403 response became a safe Persian HTTP error, never a raw JSON parser failure. Both provider requests were mocked.");
 
   const invalidKeyResponse = await context.request.post(`${ORIGIN}/api/provider/test`, {
     headers: { Accept: "application/json" },
