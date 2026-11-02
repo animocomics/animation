@@ -13,7 +13,7 @@ permissions:
   checks: write
 
 concurrency:
-  group: plesk-nomreh-browser
+  group: plesk-nomreh-production-build
   cancel-in-progress: false
 
 jobs:
