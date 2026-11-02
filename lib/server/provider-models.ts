@@ -57,9 +57,9 @@ export async function providerResponseError(response: Response, provider: Provid
   }
   if (response.status === 401 || response.status === 403) {
     if (provider === "gemini" && /country|region|location|territor|permission_denied/.test(lower)) {
-      return new ProviderError("Google دسترسی از مسیر فعلی سرور را نمی‌پذیرد. شکن را در همین صفحه آزمایش و فعال کنید و سپس اتصال را دوباره بسنجید.", 403);
+      return new ProviderError("Google دسترسی از مسیر فعلی سرور را نمی‌پذیرد. شکن را در همین صفحه آزمایش و فعال کنید و سپس اتصال را دوباره بسنجید.", 400);
     }
-    return new ProviderError("کلید معتبر نیست یا اجازهٔ استفاده از این سرویس را ندارد. نوع کلید و دسترسی پروژه را بررسی کنید.", response.status);
+    return new ProviderError("کلید معتبر نیست یا اجازهٔ استفاده از این سرویس را ندارد. نوع کلید و دسترسی پروژه را بررسی کنید.", 400);
   }
   if (response.status === 404) {
     return new ProviderError("این مدل برای حساب شما پیدا نشد. «دریافت مدل‌های حساب» را بزنید یا نام به‌روز مدل را وارد کنید.", 400);

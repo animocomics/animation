@@ -82,7 +82,7 @@ function outputNameForTask(task?: ProviderTask): string {
 
 function friendlyProviderError(status: number, provider: string, rawMessage?: string): ProviderError {
   if (status === 401 || status === 403) {
-    return new ProviderError("API Key معتبر نیست یا دسترسی لازم را ندارد. کلید و دسترسی مدل را بررسی کنید.", 401);
+    return new ProviderError("API Key معتبر نیست یا دسترسی لازم را ندارد. کلید و دسترسی مدل را بررسی کنید.", 400);
   }
   if (status === 429) {
     return new ProviderError("سقف درخواست یا اعتبار سرویس‌دهنده پر شده است. چند لحظه بعد تلاش کنید یا سهمیه را بررسی کنید.", 429);

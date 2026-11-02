@@ -84,6 +84,8 @@ test("Gemini errors explain unrestricted standard keys and free quota instead of
   const quota = await providerResponseError(Response.json({ error: { message: "Quota exceeded" } }, { status: 429 }), "gemini", "secret-free-key");
   assert.match(quota.message, /سهمیهٔ رایگان/);
   assert.equal(quota.status, 429);
+  const denied = await providerResponseError(Response.json({ error: { message: "Permission denied for this key" } }, { status: 403 }), "gemini", "secret-free-key");
+  assert.equal(denied.status, 400, "provider authorization failures must stay JSON instead of triggering the host's HTML 403 page");
 });
 
 test("model discovery uses the scoped Shecan dispatcher when enabled", async () => {
