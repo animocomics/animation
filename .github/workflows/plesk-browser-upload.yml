@@ -89,7 +89,7 @@ jobs:
           npm install --ignore-scripts --no-audit --no-fund playwright@1.64.1
           npx playwright install --with-deps chromium
 
-      - name: Upload only the validated archive to Nomreh
+      - name: Upload only the validated archive to Nomreh after reopening the scoped File Manager
         id: upload
         if: steps.config.outputs.configured == 'true'
         env:
