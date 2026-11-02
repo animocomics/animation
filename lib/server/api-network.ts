@@ -1,11 +1,12 @@
 import { isIPv4 } from "node:net";
+import https from "node:https";
 import { lookup as dnsLookup } from "node:dns/promises";
 import type { LookupOptions } from "node:dns";
 import type { TcpSocketConnectOpts } from "node:net";
 import { Agent } from "undici";
 import type { ApiNetworkPublicStatus } from "../types";
 import { SHECAN_DNS, type ProviderNetworkConfig } from "../api-network";
-import { closeProviderNetwork, providerFetch, ProviderNetworkError } from "./provider-network";
+import { closeProviderNetwork, createShecanLookup, providerFetch, ProviderNetworkError } from "./provider-network";
 import { decryptSecret, encryptSecret } from "./secret-crypto";
 
 const UPDATE_URL_PURPOSE = "nomreh-api-network-v1";
@@ -150,16 +151,19 @@ async function probeUpdateService(updateUrl: string): Promise<string> {
   }
 }
 
-async function activateUpdateUrl(updateUrl: string): Promise<string> {
+async function activateUpdateUrlWithFetch(updateUrl: string, servers: [string, string]): Promise<void> {
   let response: Response | undefined;
   const agents: Agent[] = [];
-  const request = async (address?: string) => {
+  const shecan = createShecanLookup(servers);
+  const request = async (address?: string, useShecan = false) => {
     let lookup: NonNullable<TcpSocketConnectOpts["lookup"]> | undefined;
     if (address) {
       lookup = (_hostname, options: LookupOptions, callback) => {
         if (options.all) callback(null, [{ address, family: 4 }]);
         else callback(null, address, 4);
       };
+    } else if (useShecan) {
+      lookup = shecan.lookup;
     }
     const agent = new Agent({
       connect: { ...(lookup ? { lookup } : {}), timeout: 8_000 },
@@ -178,7 +182,9 @@ async function activateUpdateUrl(updateUrl: string): Promise<string> {
   };
   try {
     try {
-      response = await request();
+      // Official Shecan setup configures its DNS before invoking the update
+      // link. Keep that order scoped to this request, not to the whole host.
+      response = await request(undefined, true);
     } catch (error) {
       // Try every resolved IPv4 address after a transient network failure.
       // This remains scoped to the Shecan update URL and changes no host DNS.
@@ -212,7 +218,6 @@ async function activateUpdateUrl(updateUrl: string): Promise<string> {
       throw new ApiNetworkError(`شکن لینک به‌روزرسان را نپذیرفت (HTTP ${response.status}). لینک را از همان سفارش فعال دوباره کپی کنید.`, 400);
     }
     await discardResponse(response);
-    return new Date().toISOString();
   } catch (error) {
     if (error instanceof ApiNetworkError) throw error;
     const code = safeNetworkCode(error);
@@ -223,12 +228,79 @@ async function activateUpdateUrl(updateUrl: string): Promise<string> {
   }
 }
 
+async function nativeUpdateStatus(updateUrl: string, lookup: NonNullable<TcpSocketConnectOpts["lookup"]>, redirectCount = 0): Promise<number> {
+  const current = new URL(updateUrl);
+  return new Promise<number>((resolve, reject) => {
+    const request = https.request(current, {
+      method: "GET",
+      agent: false,
+      lookup,
+      servername: current.hostname,
+      timeout: 10_000,
+      signal: AbortSignal.timeout(12_000),
+      headers: { "User-Agent": "Nomreh-Shecan-IP-Activation/1.0", Accept: "*/*" },
+    }, (response) => {
+      const status = response.statusCode || 0;
+      const location = response.headers.location;
+      // Only headers and the status are needed; never wait for response EOF.
+      response.destroy();
+      if (status >= 300 && status < 400 && location) {
+        if (redirectCount >= 3) {
+          reject(new ApiNetworkError("تعداد تغییرمسیرهای لینک شکن بیش از حد مجاز است.", 400));
+          return;
+        }
+        try {
+          const next = new URL(location, current);
+          validateUpdateUrl(next.toString());
+          resolve(nativeUpdateStatus(next.toString(), lookup, redirectCount + 1));
+        } catch (error) {
+          reject(error);
+        }
+        return;
+      }
+      resolve(status);
+    });
+    request.on("timeout", () => {
+      const error = new Error("Shecan native request timed out");
+      error.name = "TimeoutError";
+      request.destroy(error);
+    });
+    request.on("error", reject);
+    request.end();
+  });
+}
+
+async function activateUpdateUrl(updateUrl: string, servers: [string, string], settleMs = 60_000): Promise<string> {
+  try {
+    await activateUpdateUrlWithFetch(updateUrl, servers);
+  } catch (error) {
+    if (!(error instanceof ApiNetworkError) || error.status !== 502) throw error;
+    // Match the documented curl/WebRequest behavior with Node's independent
+    // native HTTPS stack. This is still scoped to Shecan's own resolver.
+    try {
+      const shecan = createShecanLookup(servers);
+      const status = await nativeUpdateStatus(updateUrl, shecan.lookup);
+      if (status < 200 || status >= 300) {
+        throw new ApiNetworkError(`شکن لینک به‌روزرسان را نپذیرفت (HTTP ${status}). لینک را از همان سفارش فعال دوباره کپی کنید.`, 400);
+      }
+    } catch (nativeError) {
+      if (nativeError instanceof ApiNetworkError) throw nativeError;
+      const code = safeNetworkCode(nativeError) || "NO_RESPONSE";
+      throw new ApiNetworkError(`روش مستقل HTTPS نیز به شکن نرسید؛ کد فنی: ${code}. ${error.message}`, 502, { cause: nativeError });
+    }
+  }
+  // Shecan's official Linux/Windows instructions ask for about one minute of
+  // propagation time after IP registration and before testing the connection.
+  if (settleMs > 0) await new Promise<void>((resolve) => setTimeout(resolve, settleMs));
+  return new Date().toISOString();
+}
+
 export async function ensureApiNetworkActivated(network: ApiNetworkConfig): Promise<void> {
   if (!network.enabled || network.plan !== "pro" || !network.updateUrl) return;
   if (network.lastActivatedAt && Date.now() - Date.parse(network.lastActivatedAt) < ACTIVATION_INTERVAL_MS) return;
   const key = network.updateUrl;
   if (!globalStore.__nomrehShecanActivation || globalStore.__nomrehShecanActivation.key !== key) {
-    globalStore.__nomrehShecanActivation = { key, promise: activateUpdateUrl(key) };
+    globalStore.__nomrehShecanActivation = { key, promise: activateUpdateUrl(key, network.servers) };
   }
   const activation = globalStore.__nomrehShecanActivation;
   try {
@@ -258,7 +330,7 @@ async function testGoogleThroughShecan(network: ProviderNetworkConfig): Promise<
   throw new ApiNetworkError(`پاسخ Google برای آزمایش شبکه معتبر نبود (HTTP ${response.status})؛ شکن فعال‌سازی نمی‌شود.`, 502);
 }
 
-export async function saveAndTestApiNetwork(input: SaveApiNetworkInput, userId: string): Promise<ApiNetworkPublicStatus> {
+export async function saveAndTestApiNetwork(input: SaveApiNetworkInput, userId: string, options: { activationSettleMs?: number } = {}): Promise<ApiNetworkPublicStatus> {
   if (!input.servers.every((server) => isIPv4(server))) throw new ApiNetworkError("هر دو آدرس DNS باید IPv4 معتبر باشند.", 400);
   const previous = await findRow();
   const now = new Date().toISOString();
@@ -286,7 +358,7 @@ export async function saveAndTestApiNetwork(input: SaveApiNetworkInput, userId: 
 
   if (input.enabled) {
     try {
-      if (updateUrl) activatedAt = await activateUpdateUrl(updateUrl);
+      if (updateUrl) activatedAt = await activateUpdateUrl(updateUrl, input.servers, options.activationSettleMs ?? 60_000);
       latency = await testGoogleThroughShecan(network);
       enabled = true;
       testStatus = "success";

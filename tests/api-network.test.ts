@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import https from "node:https";
+import { EventEmitter } from "node:events";
 import { Resolver } from "node:dns/promises";
 import test from "node:test";
 import { createShecanLookup, providerFetch, ProviderNetworkError } from "../lib/server/provider-network";
@@ -86,7 +88,7 @@ test("Pro update link is encrypted, activation and Google are tested before enab
     const { getApiNetworkConfig, getApiNetworkStatus, saveAndTestApiNetwork } = await import("../lib/server/api-network");
     const { getDb } = await import("../lib/server/db");
     const admin = getDb().prepare("SELECT id FROM users WHERE role='admin' ORDER BY created_at LIMIT 1").get() as { id: string };
-    const status = await saveAndTestApiNetwork({ enabled: true, plan: "pro", servers: ["198.51.100.20", "198.51.100.21"], updateUrl }, admin.id);
+    const status = await saveAndTestApiNetwork({ enabled: true, plan: "pro", servers: ["198.51.100.20", "198.51.100.21"], updateUrl }, admin.id, { activationSettleMs: 0 });
     assert.equal(status.enabled, true);
     assert.equal(status.lastTestStatus, "success");
     assert.equal(status.hasUpdateUrl, true);
@@ -97,7 +99,7 @@ test("Pro update link is encrypted, activation and Google are tested before enab
     const raw = getDb().prepare("SELECT encrypted_update_url FROM api_network_settings WHERE id=1").get() as { encrypted_update_url: string };
     assert.ok(!raw.encrypted_update_url.includes(updateUrl));
 
-    const disabled = await saveAndTestApiNetwork({ enabled: false, plan: "pro", servers: ["198.51.100.20", "198.51.100.21"] }, admin.id);
+    const disabled = await saveAndTestApiNetwork({ enabled: false, plan: "pro", servers: ["198.51.100.20", "198.51.100.21"] }, admin.id, { activationSettleMs: 0 });
     assert.equal(disabled.enabled, false);
     assert.equal(disabled.hasUpdateUrl, true, "disabling should not discard the encrypted subscription link");
     assert.equal((await getApiNetworkStatus()).enabled, false);
@@ -135,13 +137,60 @@ test("Pro activation accepts HTTP headers without waiting for an unterminated bo
     const { getApiNetworkStatus, saveAndTestApiNetwork } = await import("../lib/server/api-network");
     const { getDb } = await import("../lib/server/db");
     const admin = getDb().prepare("SELECT id FROM users WHERE role='admin' ORDER BY created_at LIMIT 1").get() as { id: string };
-    const status = await saveAndTestApiNetwork({ enabled: true, plan: "pro", servers: ["198.51.100.24", "198.51.100.25"], updateUrl }, admin.id);
+    const status = await saveAndTestApiNetwork({ enabled: true, plan: "pro", servers: ["198.51.100.24", "198.51.100.25"], updateUrl }, admin.id, { activationSettleMs: 0 });
     assert.equal(status.enabled, true);
     assert.equal(status.lastTestStatus, "success");
     assert.equal(cancelled, 1, "the update response body should be cancelled, not consumed until EOF");
     assert.equal((await getApiNetworkStatus()).hasUpdateUrl, true);
   } finally {
     globalThis.fetch = originalFetch;
+    Resolver.prototype.resolve4 = originalResolve;
+  }
+});
+
+test("native HTTPS fallback activates through the scoped Shecan lookup after fetch failure", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalRequest = https.request;
+  const originalResolve = Resolver.prototype.resolve4;
+  const updateUrl = "https://ddns.shecan.ir/update/test-native-fallback";
+  let nativeLookup = false;
+  let responseDestroyed = 0;
+  Resolver.prototype.resolve4 = (async () => [{ address: "203.0.113.36", ttl: 60 }]) as unknown as typeof Resolver.prototype.resolve4;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url === updateUrl) throw Object.assign(new Error("mock fetch transport failure"), { code: "FETCH_FAILED" });
+    if (url === "https://ddns.shecan.ir") return new Response(null, { status: 404 });
+    if (url === "https://generativelanguage.googleapis.com/v1beta/models") {
+      return Response.json({ error: { message: "API key not valid. Please pass a valid API key." } }, { status: 400 });
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  }) as typeof fetch;
+  https.request = ((input: URL, options: { lookup?: unknown }, callback: (response: EventEmitter) => void) => {
+    assert.equal(String(input), updateUrl);
+    nativeLookup = typeof options.lookup === "function";
+    const request = new EventEmitter() as EventEmitter & { end: () => void; destroy: (error?: Error) => void };
+    request.end = () => {
+      const response = new EventEmitter() as EventEmitter & { statusCode: number; headers: Record<string, string>; destroy: () => void };
+      response.statusCode = 200;
+      response.headers = {};
+      response.destroy = () => { responseDestroyed += 1; };
+      callback(response);
+    };
+    request.destroy = (error?: Error) => { if (error) request.emit("error", error); };
+    return request as unknown as ReturnType<typeof https.request>;
+  }) as typeof https.request;
+  try {
+    const { saveAndTestApiNetwork } = await import("../lib/server/api-network");
+    const { getDb } = await import("../lib/server/db");
+    const admin = getDb().prepare("SELECT id FROM users WHERE role='admin' ORDER BY created_at LIMIT 1").get() as { id: string };
+    const status = await saveAndTestApiNetwork({ enabled: true, plan: "pro", servers: ["198.51.100.26", "198.51.100.27"], updateUrl }, admin.id, { activationSettleMs: 0 });
+    assert.equal(status.enabled, true);
+    assert.equal(status.lastTestStatus, "success");
+    assert.equal(nativeLookup, true, "native activation must use Shecan DNS without changing host DNS");
+    assert.equal(responseDestroyed, 1, "native activation must not wait for the response body");
+  } finally {
+    globalThis.fetch = originalFetch;
+    https.request = originalRequest;
     Resolver.prototype.resolve4 = originalResolve;
   }
 });
@@ -155,7 +204,7 @@ test("failed Google validation saves an actionable error and never enables Sheca
     const { getApiNetworkStatus, saveAndTestApiNetwork } = await import("../lib/server/api-network");
     const { getDb } = await import("../lib/server/db");
     const admin = getDb().prepare("SELECT id FROM users WHERE role='admin' ORDER BY created_at LIMIT 1").get() as { id: string };
-    await assert.rejects(saveAndTestApiNetwork({ enabled: true, plan: "free", servers: ["198.51.100.30", "198.51.100.31"] }, admin.id), /Google هنوز دسترسی/);
+    await assert.rejects(saveAndTestApiNetwork({ enabled: true, plan: "free", servers: ["198.51.100.30", "198.51.100.31"] }, admin.id, { activationSettleMs: 0 }), /Google هنوز دسترسی/);
     const status = await getApiNetworkStatus();
     assert.equal(status.enabled, false);
     assert.equal(status.lastTestStatus, "error");

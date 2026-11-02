@@ -116,7 +116,7 @@ async function run() {
   lines.push("- Activation input: the supplied SHECAN secret; its path and token are withheld from the report.");
   const saveButton = page.locator(".api-network-connection button.btn-primary").filter({ hasText: /آزمایش/ }).first();
   await saveButton.waitFor({ state: "visible", timeout: 10000 });
-  const responsePromise = page.waitForResponse((response) => response.url() === `${ORIGIN}/api/admin/api-network` && response.request().method() === "POST", { timeout: 90000 });
+  const responsePromise = page.waitForResponse((response) => response.url() === `${ORIGIN}/api/admin/api-network` && response.request().method() === "POST", { timeout: 200000 });
   await saveButton.click();
   const response = await responsePromise;
   const result = { status: response.status(), contentType: response.headers()["content-type"] || "none", text: await response.text() };

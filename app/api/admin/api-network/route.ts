@@ -5,7 +5,7 @@ import { ApiNetworkError, getApiNetworkStatus, saveAndTestApiNetwork } from "@/l
 import { ProviderNetworkError } from "@/lib/server/provider-network";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 180;
 
 const schema = z.object({
   enabled: z.boolean(),
