@@ -60,6 +60,17 @@ test("Shecan DNS falls back to the official Pro DoH resolver without losing TTL 
   assert.equal(dohCalls, 1);
 });
 
+test("an empty Shecan UDP answer also falls back to official Pro DoH", async () => {
+  const { resolve } = createShecanLookup(["178.22.122.101", "185.51.200.1"], {
+    resolve4: async () => [],
+  }, async () => [{ address: "185.143.234.133", ttl: 180 }]);
+  assert.deepEqual(await resolve("ddns.shecan.ir"), ["185.143.234.133"]);
+  const noAnswer = createShecanLookup(["178.22.122.101", "185.51.200.1"], { resolve4: async () => [] });
+  await assert.rejects(noAnswer.resolve("ddns.shecan.ir"), (error: unknown) => {
+    return error instanceof ProviderNetworkError && (error as ProviderNetworkError & { code?: string }).code === "DNS_NO_IPV4";
+  });
+});
+
 test("Shecan DoH parser reads compressed A answers and rejects DNS errors", () => {
   const question = Buffer.from([
     4, 100, 100, 110, 115, 6, 115, 104, 101, 99, 97, 110, 2, 105, 114, 0,

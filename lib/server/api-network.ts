@@ -192,7 +192,7 @@ async function activateUpdateUrlWithFetch(updateUrl: string, servers: [string, s
     } catch (error) {
       // Try every resolved IPv4 address after a transient network failure.
       // This remains scoped to the Shecan update URL and changes no host DNS.
-      const retryable = ["UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "TIMEOUT", "ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH"];
+      const retryable = ["DNS_NO_IPV4", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "TIMEOUT", "ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH"];
       if (!retryable.includes(safeNetworkCode(error))) throw error;
       const hostname = new URL(updateUrl).hostname;
       const addresses = await dnsLookup(hostname, { all: true, verbatim: true })
@@ -284,10 +284,13 @@ async function nativeUpdateStatusWithFallback(updateUrl: string, servers: [strin
     lastError = error;
   }
   const hostname = new URL(updateUrl).hostname;
-  // The fetch path already tried host-resolver addresses. Native fallback now
-  // tries every current Shecan answer (including DoH), retaining TLS/SNI.
+  // Try every current Shecan answer (including DoH), retaining TLS/SNI. If
+  // Shecan returns no usable address, the update service still gets a bounded
+  // native attempt through the host resolver; provider traffic never uses it.
+  const attempted = new Set<string>();
   const shecanAddresses = await shecan.resolve(hostname).catch(() => [] as string[]);
-  for (const address of [...new Set(shecanAddresses)]) {
+  for (const address of shecanAddresses) {
+    attempted.add(address);
     try {
       return await nativeUpdateStatus(updateUrl, fixedIpv4Lookup(address));
     } catch (error) {
@@ -295,7 +298,20 @@ async function nativeUpdateStatusWithFallback(updateUrl: string, servers: [strin
       lastError = error;
     }
   }
-  throw lastError || new Error("Shecan native HTTPS did not return a response");
+  const systemAddresses = await dnsLookup(hostname, { all: true, verbatim: true })
+    .then((records) => records.filter((record) => isIPv4(record.address)).map((record) => record.address))
+    .catch(() => [] as string[]);
+  for (const address of systemAddresses) {
+    if (attempted.has(address)) continue;
+    attempted.add(address);
+    try {
+      return await nativeUpdateStatus(updateUrl, fixedIpv4Lookup(address));
+    } catch (error) {
+      if (error instanceof ApiNetworkError) throw error;
+      lastError = error;
+    }
+  }
+  throw lastError || Object.assign(new Error("Shecan native HTTPS did not return a response"), { code: "NO_RESPONSE" });
 }
 
 async function activateUpdateUrl(updateUrl: string, servers: [string, string], settleMs = 60_000): Promise<string> {

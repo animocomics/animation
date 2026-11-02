@@ -75,13 +75,15 @@ export function createShecanLookup(
   async function resolve(hostname: string): Promise<string[]> {
     const cached = cache.get(hostname);
     if (cached && cached.expiresAt > Date.now()) return cached.records.map((record) => record.address);
-    let records: ResolveRecord[];
+    let records: ResolveRecord[] = [];
     try {
       records = await dnsResolver.resolve4(hostname, { ttl: true });
     } catch (udpError) {
       if (!officialDohFallback) {
         throw new ProviderNetworkError("DNS شکن پاسخ نداد؛ آدرس‌های DNS و اجازهٔ ارتباط خروجی هاست را بررسی کنید.", "dns", { cause: udpError });
       }
+    }
+    if (officialDohFallback && !records.some((record) => isIPv4(record.address))) {
       try {
         records = await officialDohFallback(hostname);
       } catch (dohError) {
@@ -89,7 +91,9 @@ export function createShecanLookup(
       }
     }
     records = records.filter((record) => isIPv4(record.address));
-    if (!records.length) throw new ProviderNetworkError("DNS شکن برای دامنهٔ سرویس‌دهنده آدرس IPv4 معتبر برنگرداند.", "dns");
+    if (!records.length) {
+      throw Object.assign(new ProviderNetworkError("DNS شکن برای دامنهٔ سرویس‌دهنده آدرس IPv4 معتبر برنگرداند.", "dns"), { code: "DNS_NO_IPV4" });
+    }
     const ttl = Math.min(...records.map((record) => Math.max(0, record.ttl || 0)));
     // A short minimum also covers the immediate pre-resolve + socket lookup pair when a server returns TTL=0.
     cache.set(hostname, { records, expiresAt: Date.now() + Math.min(Math.max(ttl, 5), 300) * 1000 });
