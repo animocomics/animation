@@ -111,6 +111,7 @@ async function main() {
     const pagesToInspect = ["/smb/web/domains", "/admin/domain/list"];
     let domainFound = false;
     let nomrehFilesPath = "";
+    let nomrehNodeLink = null;
     for (const inspectPath of pagesToInspect) {
       const response = await page.goto(`${panel}${inspectPath}`, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => null);
       await page.waitForTimeout(1500);
@@ -133,7 +134,11 @@ async function main() {
           lines.push("## Nomreh overview", "", `- Current page: ${sanitize(new URL(page.url()).pathname)}`, `- Page title: ${sanitize(await page.title())}`, "");
           const overviewLines = relevantLines(overview);
           if (overviewLines.length) lines.push(...overviewLines.map((line) => `- ${line}`), "");
-          const tools = await page.locator("a").evaluateAll((anchors) => anchors.map((anchor) => ({
+          const domainCard = domainElement.locator("xpath=ancestor::*[.//a[contains(@href, '/modules/nodejs/')]][1]");
+          const hasDomainCard = await domainCard.count() > 0;
+          const toolScope = hasDomainCard ? domainCard : page.locator("body");
+          nomrehNodeLink = hasDomainCard ? domainCard.locator("a[href*='/modules/nodejs/']").first() : null;
+          const tools = await toolScope.locator("a").evaluateAll((anchors) => anchors.map((anchor) => ({
             text: (anchor.textContent || "").trim().replace(/\s+/g, " "),
             href: anchor.getAttribute("href") || "",
           })).filter((item) => /^(Git|Node\.js|Files|File Manager|Hosting Settings|Dashboard)/i.test(item.text)).slice(0, 20));
@@ -153,7 +158,12 @@ async function main() {
         ["Node.js", "/modules/nodejs/index.php/domain/index"],
       ];
       for (const [label, toolPath] of toolPages) {
-        const response = await page.goto(`${panel}${toolPath}`, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => null);
+        let response = null;
+        if (label === "Node.js" && nomrehNodeLink && await nomrehNodeLink.count()) {
+          await nomrehNodeLink.click({ timeout: 10000 }).catch(() => undefined);
+        } else {
+          response = await page.goto(`${panel}${toolPath}`, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => null);
+        }
         await page.waitForTimeout(1800);
         const body = await page.locator("body").innerText().catch(() => "");
         lines.push(`## ${label} page`, "", `- HTTP status: ${response ? response.status() : "unavailable"}`, `- Current page: ${sanitize(new URL(page.url()).pathname)}`, "");
