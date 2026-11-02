@@ -1,5 +1,7 @@
 name: Plesk Nomreh archive extraction
 
+# Validated application source: 6d2832bfa0a1d44fe180b6c64c26391b91c00184
+
 on:
   push:
     branches:
