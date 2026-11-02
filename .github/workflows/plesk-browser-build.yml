@@ -11,6 +11,7 @@ on:
 permissions:
   contents: read
   checks: write
+  actions: read
 
 concurrency:
   group: plesk-nomreh-production-build
@@ -36,6 +37,17 @@ jobs:
       - name: Check out the browser control script
         if: steps.config.outputs.configured == 'true'
         uses: actions/checkout@v4
+
+      - name: Verify the Passenger-aware archive extraction
+        if: steps.config.outputs.configured == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          extract_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41432687351" --jq '.status + " " + .conclusion')"
+          test "$extract_state" = "completed success"
+          grep -F 'Nomreh Passenger-aware launcher is active for this build.' scripts/plesk-node22.cjs > /dev/null
+          grep -F 'return [mainFile];' scripts/plesk-node22.cjs > /dev/null
 
       - name: Confirm the validated npm launcher fix
         if: steps.config.outputs.configured == 'true'
