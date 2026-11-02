@@ -258,35 +258,20 @@ async function main() {
         for (const button of consoleButtons) lines.push(`- Console button: ${sanitize(JSON.stringify(button))}`);
         if (ACTION === "diagnose") lines.push("- Inspection only: no command was entered or executed.", "");
         if (ACTION === "status") {
-          if (!consoleBody.includes(`Node.js on ${DOMAIN}`) || !consoleBody.includes("/nomreh.arounidea.com")) {
-            throw new Error("The Node command console is not scoped to Nomreh. The read-only disk report was not started.");
+          lines.push("## Read-only console output inspection", "");
+          const outputNodes = await page.locator("pre, textarea, iframe, [class*='output' i], [class*='terminal' i], [class*='console' i], [class*='xterm' i]").evaluateAll((elements) => elements.map((element) => ({
+            tag: element.tagName,
+            id: element.id || "",
+            className: String(element.getAttribute("class") || "").slice(0, 180),
+            visible: Boolean(element.getClientRects().length),
+            text: (element.innerText || element.textContent || "").slice(0, 12000),
+          })).slice(0, 60));
+          for (const node of outputNodes) {
+            lines.push(`- Output element: ${sanitize(JSON.stringify({ tag: node.tag, id: node.id, className: node.className, visible: node.visible, textLength: node.text.length }))}`);
+            const safeOutput = node.text.split(/\r?\n/).map((line) => line.trim()).filter((line) => /\[Nomreh|Node 22|SQLite|canvas|production build|npm ERR|GLIBC|exited with status|Report complete|Application total|MiB|GiB/i.test(line) && !/secret|token|password|credential|api.key/i.test(line)).slice(-30);
+            for (const line of safeOutput) lines.push(`- Existing output: ${sanitize(line.slice(0, 400))}`);
           }
-          const commandInput = page.getByPlaceholder(/Pick a script or command/i).first();
-          const executeButton = page.locator("button[title='Execute command'], button[aria-label='Execute command']").first();
-          if (!await commandInput.count() || !await executeButton.count()) throw new Error("The Nomreh command controls were not found. The disk report was not started.");
-          lines.push("## Read-only Nomreh disk report", "", "- Command: run space:plesk", "");
-          await commandInput.fill("run space:plesk");
-          await executeButton.click({ timeout: 8000 });
-          const statusStartedAt = Date.now();
-          let statusOutput = "";
-          let statusSucceeded = false;
-          while (Date.now() - statusStartedAt < 6 * 60 * 1000) {
-            await page.waitForTimeout(3000);
-            const currentBody = await page.locator("body").innerText().catch(() => "");
-            const currentOutput = currentBody.startsWith(consoleBody) ? currentBody.slice(consoleBody.length) : currentBody;
-            if (/Report complete\. No files were changed or deleted\./i.test(currentOutput)) {
-              statusSucceeded = true;
-              statusOutput = currentOutput;
-              break;
-            }
-            const failure = currentOutput.split(/\r?\n/).find((line) => /npm ERR!|exited with status|Command failed|another.*command.*running/i.test(line));
-            if (failure) throw new Error(`The read-only Nomreh disk report could not run: ${sanitize(failure.slice(0, 350))}`);
-          }
-          if (!statusSucceeded) throw new Error("The read-only Nomreh disk report did not complete within 6 minutes. No build or settings change was attempted.");
-          const diskLines = statusOutput.split(/\r?\n/).map((line) => line.trim()).filter((line) => /Nomreh read-only disk|Application|Persistent|Git history|Dependencies|Production build|cache|Public files|runtime|uploads|Available space|temporary entries|Report complete|MiB|GiB/i.test(line) && !/secret|token|password|credential|api.key/i.test(line)).slice(-80);
-          for (const line of diskLines) lines.push(`- Disk report: ${sanitize(line.slice(0, 350))}`);
-          lines.push("- Read-only disk inspection completed; no build, deletion, restart, or settings change was attempted.", "");
-          actionCompleted = true;
+          lines.push("- Inspection only: no command was entered or executed.", "");
         }
         if (ACTION === "build") {
           if (!consoleBody.includes(`Node.js on ${DOMAIN}`) || !consoleBody.includes("/nomreh.arounidea.com")) {
@@ -349,10 +334,25 @@ async function main() {
           const fileLinks = await page.locator("a").evaluateAll((anchors) => anchors.map((anchor) => ({
             text: (anchor.textContent || "").trim().replace(/\s+/g, " "),
             href: anchor.getAttribute("href") || "",
-          })).filter((item) => /^(nomreh\.|nomreh-data|httpdocs|public|package(-lock)?\.json|server\.js|next\.config|scripts|node_modules|\.next|git)$/i.test(item.text)).slice(0, 30));
+          })).filter((item) => /^(nomreh\.|nomreh-data|httpdocs|public|package(-lock)?\.json|server\.js|next\.config|scripts|node_modules|\.next|git|runtime|build-progress\.txt|runtime\.json|BUILD_ID)$/i.test(item.text)).slice(0, 30));
           for (const link of fileLinks) lines.push(`- File entry: ${sanitize(link.text)}${link.href.startsWith("/") ? ` (${sanitize(new URL(link.href, page.url()).pathname)})` : ""}`);
           if (fileLinks.length) lines.push("");
           if (depth === 1) {
+            if (ACTION === "status") {
+              lines.push("## Nomreh persistent-data status", "");
+              const progressPresent = fileBody.includes("build-progress.txt");
+              const runtimePresent = fileLinks.some((link) => link.text === "runtime");
+              lines.push(`- Build progress file visible: ${progressPresent ? "yes" : "no"}`);
+              lines.push(`- Domain-local runtime directory visible: ${runtimePresent ? "yes" : "no"}`);
+              const statusRows = fileBody.split(/\r?\n/).map((line) => line.trim()).filter((line) => /build-progress\.txt|^runtime\s/i.test(line) && !/secret|token|password|credential|api.key/i.test(line)).slice(0, 12);
+              for (const row of statusRows) lines.push(`- Status entry: ${sanitize(row.slice(0, 350))}`);
+              for (const link of fileLinks.filter((item) => /^(build-progress\.txt|runtime)$/i.test(item.text))) {
+                const target = link.href.startsWith("/") ? new URL(link.href, page.url()) : null;
+                lines.push(`- Status link: ${sanitize(link.text)}${target ? ` (${sanitize(`${target.pathname}${target.search}`)})` : ""}`);
+              }
+              lines.push("- Persistent-data inspection only; no file was opened for editing or changed.", "");
+              actionCompleted = true;
+            }
             const archivePresent = fileBody.includes(ARCHIVE_NAME);
             if (ACTION === "upload" && archivePresent) {
               throw new Error(`${ARCHIVE_NAME} already exists in the Nomreh application directory. Upload stopped without overwriting it.`);
@@ -509,7 +509,7 @@ async function main() {
               }
               lines.push("- Inspection only: no extraction confirmation or overwrite action was activated in this run.", "");
             }
-            if (ACTION === "upload" || !archivePresent) {
+            if (ACTION !== "status" && (ACTION === "upload" || !archivePresent)) {
               const addNewButton = page.getByRole("button", { name: "Add New", exact: true }).first();
               if (await addNewButton.count()) {
               await addNewButton.click({ timeout: 5000 }).catch(() => undefined);
@@ -551,12 +551,14 @@ async function main() {
             }
           }
           const appLink = fileLinks.find((link) => link.text.toLowerCase() === DOMAIN);
-          if (depth === 0 && appLink && appLink.href.startsWith("/")) {
-            const appUrl = new URL(appLink.href, page.url());
-            filePath = `${appUrl.pathname}${appUrl.search}`;
+          const dataLink = fileLinks.find((link) => link.text === "nomreh-data");
+          const initialLink = ACTION === "status" ? dataLink : appLink;
+          if (depth === 0 && initialLink && initialLink.href.startsWith("/")) {
+            const initialUrl = new URL(initialLink.href, page.url());
+            filePath = `${initialUrl.pathname}${initialUrl.search}`;
             continue;
           }
-          const domainFolder = page.locator("a.tree-item-content").filter({ hasText: DOMAIN }).first();
+          const domainFolder = page.locator("a.tree-item-content").filter({ hasText: ACTION === "status" ? "nomreh-data" : DOMAIN }).first();
           if (depth === 0 && await domainFolder.count()) {
             await domainFolder.click({ timeout: 8000 }).catch(() => undefined);
             await page.waitForTimeout(1800);
@@ -575,7 +577,7 @@ async function main() {
         : ACTION === "build"
           ? "The validated Nomreh production build and runtime smoke tests succeeded. Node.js enablement and live validation remain pending."
           : ACTION === "status"
-            ? "The read-only Nomreh disk report completed. No build, deletion, restart, or settings change was attempted."
+            ? "The read-only Nomreh console and persistent-data inspection completed. No command, build, deletion, restart, or settings change was attempted."
             : domainFound
         ? "Plesk web login succeeded and the Nomreh domain was found. No remediation was attempted."
         : "Plesk web login completed, but the Nomreh domain was not visible on the inspected pages. No remediation was attempted.", "");

@@ -47,7 +47,7 @@ jobs:
           npm install --ignore-scripts --no-audit --no-fund playwright@1.64.1
           npx playwright install --with-deps chromium
 
-      - name: Read the Nomreh console and disk usage
+      - name: Read the Nomreh console and persistent-data status
         id: status
         if: steps.config.outputs.configured == 'true'
         env:
@@ -83,5 +83,5 @@ jobs:
             -f head_sha="${GITHUB_SHA}" \
             -f status=completed \
             -f conclusion="$conclusion" \
-            -f 'output[title]=Nomreh read-only console and disk status' \
+            -f 'output[title]=Nomreh read-only console and persistent-data status' \
             --raw-field "output[summary]=${summary}" > /dev/null
