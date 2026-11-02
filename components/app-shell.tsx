@@ -33,6 +33,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { user, providerStatus, saveState, storageReady, exams, toasts, dismissToast } = useApp();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const isAdmin = user.role === "admin";
 
   useEffect(() => { setMobileOpen(false); setNotificationsOpen(false); }, [pathname]);
   const reviewCount = useMemo(() => exams.reduce((sum, exam) => sum + exam.submissions.filter((submission) => submission.status === "needs_review").length, 0), [exams]);
@@ -49,7 +50,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       {mobileOpen && <button className="sidebar-overlay" aria-label="بستن منو" onClick={() => setMobileOpen(false)} />}
       <aside className={`sidebar ${mobileOpen ? "is-open" : ""}`} aria-label="ناوبری اصلی">
         <div className="brand-row">
-          <Link href="/" className="brand" aria-label="نمره، صفحهٔ اصلی"><span className="brand-mark"><CheckCheck size={25} strokeWidth={2.5} /></span><span className="brand-name">نمره</span></Link>
+          <Link href={isAdmin ? "/admin" : "/"} className="brand" aria-label="نمره، صفحهٔ اصلی"><span className="brand-mark"><CheckCheck size={25} strokeWidth={2.5} /></span><span className="brand-name">نمره</span></Link>
           <button className="icon-button sidebar-close" onClick={() => setMobileOpen(false)} aria-label="بستن منو"><X size={20} /></button>
         </div>
         <div className="workspace-switcher">
@@ -58,20 +59,28 @@ export function AppShell({ children }: { children: ReactNode }) {
           <ShieldCheck size={16} />
         </div>
         <nav className="main-nav">
-          <span className="nav-caption">فضای کاری</span>
-          {navigation.map((item) => {
-            const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
-            const Icon = item.icon;
-            return <Link key={item.href} href={item.href} className={`nav-item ${active ? "active" : ""}`} aria-current={active ? "page" : undefined}><Icon size={20} strokeWidth={active ? 2.3 : 1.8} /><span>{item.label}</span>{item.badge && reviewCount > 0 && <span className="nav-badge">{faNumber(reviewCount)}</span>}</Link>;
-          })}
-          <span className="nav-caption nav-caption-second">مدیریت</span>
-          {user.role === "admin" && <Link href="/admin" className={`nav-item ${pathname.startsWith("/admin") ? "active" : ""}`}><ShieldCheck size={20} strokeWidth={1.8} /><span>مدیریت سامانه</span></Link>}
-          <Link href="/settings" className={`nav-item ${pathname.startsWith("/settings") ? "active" : ""}`}><Settings size={20} strokeWidth={1.8} /><span>تنظیمات تصحیح</span></Link>
-          <Link href="/help" className={`nav-item ${pathname.startsWith("/help") ? "active" : ""}`}><CircleHelp size={20} strokeWidth={1.8} /><span>راهنما و بهترین روش</span></Link>
+          {isAdmin ? (
+            <>
+              <span className="nav-caption">مدیریت سامانه</span>
+              <Link href="/admin" className={`nav-item ${pathname.startsWith("/admin") ? "active" : ""}`} aria-current={pathname.startsWith("/admin") ? "page" : undefined}><ShieldCheck size={20} strokeWidth={2} /><span>کاربران، اتصال و مصرف</span></Link>
+            </>
+          ) : (
+            <>
+              <span className="nav-caption">فضای کاری</span>
+              {navigation.map((item) => {
+                const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+                const Icon = item.icon;
+                return <Link key={item.href} href={item.href} className={`nav-item ${active ? "active" : ""}`} aria-current={active ? "page" : undefined}><Icon size={20} strokeWidth={active ? 2.3 : 1.8} /><span>{item.label}</span>{item.badge && reviewCount > 0 && <span className="nav-badge">{faNumber(reviewCount)}</span>}</Link>;
+              })}
+              <span className="nav-caption nav-caption-second">مدیریت</span>
+              <Link href="/settings" className={`nav-item ${pathname.startsWith("/settings") ? "active" : ""}`}><Settings size={20} strokeWidth={1.8} /><span>تنظیمات تصحیح</span></Link>
+              <Link href="/help" className={`nav-item ${pathname.startsWith("/help") ? "active" : ""}`}><CircleHelp size={20} strokeWidth={1.8} /><span>راهنما و بهترین روش</span></Link>
+            </>
+          )}
         </nav>
         <div className="sidebar-bottom">
-          <div className="sidebar-tip"><span className="tip-icon"><Sparkles size={18} /></span><strong>تصحیح دقیق‌تر می‌خواهید؟</strong><p>برای هر سؤال، معیارهای بارم را جدا و کوتاه بنویسید.</p><Link href="/help">راهنمای بارم‌نویسی <ChevronLeft size={14} /></Link></div>
-          <div className="privacy-note">{saveState === "saving" || saveState === "loading" ? <LoaderCircle size={12} className="spin-icon" /> : <Cloud size={12} />}<span>{saveState === "error" ? "ذخیرهٔ سرور نیازمند بررسی" : saveState === "saving" ? "در حال ذخیرهٔ امن…" : "ذخیره‌شده در فضای امن شما"}</span></div>
+          {isAdmin ? <div className="sidebar-tip"><span className="tip-icon"><ShieldCheck size={18} /></span><strong>دسترسی‌ها جدا هستند</strong><p>این حساب فقط کاربران، مصرف و اتصال سرویس را مدیریت می‌کند و به کلاس‌ها و برگه‌ها دسترسی ندارد.</p></div> : <div className="sidebar-tip"><span className="tip-icon"><Sparkles size={18} /></span><strong>تصحیح دقیق‌تر می‌خواهید؟</strong><p>برای هر سؤال، معیارهای بارم را جدا و کوتاه بنویسید.</p><Link href="/help">راهنمای بارم‌نویسی <ChevronLeft size={14} /></Link></div>}
+          <div className="privacy-note">{saveState === "saving" || saveState === "loading" ? <LoaderCircle size={12} className="spin-icon" /> : <Cloud size={12} />}<span>{saveState === "error" ? "ذخیرهٔ سرور نیازمند بررسی" : saveState === "saving" ? "در حال ذخیرهٔ امن…" : isAdmin ? "مدیریت امن سامانه" : "ذخیره‌شده در فضای امن شما"}</span></div>
         </div>
       </aside>
 
@@ -81,17 +90,17 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="topbar-actions">
             <span className="topbar-date">{faDate(new Date(), { weekday: "long", day: "numeric", month: "long" })}</span>
             <Link href={user.role === "admin" ? "/admin" : "/settings"} className={`connection-pill ${providerStatus.configured ? "connected" : ""}`} title={user.role === "admin" ? "مدیریت اتصال مدل" : "وضعیت سرویس تصحیح"}><KeyRound size={15} /><span>{providerStatus.configured ? "سرویس متصل است" : "سرویس غیرفعال"}</span><span className="connection-dot" /></Link>
-            <div className="notification-wrap">
+            {!isAdmin && <div className="notification-wrap">
               <button className="icon-button notification-button" aria-label={`اعلان‌ها، ${reviewCount} مورد`} onClick={() => setNotificationsOpen((open) => !open)}><Bell size={20} />{reviewCount > 0 && <span className="notification-dot" />}</button>
               {notificationsOpen && <div className="notification-popover card-popover"><div className="popover-heading"><strong>اعلان‌ها</strong><span>{faNumber(reviewCount)} مورد</span></div>{reviewCount ? <Link href={`/review?exam=${firstReviewExam?.id ?? ""}`} className="notification-item"><span className="notification-icon warning"><TriangleAlert size={18} /></span><span><strong>برگه‌هایی منتظر نظر شما هستند</strong><small>{faNumber(reviewCount)} برگه با هشدار ناخوانایی یا نمرهٔ مرزی</small></span></Link> : <div className="notification-empty"><Check size={20} /><p>همه‌چیز مرتب است؛ موردی برای بازبینی ندارید.</p></div>}</div>}
-            </div>
+            </div>}
             <div className="topbar-user"><span className="user-avatar" title={user.displayName}>{user.displayName.trim().charAt(0) || "م"}</span><button className="icon-button logout-button" onClick={logout} aria-label="خروج از حساب" title="خروج از حساب"><LogOut size={18} /></button></div>
           </div>
         </header>
-        <main className="page-content">{storageReady ? children : <div className="workspace-loading"><span className="brand-mark"><CheckCheck size={25} /></span><strong>فضای کاری امن شما آماده می‌شود</strong><LoaderCircle className="spin-icon" size={21} /><p>در حال خواندن کلاس‌ها، آزمون‌ها و نتایج…</p></div>}</main>
+        <main className="page-content">{storageReady ? children : <div className="workspace-loading"><span className="brand-mark"><CheckCheck size={25} /></span><strong>{isAdmin ? "مدیریت سامانه آماده می‌شود" : "فضای کاری امن شما آماده می‌شود"}</strong><LoaderCircle className="spin-icon" size={21} /><p>{isAdmin ? "در حال خواندن وضعیت سرویس و حساب‌ها…" : "در حال خواندن کلاس‌ها، آزمون‌ها و نتایج…"}</p></div>}</main>
       </div>
 
-      <Link href="/grading" className="floating-create" title="آزمون جدید"><Plus size={22} /><span>آزمون جدید</span></Link>
+      {!isAdmin && <Link href="/grading" className="floating-create" title="آزمون جدید"><Plus size={22} /><span>آزمون جدید</span></Link>}
       <div className="toast-viewport" aria-live="polite">{toasts.map((toast) => <div key={toast.id} className={`toast toast-${toast.variant}`}><span className="toast-icon">{toast.variant === "success" ? <Check size={18} /> : toast.variant === "error" ? <TriangleAlert size={18} /> : <Sparkles size={18} />}</span><div><strong>{toast.title}</strong>{toast.description && <p>{toast.description}</p>}</div><button onClick={() => dismissToast(toast.id)} aria-label="بستن پیام"><X size={16} /></button></div>)}</div>
     </div>
   );

@@ -108,3 +108,12 @@ export async function requireAdmin(): Promise<AuthUser> {
   if (user.role !== "admin") throw new AuthError("این بخش فقط برای مدیر سامانه است.", 403);
   return user;
 }
+
+/** Teacher and reviewer content is never exposed to management accounts. */
+export async function requireWorkspaceUser(): Promise<AuthUser> {
+  const user = await requireUser();
+  if (user.role === "admin") {
+    throw new AuthError("حساب مدیریت فقط به کاربران، مصرف و تنظیمات اتصال دسترسی دارد.", 403);
+  }
+  return user;
+}

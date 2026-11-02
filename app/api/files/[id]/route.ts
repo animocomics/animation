@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { AuthError, requireUser } from "@/lib/server/auth";
+import { AuthError, requireWorkspaceUser } from "@/lib/server/auth";
 import { deleteUserFile, readUserFile } from "@/lib/server/file-storage";
 
 export const runtime = "nodejs";
@@ -8,7 +8,7 @@ type RouteContext = { params: Promise<{ id: string }> };
 
 export async function GET(_request: Request, context: RouteContext) {
   try {
-    const user = await requireUser();
+    const user = await requireWorkspaceUser();
     const { id } = await context.params;
     const file = await readUserFile(user.id, id);
     if (!file) return NextResponse.json({ error: "فایل پیدا نشد." }, { status: 404 });
@@ -30,7 +30,7 @@ export async function GET(_request: Request, context: RouteContext) {
 
 export async function DELETE(_request: Request, context: RouteContext) {
   try {
-    const user = await requireUser();
+    const user = await requireWorkspaceUser();
     const { id } = await context.params;
     await deleteUserFile(user.id, id);
     return NextResponse.json({ ok: true });

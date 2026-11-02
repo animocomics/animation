@@ -3,7 +3,7 @@ import { z } from "zod";
 import { ACCEPTED_FILE_TYPES, MAX_FILE_SIZE_BYTES } from "@/lib/file-constraints";
 import type { AuthUser, GradeApiRequest, ProviderId } from "@/lib/types";
 import { applyImportedAnswerKey, buildAnswerKeyImportPrompt } from "@/lib/server/answer-key-import-schema";
-import { AuthError, requireUser } from "@/lib/server/auth";
+import { AuthError, requireWorkspaceUser } from "@/lib/server/auth";
 import { readUserFile } from "@/lib/server/file-storage";
 import { prepareProviderFiles } from "@/lib/server/pdf-vision";
 import { getProviderConfig } from "@/lib/server/provider-config";
@@ -36,7 +36,7 @@ function providerByteLimit(provider: ProviderId): number {
 export async function POST(request: Request) {
   let user: AuthUser | undefined;
   try {
-    user = await requireUser();
+    user = await requireWorkspaceUser();
     const input = requestSchema.parse(await request.json());
     const workspace = (await loadWorkspace(user.id)).data;
     const exam = workspace?.exams.find((item) => item.id === input.examId);

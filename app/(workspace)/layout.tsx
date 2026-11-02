@@ -7,8 +7,9 @@ import { getProviderStatus } from "@/lib/server/provider-config";
 export default async function WorkspaceLayout({ children }: { children: React.ReactNode }) {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
+  if (user.role === "admin") redirect("/admin");
   return (
-    <AppProvider initialUser={user} initialProvider={await getProviderStatus(user.role === "admin")}>
+    <AppProvider initialUser={user} initialProvider={await getProviderStatus(false)}>
       <AppShell>{children}</AppShell>
     </AppProvider>
   );

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { AuthError, requireUser } from "@/lib/server/auth";
+import { AuthError, requireWorkspaceUser } from "@/lib/server/auth";
 import { clearUserFiles, saveUserFile } from "@/lib/server/file-storage";
 
 export const runtime = "nodejs";
@@ -7,7 +7,7 @@ export const maxDuration = 300;
 
 export async function POST(request: Request) {
   try {
-    const user = await requireUser();
+    const user = await requireWorkspaceUser();
     const form = await request.formData();
     const id = String(form.get("id") || "");
     const file = form.get("file");
@@ -22,7 +22,7 @@ export async function POST(request: Request) {
 
 export async function DELETE() {
   try {
-    const user = await requireUser();
+    const user = await requireWorkspaceUser();
     await clearUserFiles(user.id);
     return NextResponse.json({ ok: true });
   } catch (error) {

@@ -54,6 +54,19 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   outline-offset: 2px;
 }
 ::selection { background: var(--mint-strong); color: var(--brand-deep); }
+
+/* Quiet, consistent scrollbars: the content remains keyboard- and touch-friendly. */
+* { scrollbar-width: thin; scrollbar-color: #a6b9b1 transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; border-radius: 999px; }
+::-webkit-scrollbar-thumb { min-height: 42px; border: 3px solid transparent; border-radius: 999px; background: #a6b9b1; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: #789b8e; background-clip: padding-box; }
+::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+::-webkit-scrollbar-corner { background: transparent; }
+.sidebar { scrollbar-color: #6d9689 transparent; }
+.sidebar::-webkit-scrollbar-thumb { background: rgba(199, 237, 214, 0.38); background-clip: padding-box; }
+.sidebar::-webkit-scrollbar-thumb:hover { background: rgba(199, 237, 214, 0.62); background-clip: padding-box; }
+
 h1, h2, h3, h4, p { margin: 0; }
 svg { flex-shrink: 0; }
 input, textarea, select { color: var(--ink); }
@@ -878,6 +891,8 @@ input[type="number"] { font-variant-numeric: tabular-nums; }
 .flag-severity { width: 6px; height: 6px; margin-top: 5px; border-radius: 50%; background: #d6a14f; }
 .flag-severity.critical { background: var(--red); }
 .flag-severity.info { background: var(--blue); }
+.review-score-guide { display: flex; align-items: flex-start; gap: 6px; margin: 9px 10px 0; padding: 8px 9px; border: 1px solid #d6e9df; border-radius: 9px; background: #f3faf6; color: var(--brand); font-size: 8px; line-height: 1.8; }
+.review-score-guide svg { margin-top: 2px; }
 .question-result-list { padding: 7px 9px 12px; display: flex; flex-direction: column; gap: 6px; }
 .question-result-card { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; scroll-margin: 80px; }
 .question-result-card.flagged { border-color: #e8d4b3; }
@@ -895,6 +910,8 @@ input[type="number"] { font-variant-numeric: tabular-nums; }
 .question-score-input input { width: 34px; padding: 0; border: 0; outline: none; background: transparent; color: var(--ink); font-size: 10px; font-weight: 700; text-align: center; }
 .question-score-input span { color: var(--muted); font-size: 7px; white-space: nowrap; }
 .question-score-input.edited { border-color: #a6d0bd; background: var(--mint); }
+.question-result-card.flagged .question-score-input { border-color: #d7b777; background: #fffaf0; }
+.question-result-card.flagged .question-score-input:focus-within { border-color: var(--brand); background: white; }
 .question-flag-line { display: flex; align-items: center; gap: 4px; padding: 4px 10px; background: #fffaf1; color: var(--amber); font-size: 7px; }
 .question-flag-line span { color: var(--muted); }
 .question-result-body { padding: 9px; border-top: 1px solid var(--line); background: #fcfdfc; animation: page-in 140ms ease-out; }
@@ -923,6 +940,9 @@ input[type="number"] { font-variant-numeric: tabular-nums; }
 .teacher-edit-note { display: flex; align-items: center; gap: 5px; margin-top: 7px; color: var(--blue); font-size: 7px; }
 .question-result-footer { display: flex; align-items: center; justify-content: space-between; gap: 7px; margin-top: 8px; }
 .question-result-footer > span:first-child { color: var(--muted); font-size: 6px; line-height: 1.7; }
+.question-score-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 5px; }
+.question-score-actions .btn { white-space: nowrap; }
+.question-score-actions .btn:disabled { cursor: default; opacity: 0.68; }
 .grading-panel-footer { min-height: 49px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 11px; border-top: 1px solid var(--line); background: white; }
 .approved-stamp { display: flex; align-items: center; gap: 5px; color: var(--brand); font-size: 8px; font-weight: 650; }
 .feedback-panel, .audit-panel { padding: 13px; }
@@ -1317,6 +1337,8 @@ input[type="number"] { font-variant-numeric: tabular-nums; }
   .wizard-footer-status { display: none; }
   .wizard-footer .btn-lg { padding: 10px 13px; font-size: 10px; }
   .review-topbar { flex-direction: column; }
+  .question-result-footer { align-items: flex-start; flex-direction: column; }
+  .question-score-actions { width: 100%; justify-content: flex-start; }
   .review-exam-select { width: 100%; }
   .review-exam-select > div { flex: 1; }
   .review-exam-select select { width: 100%; }

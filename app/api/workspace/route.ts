@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { AuthError, requireUser } from "@/lib/server/auth";
+import { AuthError, requireWorkspaceUser } from "@/lib/server/auth";
 import { loadWorkspace, saveWorkspace, WorkspaceConflictError } from "@/lib/server/workspace-store";
 
 export async function GET() {
   try {
-    const user = await requireUser();
+    const user = await requireWorkspaceUser();
     return NextResponse.json(await loadWorkspace(user.id), { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const status = error instanceof AuthError ? error.status : 500;
@@ -15,7 +15,7 @@ export async function GET() {
 
 export async function PUT(request: Request) {
   try {
-    const user = await requireUser();
+    const user = await requireWorkspaceUser();
     const body = z.object({ data: z.unknown(), expectedRevision: z.number().int().nonnegative().optional() }).parse(await request.json());
     const result = await saveWorkspace(user.id, body.data, body.expectedRevision);
     return NextResponse.json(result);

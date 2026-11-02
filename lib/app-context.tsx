@@ -87,6 +87,7 @@ export function AppProvider({ children, initialUser, initialProvider }: { childr
   }, []);
 
   const persist = useCallback((data: WorkspaceData, expectedRevision?: number) => {
+    if (initialUser.role === "admin") return saveChain.current;
     saveChain.current = saveChain.current.then(async () => {
       setSaveState("saving");
       try {
@@ -111,11 +112,17 @@ export function AppProvider({ children, initialUser, initialProvider }: { childr
       }
     });
     return saveChain.current;
-  }, [notify]);
+  }, [initialUser.role, notify]);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
+      if (initialUser.role === "admin") {
+        loaded.current = false;
+        setStorageReady(true);
+        setSaveState("saved");
+        return;
+      }
       try {
         const response = await fetch("/api/workspace", { cache: "no-store" });
         if (response.status === 401) { window.location.assign("/login"); return; }
@@ -148,7 +155,7 @@ export function AppProvider({ children, initialUser, initialProvider }: { childr
     }
     void load();
     return () => { cancelled = true; };
-  }, [initialProvider.model, initialProvider.provider, notify, persist]);
+  }, [initialProvider.model, initialProvider.provider, initialUser.role, notify, persist]);
 
   useEffect(() => {
     if (!loaded.current) return;

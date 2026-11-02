@@ -135,6 +135,11 @@ export function GradingWizard() {
 
   const goToStep = (nextStep: number) => {
     if (running || nextStep > maxStep) return;
+    if (nextStep > 2 && draft.questionsNeedReview) {
+      notify({ title: "تأیید سؤال و کلید لازم است", description: "ابتدا پیش‌نویس را بررسی و «تأیید سؤال‌ها و کلید» را بزنید؛ سپس به برگه‌های دانش‌آموزان می‌روید.", variant: "error" });
+      setStep(2);
+      return;
+    }
     if (importBusy) {
       notify({ title: "خواندن برگه‌ها هنوز تمام نشده", description: "تا پایان ذخیره یا خواندن سؤال و کلید صبر کنید.", variant: "info" });
       return;
@@ -144,6 +149,10 @@ export function GradingWizard() {
   };
 
   const validateStep = (currentStep: number, skipImportReview = false): boolean => {
+    if (currentStep > 2 && draft.questionsNeedReview) {
+      notify({ title: "تأیید سؤال و کلید لازم است", description: "تا تأیید صریح معلم، ورود برگه یا شروع تصحیح ممکن نیست.", variant: "error" });
+      return false;
+    }
     if (currentStep === 1) {
       if (!draft.title.trim() || !draft.subject.trim() || !draft.classId || !draft.code?.trim()) {
         notify({ title: "مشخصات آزمون کامل نیست", description: "عنوان، درس، کد یکتا و کلاس الزامی هستند.", variant: "error" });
@@ -198,7 +207,10 @@ export function GradingWizard() {
     setDraft(confirmed);
     saveExam(confirmed);
     setDirty(false);
-    notify({ title: "سؤال‌ها و کلید تأیید شد", description: "اکنون می‌توانید برگه‌های دانش‌آموزان را اضافه و تصحیح کنید.", variant: "success" });
+    setMaxStep((current) => Math.max(current, 3));
+    setStep(3);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    notify({ title: "سؤال‌ها و کلید تأیید شد", description: "به مرحلهٔ برگه‌های دانش‌آموزان رفتید؛ اکنون می‌توانید برگه‌ها را اضافه کنید.", variant: "success" });
   };
 
   const nextStep = () => {

@@ -1,6 +1,6 @@
 import { randomUUID } from "crypto";
 import { NextResponse } from "next/server";
-import { AuthError, requireUser } from "@/lib/server/auth";
+import { AuthError, requireWorkspaceUser } from "@/lib/server/auth";
 import { createId } from "@/lib/server/ids";
 import { readUserFile } from "@/lib/server/file-storage";
 import { gradeRequestSchema } from "@/lib/server/grading-schema";
@@ -65,7 +65,7 @@ export async function POST(request: Request) {
   };
 
   try {
-    user = await requireUser();
+    user = await requireWorkspaceUser();
     const parsed = gradeRequestSchema.parse(await request.json());
     const workspace = (await loadWorkspace(user.id)).data;
     const ownedExam = workspace?.exams.find((exam) => exam.id === parsed.examId);

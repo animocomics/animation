@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { AuthError, requireUser } from "@/lib/server/auth";
+import { AuthError, requireWorkspaceUser } from "@/lib/server/auth";
 import { readUserFile } from "@/lib/server/file-storage";
 import { renderPdfToVisionFiles } from "@/lib/server/pdf-vision";
 import { ProviderError } from "@/lib/server/providers";
@@ -12,7 +12,7 @@ type RouteContext = { params: Promise<{ id: string }> };
 /** Authenticated, same-owner page preview; the original PDF remains available at the parent route. */
 export async function GET(request: Request, context: RouteContext) {
   try {
-    const user = await requireUser();
+    const user = await requireWorkspaceUser();
     const { id } = await context.params;
     const file = await readUserFile(user.id, id);
     if (!file) return NextResponse.json({ error: "فایل پیدا نشد." }, { status: 404 });
