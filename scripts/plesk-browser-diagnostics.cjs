@@ -749,9 +749,19 @@ async function main() {
                     if (domDialogVisible) {
                       const dialogText = await dialog.innerText().catch(() => "");
                       if (!/remove|delete/i.test(dialogText)) throw new Error(`The removal confirmation was not recognized for ${name}. Cleanup stopped.`);
-                      const confirm = dialog.getByRole("button", { name: /^(OK|Remove|Delete|Confirm|Yes)$/i }).last();
+                      const confirm = dialog.getByRole("button", { name: /^(OK|Remove|Delete|Confirm|Yes|Yes,\s*remove)$/i }).last();
                       if (!await confirm.count()) throw new Error(`The removal confirmation button was not found for ${name}. Cleanup stopped.`);
                       await confirm.click({ timeout: 8000 });
+                    } else {
+                      const pleskConfirm = page.getByRole("button", { name: /^Yes,\s*remove$/i }).first();
+                      if (await pleskConfirm.count() && await pleskConfirm.isVisible().catch(() => false)) {
+                        const confirmation = pleskConfirm.locator("xpath=ancestor::*[contains(., 'permanently remove')][1]");
+                        const confirmationText = await confirmation.innerText().catch(() => "");
+                        if (!confirmationText.includes(name) || !/permanently remove/i.test(confirmationText)) {
+                          throw new Error(`The Plesk permanent-removal prompt did not exactly identify ${name}. Cleanup stopped.`);
+                        }
+                        await pleskConfirm.click({ timeout: 8000 });
+                      }
                     }
                   }
                 } finally {

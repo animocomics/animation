@@ -52,6 +52,7 @@ jobs:
           done
           node --check scripts/plesk-browser-diagnostics.cjs
           grep -F 'page.on("dialog", nativeDialogHandler)' scripts/plesk-browser-diagnostics.cjs > /dev/null
+          grep -F 'const pleskConfirm = page.getByRole' scripts/plesk-browser-diagnostics.cjs > /dev/null
           node - <<'NODE'
           const { cleanupCandidates } = require('./scripts/plesk-deploy-archives.cjs');
           const keep = 'nomreh-deploy-shecan-5353-v23-delta.zip';
