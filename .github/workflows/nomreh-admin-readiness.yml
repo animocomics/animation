@@ -31,7 +31,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          live_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41454959717" --jq '.status + " " + .conclusion')"
+          live_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41457046690" --jq '.status + " " + .conclusion')"
           test "$live_state" = "completed success"
 
       - name: Prepare an isolated temporary browser
