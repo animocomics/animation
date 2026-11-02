@@ -1,6 +1,6 @@
 name: Plesk Nomreh archive extraction
 
-# Validated application source: 6d2832bfa0a1d44fe180b6c64c26391b91c00184
+# Validated application source: a8eef6d117bffe0c2d8561e95dea02c908fbdc47
 
 on:
   push:
@@ -46,7 +46,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          upload_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41508174284" --jq '.status + " " + .conclusion')"
+          upload_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41517580091" --jq '.status + " " + .conclusion')"
           test "$upload_state" = "completed success"
           grep -F 'Nomreh Passenger-aware launcher is active for this build.' scripts/plesk-node22.cjs > /dev/null
           grep -F 'return [mainFile];' scripts/plesk-node22.cjs > /dev/null
@@ -70,7 +70,7 @@ jobs:
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
           PLESK_BROWSER_ACTION: extract
-          PLESK_ARCHIVE_NAME: nomreh-deploy-shecan-headers-v16c.zip
+          PLESK_ARCHIVE_NAME: nomreh-deploy-shecan-dns-first-v17-delta.zip
           PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-plesk-extract.md
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
         run: node scripts/plesk-browser-diagnostics.cjs
