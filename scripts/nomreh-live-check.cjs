@@ -103,6 +103,36 @@ async function main() {
   try {
     const login = await request("/login");
     validateLogin(login, "Login");
+
+    lines.push("", "## Login static assets", "");
+    const assetPaths = [...new Set([...login.body.matchAll(/(?:src|href)="(\/_next\/static\/[^"]+)"/g)].map((match) => match[1].replace(/&amp;/g, "&")))].slice(0, 30);
+    const scriptCount = assetPaths.filter((pathname) => pathname.endsWith(".js")).length;
+    lines.push(`- Referenced static assets found: ${assetPaths.length}; JavaScript assets: ${scriptCount}.`);
+    if (!scriptCount) fail("The login document did not reference any Next.js JavaScript assets.");
+    let validAssets = 0;
+    for (const pathname of assetPaths) {
+      try {
+        const asset = await request(pathname);
+        const contentType = asset.response.headers.get("content-type") || "";
+        if (asset.response.status !== 200 || !Buffer.byteLength(asset.body)) {
+          lines.push(`- Asset failure: ${clean(pathname)} returned HTTP ${asset.response.status}; content type ${clean(contentType || "none")}; server ${clean(asset.response.headers.get("server") || "none")}; response excerpt ${clean(asset.body.slice(0, 180)) || "empty"}.`);
+          fail(`${pathname} was not available as a public static asset.`);
+          continue;
+        }
+        if (pathname.endsWith(".js") && !/javascript|ecmascript/i.test(contentType)) {
+          fail(`${pathname} returned HTTP 200 with a non-JavaScript content type.`);
+          continue;
+        }
+        if (pathname.endsWith(".css") && !/text\/css/i.test(contentType)) {
+          fail(`${pathname} returned HTTP 200 with a non-CSS content type.`);
+          continue;
+        }
+        validAssets += 1;
+      } catch (error) {
+        fail(`Static asset ${pathname} failed: ${error.message}`);
+      }
+    }
+    lines.push(`- Static assets validated successfully: ${validAssets}/${assetPaths.length}.`);
   } catch (error) {
     fail(`Login request failed: ${error.message}`);
   }
@@ -129,7 +159,7 @@ async function main() {
   if (failures.length) {
     lines.push(`Nomreh is not yet validated as live: ${failures.length} independent public-response check(s) failed. No live-success claim is made.`);
   } else {
-    lines.push("Nomreh is live on its real HTTPS domain. The public root reaches the Persian RTL login application, and the unauthenticated auth API returns the expected anonymous JSON response.");
+    lines.push("Nomreh is live on its real HTTPS domain. The public root reaches the Persian RTL login application, all referenced login JS/CSS assets load successfully, and the unauthenticated auth API returns the expected anonymous JSON response.");
   }
   lines.push("");
   const report = lines.join("\n");
