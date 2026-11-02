@@ -105,7 +105,9 @@ async function run() {
   }
   const updateField = page.locator("#shecan-update-url");
   await updateField.waitFor({ state: "visible", timeout: 10000 });
-  await updateField.fill(UPDATE_URL);
+  const useStoredUpdateUrl = Boolean(current?.hasUpdateUrl);
+  if (!useStoredUpdateUrl) await updateField.fill(UPDATE_URL);
+  lines.push(`- Activation input: ${useStoredUpdateUrl ? "the existing encrypted update link, with no URL repeated in the request body" : "the supplied SHECAN secret"}.`);
   const saveButton = page.locator(".api-network-connection button.btn-primary").filter({ hasText: /آزمایش/ }).first();
   await saveButton.waitFor({ state: "visible", timeout: 10000 });
   const responsePromise = page.waitForResponse((response) => response.url() === `${ORIGIN}/api/admin/api-network` && response.request().method() === "POST", { timeout: 90000 });
