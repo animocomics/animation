@@ -634,6 +634,18 @@ async function main() {
   if (invalidKeyResponse.ok() || typeof invalidKeyPayload.error !== "string" || !invalidKeyPayload.error) throw new Error("The deliberately invalid provider key did not produce a structured error.");
   lines.push("- Invalid provider-key failures are structured JSON; no provider configuration was saved.");
 
+  const invalidSaveResponse = await context.request.put(`${ORIGIN}/api/provider`, {
+    headers: { Accept: "application/json" },
+    data: { provider: "gemini", model: "gemini-3.8-flash", apiKey: "AIzaSyNomrehReadinessInvalid0000000000000000" },
+  });
+  const invalidSaveBody = await invalidSaveResponse.text();
+  const invalidSaveContentType = invalidSaveResponse.headers()["content-type"] || "none";
+  lines.push(`- Deliberately invalid provider-save response: HTTP ${invalidSaveResponse.status()}; content type ${clean(invalidSaveContentType)}.`);
+  if (!/application\/json/i.test(invalidSaveContentType)) throw new Error(`Provider save returned HTML instead of JSON (HTTP ${invalidSaveResponse.status()}).`);
+  let invalidSavePayload;
+  try { invalidSavePayload = JSON.parse(invalidSaveBody); } catch { throw new Error("Provider save returned an invalid JSON error body."); }
+  if (invalidSaveResponse.ok() || typeof invalidSavePayload.error !== "string" || !invalidSavePayload.error) throw new Error("Invalid provider-save credentials did not produce a structured error.");
+
   const invalidModelsResponse = await context.request.post(`${ORIGIN}/api/provider/models`, {
     headers: { Accept: "application/json" },
     data: { provider: "gemini", apiKey: "AIzaSyNomrehReadinessInvalid0000000000000000" },
