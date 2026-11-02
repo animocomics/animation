@@ -1327,7 +1327,7 @@ async function main() {
                 await page.waitForTimeout(2000);
                 const confirmUpload = page.locator("button:visible").filter({ hasText: /^Upload/i }).first();
                 if (await confirmUpload.count()) await confirmUpload.click({ timeout: 5000 }).catch(() => undefined);
-                await page.waitForFunction((name) => Array.from(document.querySelectorAll("a")).some((anchor) => (anchor.textContent || "").trim() === name), ARCHIVE_NAME, { timeout: 180000 });
+                await page.waitForFunction((name) => Array.from(document.querySelectorAll("a")).some((anchor) => (anchor.textContent || "").trim() === name), ARCHIVE_NAME, { timeout: 600000 });
                 await page.waitForTimeout(2000);
                 const uploadedBody = await page.locator("body").innerText().catch(() => "");
                 const uploadFailure = uploadedBody.split(/\r?\n/).find((line) => /upload.*(failed|error)|(?:failed|error).*upload|quota exceeded|permission denied/i.test(line));
