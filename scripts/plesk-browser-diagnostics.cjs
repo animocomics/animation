@@ -307,8 +307,7 @@ async function main() {
               }
               lines.push(`- Extract menu item found: ${extractChoice && await extractChoice.count() ? "yes" : "no"}`);
               if (extractChoice && await extractChoice.count()) {
-                await extractChoice.click({ timeout: 5000 }).catch(() => undefined);
-                await page.waitForTimeout(600);
+                lines.push("- Extract Files was located but not activated during diagnostics.");
               }
               const dialog = page.locator("[role='dialog']:visible, .pul-modal:visible, .modal:visible").last();
               if (await dialog.count()) {
@@ -326,7 +325,7 @@ async function main() {
               } else {
                 lines.push("- No extract confirmation dialog was opened; no files were extracted.");
               }
-              lines.push("- Inspection only: the extract confirmation button was not pressed.", "");
+              lines.push("- Inspection only: no extraction action or confirmation was activated in this run.", "");
             }
             if (ACTION === "upload" || !archivePresent) {
               const addNewButton = page.getByRole("button", { name: "Add New", exact: true }).first();
