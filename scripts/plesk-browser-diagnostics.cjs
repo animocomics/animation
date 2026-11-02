@@ -63,7 +63,7 @@ function labelValues(text, labels) {
 }
 
 async function main() {
-  if (!["diagnose", "upload", "extract", "build", "status", "disk", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "enable-runtime"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
+  if (!["diagnose", "upload", "extract", "build", "status", "disk", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "enable-runtime", "restart-runtime"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
   const panel = normalizePanelUrl(process.env.PLESK_PANEL_URL || "");
   const readOnly = ACTION === "diagnose" || ACTION === "status";
   const actionDescription = ACTION === "upload"
@@ -80,7 +80,9 @@ async function main() {
             ? "Controlled action: preserve Nomreh's current tsconfig.json as tsconfig.json.pre-obsolete-exclusion and upload only the hash-validated replacement. No other application file, persistent data, build, restart, or other domain is touched."
             : ACTION === "enable-runtime"
               ? "Controlled action: enable Node.js only for Nomreh's verified server.js application after its successful build. Restart remains a separate step; no files, persistent data, environment settings, or other domains are touched."
-              : ACTION === "retire-obsolete"
+              : ACTION === "restart-runtime"
+                ? "Controlled action: restart only Nomreh's already-enabled Node.js application. No files, persistent data, environment settings, or other domains are touched; live-site validation remains separate."
+                : ACTION === "retire-obsolete"
               ? "Controlled action: rename only three verified obsolete Cloudflare/better-sqlite3 host artifacts to non-TypeScript backup names. No current source, persistent data, build, restart, or other domain is touched."
               : "Controlled action: run the validated Nomreh production build with its domain-local Node 22 runtime. Node.js enablement and restart remain pending.";
   const lines = ["# Plesk browser diagnostics", "", readOnly
@@ -321,6 +323,70 @@ async function main() {
           }
         }
       }
+      if (ACTION === "restart-runtime") {
+        lines.push("## Controlled Nomreh Passenger restart", "");
+        const nodeBody = await page.locator("body").innerText().catch(() => "");
+        if (!nodeBody.includes(`Node.js on ${DOMAIN}`) || !nodeBody.includes("Application Root") || !nodeBody.includes("/nomreh.arounidea.com") || !nodeBody.includes("server.js")) {
+          throw new Error("The Node.js settings are not verified as Nomreh's server.js application. Restart was not attempted.");
+        }
+        const disableControl = page.locator("a:visible, button:visible").filter({ hasText: /^Disable Node\.js$/i }).first();
+        const restartControl = page.locator("a:visible, button:visible").filter({ hasText: /^(Restart App|Restart Application)$/i }).first();
+        if (!await disableControl.count()) throw new Error("Nomreh Node.js is not visibly enabled. Restart was not attempted.");
+        if (!await restartControl.count()) throw new Error("Nomreh's Restart App control was not found. No restart or other setting was attempted.");
+        const restartResponses = [];
+        let restartAccepted = false;
+        let applicationStatusRefreshed = false;
+        const responseHandler = (response) => {
+          try {
+            const target = new URL(response.url());
+            if (target.origin !== new URL(panel).origin || !/\/modules\/nodejs\//.test(target.pathname)) return;
+            const summary = `${response.request().method()} ${target.pathname} -> HTTP ${response.status()}`;
+            restartResponses.push(summary);
+            if (response.status() >= 200 && response.status() < 400 && /restart/i.test(target.pathname)) restartAccepted = true;
+            if (response.status() >= 200 && response.status() < 400 && /application-status\/domainId\/145/.test(target.pathname)) applicationStatusRefreshed = true;
+          } catch { /* Ignore an unrelated response. */ }
+        };
+        page.on("response", responseHandler);
+        try {
+          lines.push("- Clicking only Restart App for the already-enabled nomreh.arounidea.com application.");
+          await restartControl.click({ timeout: 10000 });
+          await page.waitForTimeout(1200);
+          const confirmation = page.locator("[role='dialog']:visible, .pul-modal:visible, .modal:visible").last();
+          if (await confirmation.count()) {
+            const confirmationText = await confirmation.innerText().catch(() => "");
+            if (!/restart/i.test(confirmationText) || !/Node\.js|application/i.test(confirmationText)) {
+              throw new Error("An unexpected confirmation appeared instead of Nomreh application restart. It was not confirmed.");
+            }
+            const confirmButton = confirmation.getByRole("button", { name: /^(OK|Restart|Confirm|Yes)$/i }).last();
+            if (!await confirmButton.count()) throw new Error("The application restart confirmation button was not found. It was not confirmed.");
+            await confirmButton.click({ timeout: 8000 });
+          }
+          const restartMessages = new Set();
+          const restartStartedAt = Date.now();
+          while (Date.now() - restartStartedAt < 60000) {
+            await page.waitForTimeout(2000);
+            const notices = await page.locator("[role='alert']:visible, .pul-toast:visible, .pul-message:visible, .pul-notification:visible, .pul-alert:visible").allTextContents().catch(() => []);
+            for (const notice of notices) {
+              const text = notice.trim().replace(/\s+/g, " ");
+              if (/restart/i.test(text) && !/^(Restart App|Restart Application)$/i.test(text) && !restartMessages.has(text)) {
+                restartMessages.add(text);
+                lines.push(`- Restart notice: ${sanitize(text.slice(0, 350))}`);
+              }
+            }
+            if (restartAccepted && applicationStatusRefreshed && Date.now() - restartStartedAt >= 6000) break;
+            if ([...restartMessages].some((text) => /restart(ed|ed successfully| successful| completed)/i.test(text)) && Date.now() - restartStartedAt >= 4000) break;
+          }
+          for (const response of [...new Set(restartResponses)].slice(0, 25)) lines.push(`- Restart response: ${sanitize(response)}`);
+          const successfulNotice = [...restartMessages].some((text) => /restart(ed|ed successfully| successful| completed)/i.test(text));
+          if (!restartAccepted && !successfulNotice) {
+            throw new Error("Nomreh's restart request was not acknowledged by a successful restart response or notice. Live success is not claimed; inspect the current state before retrying.");
+          }
+          lines.push(`- Restart request acknowledged: ${restartAccepted ? "successful restart endpoint response" : "Plesk success notice"}.`, `- Application status refresh observed: ${applicationStatusRefreshed ? "yes" : "no"}.`, "- No other domain, file, persistent data, or environment setting was changed. Live-site validation remains separate.", "");
+          actionCompleted = true;
+        } finally {
+          page.off("response", responseHandler);
+        }
+      }
       if (["diagnose", "build", "status", "disk"].includes(ACTION) && nomrehConsoleLink && await nomrehConsoleLink.count()) {
         const consoleResponsePromise = page.waitForResponse((item) => item.url().includes("/modules/nodejs/index.php/domain/console") && item.request().isNavigationRequest(), { timeout: 15000 }).catch(() => null);
         await nomrehConsoleLink.click({ timeout: 8000 }).catch(() => undefined);
@@ -494,7 +560,7 @@ async function main() {
           actionCompleted = true;
         }
       }
-      if (nomrehFilesPath && ACTION !== "enable-runtime") {
+      if (nomrehFilesPath && !["enable-runtime", "restart-runtime"].includes(ACTION)) {
         let filePath = nomrehFilesPath;
         for (let depth = 0; depth < 2; depth += 1) {
           let response = null;
@@ -1279,7 +1345,7 @@ async function main() {
         }
       }
     }
-    if (["upload", "extract", "build", "status", "disk", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "enable-runtime"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. No subsequent build or restart was attempted.`);
+    if (["upload", "extract", "build", "status", "disk", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "enable-runtime", "restart-runtime"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Review the reported host state before further action; no live-success claim was made.`);
     lines.push("## Result", "", ACTION === "upload"
       ? "The validated application archive was uploaded to Nomreh. Extraction, dependency installation, build, and Node.js enablement remain pending."
       : ACTION === "extract"
@@ -1298,7 +1364,9 @@ async function main() {
                     ? "Nomreh's validated tsconfig.json obsolete-artifact exclusions were uploaded and verified. No build or restart was attempted; the controlled production build remains pending."
                     : ACTION === "enable-runtime"
                       ? "Nomreh Node.js enablement was verified. No application restart was attempted in this step; restart and live-site validation remain pending."
-                      : ACTION === "retire-obsolete"
+                      : ACTION === "restart-runtime"
+                        ? "Nomreh's Passenger restart request was acknowledged. This is not a live-success claim; independent HTTPS validation remains pending."
+                        : ACTION === "retire-obsolete"
                     ? "All three obsolete Nomreh Cloudflare/better-sqlite3 artifacts were preserved as non-TypeScript backups and verified. No build or restart was attempted."
                     : domainFound
         ? "Plesk web login succeeded and the Nomreh domain was found. No remediation was attempted."
@@ -1317,7 +1385,7 @@ async function main() {
 
 if (require.main === module) {
   main().catch((error) => {
-    const output = error.nomrehReport || sanitize(`# Plesk browser diagnostics\n\nBrowser action stopped: ${error.message}\n\n${ACTION === "diagnose" ? "No settings, deployments or files were changed." : "No subsequent build, restart, or settings change was attempted. Review the step result before retrying."}\n`);
+    const output = error.nomrehReport || sanitize(`# Plesk browser diagnostics\n\nBrowser action stopped: ${error.message}\n\n${ACTION === "diagnose" ? "No settings, deployments or files were changed." : ["enable-runtime", "restart-runtime"].includes(ACTION) ? "Review the reported runtime action and current host state before retrying. No live-success claim was made." : "No subsequent build, restart, or settings change was attempted. Review the step result before retrying."}\n`);
     fs.writeFileSync(OUTPUT, output, { mode: 0o600 });
     console.error(output);
     process.exitCode = 1;
