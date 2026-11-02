@@ -169,6 +169,9 @@ async function main() {
           response = await page.goto(`${panel}${toolPath}`, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => null);
         }
         await page.waitForTimeout(1800);
+        if (label === "Node.js") {
+          await page.getByText("Application Root", { exact: true }).waitFor({ state: "visible", timeout: 12000 }).catch(() => undefined);
+        }
         const body = await page.locator("body").innerText().catch(() => "");
         lines.push(`## ${label} page`, "", `- HTTP status: ${response ? response.status() : "unavailable"}`, `- Current page: ${sanitize(new URL(page.url()).pathname)}`, `- Body characters: ${body.length}`, "");
         const selected = toolLines(body);
@@ -186,6 +189,16 @@ async function main() {
         }
         if (controls.length) lines.push("");
         if (label === "Node.js") {
+          const managerLinks = await page.locator("a[href*='/smb/file-manager/']").evaluateAll((anchors) => anchors.map((anchor) => ({
+            text: (anchor.textContent || "").trim().replace(/\s+/g, " "),
+            href: anchor.getAttribute("href") || "",
+          })).filter((item) => /domainId\/\d+/.test(item.href)));
+          const managerLink = managerLinks.find((item) => /File Manager|open/i.test(item.text)) || managerLinks[0];
+          if (managerLink) {
+            const managerUrl = new URL(managerLink.href, page.url());
+            nomrehFilesPath = `${managerUrl.pathname}${managerUrl.search}${managerUrl.hash}`;
+            lines.push(`- Application File Manager: ${sanitize(`${managerUrl.pathname}${managerUrl.search}${managerUrl.hash}`)}`, "");
+          }
           const fields = await page.locator("input, select, textarea").evaluateAll((elements) => elements.map((element) => {
             const name = element.getAttribute("name") || element.id || "";
             const labelElement = element.id ? document.querySelector(`label[for="${element.id}"]`) : null;
