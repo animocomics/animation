@@ -62,12 +62,15 @@ function labelValues(text, labels) {
 }
 
 async function main() {
-  if (!["diagnose", "upload"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
+  if (!["diagnose", "upload", "extract"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
   const panel = normalizePanelUrl(process.env.PLESK_PANEL_URL || "");
   const readOnly = ACTION === "diagnose";
+  const actionDescription = ACTION === "upload"
+    ? "Controlled action: upload one validated application archive to Nomreh only. No extraction, build, restart, or settings change is attempted."
+    : "Controlled action: extract the validated archive inside the Nomreh application root only. Persistent data, uploads, environment files, build, restart, and settings changes are not touched.";
   const lines = ["# Plesk browser diagnostics", "", readOnly
     ? "Read-only browser inspection. No settings, deployments or files were changed."
-    : "Controlled action: upload one validated application archive to Nomreh only. No extraction, build, restart, or settings change is attempted.", ""];
+    : actionDescription, ""];
   let actionCompleted = false;
   let browser;
   try {
@@ -254,6 +257,9 @@ async function main() {
             if (ACTION === "upload" && archivePresent) {
               throw new Error(`${ARCHIVE_NAME} already exists in the Nomreh application directory. Upload stopped without overwriting it.`);
             }
+            if (ACTION === "extract" && !archivePresent) {
+              throw new Error(`${ARCHIVE_NAME} is not present in the Nomreh application directory. Extraction was not started.`);
+            }
             const fileDetails = fileBody.split(/\r?\n/).map((line) => line.trim()).filter((line) => /package\.json|server\.js|next\.config|sqlite\.ts|plesk-node22|\.next\b/i.test(line) && !/secret|token|password|credential/i.test(line)).slice(0, 20);
             if (fileDetails.length) lines.push(...fileDetails.map((line) => `- Application file: ${sanitize(line.slice(0, 300))}`), "");
             const managerControls = await page.locator("button, a, input").evaluateAll((elements) => elements.map((element) => ({
@@ -272,6 +278,65 @@ async function main() {
             })).filter((item) => item.text || item.title).slice(0, 40));
             for (const control of toolbarButtons) lines.push(`- Toolbar button: ${sanitize(JSON.stringify(control))}`);
             if (toolbarButtons.length) lines.push("");
+            if (ACTION === "extract" && archivePresent) {
+              lines.push("## Controlled Nomreh archive extraction", "");
+              const archiveName = page.getByText(ARCHIVE_NAME, { exact: true }).first();
+              const archiveRow = archiveName.locator("xpath=ancestor::*[.//input[@type='checkbox']][1]");
+              const archiveCheckbox = archiveRow.locator("input[type='checkbox']").first();
+              if (!await archiveCheckbox.count()) throw new Error("The uploaded archive row was not found. Extraction was not started.");
+              await archiveCheckbox.check({ force: true, timeout: 5000 }).catch(async () => {
+                await archiveCheckbox.click({ force: true, timeout: 5000 });
+              });
+              if (!await archiveCheckbox.isChecked().catch(() => false)) throw new Error("The uploaded archive could not be selected. Extraction was not started.");
+              const rowActions = archiveRow.locator("button[title='Actions'], button[aria-label='Actions']").first();
+              if (!await rowActions.count()) throw new Error("The archive row Actions menu was not found. Extraction was not started.");
+              await rowActions.click({ timeout: 5000 });
+              await page.waitForTimeout(400);
+              const extractChoice = page.locator("a:visible, button:visible").filter({ hasText: /^Extract Files$/i }).first();
+              if (!await extractChoice.count()) throw new Error("Extract Files was not available for the selected Nomreh archive.");
+              await extractChoice.click({ timeout: 8000 });
+              await page.waitForTimeout(1000);
+              const extractBody = await page.locator("body").innerText().catch(() => "");
+              const extractLines = extractBody.split(/\r?\n/).map((line) => line.trim()).filter((line) => /extract|overwrite|destination|target directory|extract to/i.test(line) && !/secret|token|password|credential/i.test(line)).slice(0, 30);
+              for (const line of extractLines) lines.push(`- Extract form: ${sanitize(line.slice(0, 300))}`);
+              const pathFields = await page.locator("input:visible").evaluateAll((elements) => elements.map((element) => ({
+                name: element.getAttribute("name") || element.id || "",
+                label: element.getAttribute("placeholder") || element.getAttribute("aria-label") || "",
+                value: element.getAttribute("value") || "",
+              })).filter((field) => /path|directory|destination|target|extract/i.test(`${field.name} ${field.label}`) && !/password|secret|token|credential/i.test(`${field.name} ${field.label}`)));
+              for (const field of pathFields) {
+                lines.push(`- Extract path field: ${sanitize(JSON.stringify(field))}`);
+                if (field.value && !field.value.includes(DOMAIN)) throw new Error(`The extraction path is outside Nomreh: ${sanitize(field.value)}`);
+              }
+              const overwriteControl = page.getByLabel(/overwrite existing files/i).first();
+              if (await overwriteControl.count()) await overwriteControl.check({ force: true, timeout: 5000 }).catch(() => undefined);
+              const namedOverwrite = page.locator("input[name*='overwrite' i], input[id*='overwrite' i]").first();
+              if (await namedOverwrite.count()) await namedOverwrite.check({ force: true, timeout: 5000 }).catch(() => undefined);
+              const hasConfirmationForm = /overwrite existing files|destination directory|extract to|target directory/i.test(extractBody);
+              if (hasConfirmationForm) {
+                const confirmExtract = page.getByRole("button", { name: /^(OK|Confirm|Extract|Extract Files|Overwrite)/i }).last();
+                if (!await confirmExtract.count()) throw new Error("The extraction confirmation control was not found; extraction was not confirmed.");
+                await confirmExtract.click({ timeout: 8000 });
+              }
+              await page.waitForTimeout(5000);
+              await page.reload({ waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => undefined);
+              await page.waitForTimeout(1500);
+              const appFolder = page.locator("a.tree-item-content").filter({ hasText: DOMAIN }).first();
+              if (await appFolder.count()) {
+                await appFolder.click({ timeout: 8000 }).catch(() => undefined);
+                await page.waitForTimeout(2000);
+              }
+              const verifiedBody = await page.locator("body").innerText().catch(() => "");
+              const serverLine = verifiedBody.split(/\r?\n/).map((line) => line.trim()).find((line) => /^server\.js\s/i.test(line));
+              const packageLine = verifiedBody.split(/\r?\n/).map((line) => line.trim()).find((line) => /^package\.json\s/i.test(line));
+              if (serverLine) lines.push(`- Extracted server.js: ${sanitize(serverLine)}`);
+              if (packageLine) lines.push(`- Extracted package.json: ${sanitize(packageLine)}`);
+              if (!serverLine || !/\b593\s*B\b/i.test(serverLine)) {
+                throw new Error("Extraction could not be verified: the hosted server.js is not the validated 593-byte launcher. No build or restart was attempted.");
+              }
+              lines.push("- Extraction verified: the validated server.js is present in the Nomreh application root. No build or restart was attempted.", "");
+              actionCompleted = true;
+            }
             if (ACTION === "diagnose" && archivePresent) {
               lines.push("## Extract dialog inspection", "");
               const archiveName = page.getByText(ARCHIVE_NAME, { exact: true }).first();
@@ -385,10 +450,12 @@ async function main() {
         }
       }
     }
-    if (ACTION === "upload" && !actionCompleted) throw new Error("The controlled Nomreh archive upload did not complete. No extraction, build, restart, or settings change was attempted.");
+    if (["upload", "extract"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. No build, restart, or settings change was attempted.`);
     lines.push("## Result", "", ACTION === "upload"
       ? "The validated application archive was uploaded to Nomreh. Extraction, dependency installation, build, and Node.js enablement remain pending."
-      : domainFound
+      : ACTION === "extract"
+        ? "The validated application source was extracted and verified in the Nomreh application root. Dependency installation, build, and Node.js enablement remain pending."
+        : domainFound
         ? "Plesk web login succeeded and the Nomreh domain was found. No remediation was attempted."
         : "Plesk web login completed, but the Nomreh domain was not visible on the inspected pages. No remediation was attempted.", "");
   } finally {
