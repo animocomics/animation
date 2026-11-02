@@ -501,7 +501,7 @@ async function main() {
                 await page.waitForTimeout(2500);
                 for (const directory of target.directories) {
                   const directoryPattern = new RegExp(`^${directory}$`);
-                  const directoryLink = page.locator("a:visible:not(.tree-item-content)").filter({ hasText: directoryPattern }).last();
+                  const directoryLink = page.locator("a.tree-item-content:visible").filter({ hasText: directoryPattern }).last();
                   await directoryLink.waitFor({ state: "visible", timeout: 15000 }).catch(() => undefined);
                   if (!await directoryLink.count()) {
                     const visibleEntries = await page.locator("a:visible").evaluateAll((anchors) => [...new Set(anchors.map((anchor) => (anchor.textContent || "").trim()).filter((text) => /^(?:lib|server|tests|app|components|scripts|public|[a-z0-9_.@-]+\.(?:ts|tsx|json|cjs))$/i.test(text)))].slice(0, 60));

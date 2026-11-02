@@ -19,7 +19,7 @@ concurrency:
 jobs:
   retire-obsolete:
     runs-on: ubuntu-latest
-    timeout-minutes: 14
+    timeout-minutes: 15
     steps:
       - name: Check private Plesk browser configuration
         id: config
