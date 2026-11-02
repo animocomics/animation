@@ -710,12 +710,13 @@ async function main() {
                 if (await rowActions.count()) {
                   await rowActions.evaluate((element) => element.click());
                   await page.waitForTimeout(400);
-                  const candidate = page.locator("a:visible, button:visible").filter({ hasText: /^Remove$/i }).first();
+                  let candidate = row.locator("a:visible, button:visible").filter({ hasText: /^Remove$/i }).first();
+                  if (!await candidate.count()) candidate = page.locator(".dropdown-menu:visible a, .dropdown-menu:visible button, [role='menu']:visible a, [role='menu']:visible button").filter({ hasText: /^Remove$/i }).first();
                   if (await candidate.count()) removeChoice = candidate;
                 }
                 if (!removeChoice) {
                   const toolbarRemove = page.getByRole("button", { name: /^Remove$/i }).first();
-                  if (await toolbarRemove.count() && await toolbarRemove.isVisible().catch(() => false)) removeChoice = toolbarRemove;
+                  if (await toolbarRemove.count() && await toolbarRemove.isVisible().catch(() => false) && await toolbarRemove.isEnabled().catch(() => false)) removeChoice = toolbarRemove;
                 }
                 if (!removeChoice) {
                   const moreButton = page.getByRole("button", { name: /^More/i }).first();
@@ -741,7 +742,7 @@ async function main() {
                 };
                 page.on("dialog", nativeDialogHandler);
                 try {
-                  await removeChoice.evaluate((element) => element.click());
+                  await removeChoice.click({ timeout: 8000 });
                   if (!nativeRemovalAccepted) {
                     const dialog = page.locator("[role='dialog']:visible, .pul-modal:visible, .modal:visible").last();
                     const domDialogVisible = await dialog.waitFor({ state: "visible", timeout: 3000 }).then(() => true).catch(() => false);
@@ -750,7 +751,7 @@ async function main() {
                       if (!/remove|delete/i.test(dialogText)) throw new Error(`The removal confirmation was not recognized for ${name}. Cleanup stopped.`);
                       const confirm = dialog.getByRole("button", { name: /^(OK|Remove|Delete|Confirm|Yes)$/i }).last();
                       if (!await confirm.count()) throw new Error(`The removal confirmation button was not found for ${name}. Cleanup stopped.`);
-                      await confirm.evaluate((element) => element.click());
+                      await confirm.click({ timeout: 8000 });
                     }
                   }
                 } finally {
@@ -758,7 +759,20 @@ async function main() {
                 }
                 if (unexpectedNativeDialog) throw new Error(`An unexpected browser dialog stopped cleanup: ${sanitize(unexpectedNativeDialog)}`);
                 await page.waitForTimeout(2500);
-                if (await page.getByText(name, { exact: true }).count()) throw new Error(`The removal confirmation was not recognized or the archive remained after removal: ${name}. Cleanup stopped.`);
+                if (await page.getByText(name, { exact: true }).count()) {
+                  const removalBody = await page.locator("body").innerText().catch(() => "");
+                  const removalLines = removalBody.split(/\r?\n/).map((line) => line.trim()).filter((line) => /remove|delete|confirm|selected|permanently|are you sure|cancel/i.test(line) && !/secret|token|password|credential/i.test(line)).slice(0, 30);
+                  for (const line of removalLines) lines.push(`- Removal state: ${sanitize(line.slice(0, 300))}`);
+                  const removalControls = await page.locator("button:visible, a:visible, input:visible").evaluateAll((elements) => elements.map((element) => ({
+                    tag: element.tagName,
+                    text: (element.textContent || element.getAttribute("value") || "").trim().replace(/\s+/g, " ").slice(0, 160),
+                    title: element.getAttribute("title") || element.getAttribute("aria-label") || "",
+                    disabled: element.disabled === true || element.getAttribute("aria-disabled") === "true",
+                    className: String(element.getAttribute("class") || "").slice(0, 160),
+                  })).filter((item) => /remove|delete|confirm|yes|ok|cancel/i.test(`${item.text} ${item.title}`)).slice(0, 30));
+                  for (const control of removalControls) lines.push(`- Removal control: ${sanitize(JSON.stringify(control))}`);
+                  throw new Error(`The removal confirmation was not recognized or the archive remained after removal: ${name}. Cleanup stopped.`);
+                }
                 await verifyApplicationRoot();
                 lines.push(`- Removed only obsolete deployment archive: ${name} (${size})`);
               }

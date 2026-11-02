@@ -51,6 +51,7 @@ jobs:
             test "$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}" --jq '.status + " " + .conclusion')" = 'completed success'
           done
           node --check scripts/plesk-browser-diagnostics.cjs
+          grep -F 'page.on("dialog", nativeDialogHandler)' scripts/plesk-browser-diagnostics.cjs > /dev/null
           node - <<'NODE'
           const { cleanupCandidates } = require('./scripts/plesk-deploy-archives.cjs');
           const keep = 'nomreh-deploy-shecan-5353-v23-delta.zip';
