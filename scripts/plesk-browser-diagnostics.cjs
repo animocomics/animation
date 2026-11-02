@@ -112,6 +112,7 @@ async function main() {
     let domainFound = false;
     let nomrehFilesPath = "";
     let nomrehNodeLink = null;
+    let nomrehFileManagerLink = null;
     for (const inspectPath of pagesToInspect) {
       const response = await page.goto(`${panel}${inspectPath}`, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => null);
       await page.waitForTimeout(1500);
@@ -194,6 +195,9 @@ async function main() {
             href: anchor.getAttribute("href") || "",
           })).filter((item) => /domainId\/\d+/.test(item.href)));
           const managerLink = managerLinks.find((item) => /File Manager|open/i.test(item.text)) || managerLinks[0];
+          const managerCandidates = page.locator("a[href*='/smb/file-manager/'][href*='domainId/']");
+          const namedManagerLink = managerCandidates.filter({ hasText: /File Manager|open/i }).first();
+          nomrehFileManagerLink = await namedManagerLink.count() ? namedManagerLink : (await managerCandidates.count() ? managerCandidates.first() : null);
           if (managerLink) {
             const managerUrl = new URL(managerLink.href, page.url());
             nomrehFilesPath = `${managerUrl.pathname}${managerUrl.search}${managerUrl.hash}`;
@@ -217,7 +221,14 @@ async function main() {
       if (nomrehFilesPath) {
         let filePath = nomrehFilesPath;
         for (let depth = 0; depth < 2; depth += 1) {
-          const response = await page.goto(`${panel}${filePath}`, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => null);
+          let response = null;
+          if (depth === 0 && nomrehFileManagerLink && await nomrehFileManagerLink.count()) {
+            const responsePromise = page.waitForResponse((item) => item.url().includes("/smb/file-manager/") && item.request().isNavigationRequest(), { timeout: 15000 }).catch(() => null);
+            await nomrehFileManagerLink.click({ timeout: 10000 }).catch(() => undefined);
+            response = await responsePromise;
+          } else {
+            response = await page.goto(`${panel}${filePath}`, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => null);
+          }
           await page.waitForTimeout(2000);
           const currentFileUrl = new URL(page.url());
           lines.push("## Nomreh File Manager", "", `- HTTP status: ${response ? response.status() : "unavailable"}`, `- Current page: ${sanitize(`${currentFileUrl.pathname}${currentFileUrl.search}`)}`, "");
