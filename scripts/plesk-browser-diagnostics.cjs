@@ -72,7 +72,7 @@ async function main() {
       : ACTION === "disk"
         ? "Controlled read-only action: run Nomreh's disk report only. No build, deletion, restart, or settings change is attempted."
         : ACTION === "fix-node-version"
-          ? "Controlled action: rename only Nomreh's untracked .node-version file to a backup name. No application source, persistent data, build, restart, or other domain is touched."
+          ? "Controlled action: preserve Nomreh's incorrect Node 24 override as a backup and pin its untracked .node-version file to Plesk's installed Node 17.9.1. No application source, persistent data, build, restart, or other domain is touched."
           : "Controlled action: run the validated Nomreh production build with its domain-local Node 22 runtime. Node.js enablement and restart remain pending.";
   const lines = ["# Plesk browser diagnostics", "", readOnly
     ? "Read-only browser inspection. No settings, deployments or files were changed."
@@ -338,7 +338,7 @@ async function main() {
                 completedOutput = combined;
                 break;
               }
-              const failure = combined.split(/\r?\n/).find((line) => /npm ERR!|Command failed|another.*command.*running|quota exceeded|permission denied|nodenv: version .*not installed|node: not found/i.test(line));
+              const failure = combined.split(/\r?\n/).find((line) => /npm ERR!|Command failed|another.*command.*running|quota exceeded|permission denied|nodenv: version .*not installed|nodenv: node: command not found|node: not found/i.test(line));
               if (failure) throw new Error(`The read-only Nomreh disk report could not run: ${sanitize(failure.slice(0, 350))}`);
               if (!responseSummaries.length && !consoleOutput.trim() && Date.now() - diskStartedAt > 45000) {
                 throw new Error("Plesk did not issue an execution request or display output after the command button was clicked. The disk report did not start.");
@@ -389,7 +389,7 @@ async function main() {
               completedOutput = currentOutput;
               break;
             }
-            const failure = currentOutput.split(/\r?\n/).find((line) => /\[Nomreh FAILED;|npm ERR!|exited with status|Build failed|Command failed|nodenv: version .*not installed|node: not found/i.test(line));
+            const failure = currentOutput.split(/\r?\n/).find((line) => /\[Nomreh FAILED;|npm ERR!|exited with status|Build failed|Command failed|nodenv: version .*not installed|nodenv: node: command not found|node: not found/i.test(line));
             if (failure) throw new Error(`Nomreh build failed: ${sanitize(failure.slice(0, 400))}`);
           }
           if (!buildSucceeded) throw new Error("The Nomreh build did not report completion within 40 minutes. Node.js was not enabled or restarted.");
@@ -467,7 +467,33 @@ async function main() {
               const originalCount = await originalLink.count();
               const backupCount = await backupLink.count();
               if (!originalCount && backupCount) {
-                lines.push("- The Node 24 override is already renamed and its backup is present; no further change was needed.", "");
+                const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "nomreh-node-version-"));
+                const localVersionFile = path.join(temporaryDirectory, originalName);
+                try {
+                  fs.writeFileSync(localVersionFile, "17.9.1\n", { mode: 0o600 });
+                  lines.push("- The original Node 24 override is preserved as a backup. Uploading a new .node-version pinned to Plesk's installed Node 17.9.1.", "");
+                  const addNewButton = page.getByRole("button", { name: "Add New", exact: true }).first();
+                  if (!await addNewButton.count()) throw new Error("The Add New control was not found. The corrected Node version file was not uploaded.");
+                  await addNewButton.click({ timeout: 5000 });
+                  await page.waitForTimeout(500);
+                  const versionUpload = page.locator("input[type='file']").first();
+                  if (!await versionUpload.count()) throw new Error("The File Manager upload input was not found. The corrected Node version file was not uploaded.");
+                  await versionUpload.setInputFiles(localVersionFile);
+                  await page.waitForTimeout(1500);
+                  const confirmUpload = page.locator("button:visible").filter({ hasText: /^Upload/i }).first();
+                  if (await confirmUpload.count()) await confirmUpload.click({ timeout: 5000 }).catch(() => undefined);
+                  await page.waitForFunction((expected) => Array.from(document.querySelectorAll("a")).some((anchor) => (anchor.textContent || "").trim() === expected), originalName, { timeout: 60000 });
+                  await page.waitForTimeout(1000);
+                  const uploadedRow = await page.getByText(originalName, { exact: true }).first().locator("xpath=ancestor::*[.//input[@type='checkbox']][1]").innerText().catch(() => "");
+                  if (!/\b7\s*B\b/i.test(uploadedRow)) throw new Error("The uploaded .node-version did not have the expected seven-byte size. No overwrite or build was attempted.");
+                  if (!await page.getByText(backupName, { exact: true }).count()) throw new Error("The preserved Node 24 backup is no longer visible. No build or further host change was attempted.");
+                  lines.push(`- Corrected override entry: ${sanitize(uploadedRow.slice(0, 350))}`, "- Uploaded .node-version with Node 17.9.1; the Node 24 backup remains preserved.", "- No existing file was overwritten and no application source, persistent data, build, restart, or other domain was changed.", "");
+                  actionCompleted = true;
+                } finally {
+                  fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+                }
+              } else if (originalCount && backupCount) {
+                lines.push("- Both the pinned .node-version and its preserved backup are already present. No file was overwritten; command verification remains pending.", "");
                 actionCompleted = true;
               } else {
                 if (!originalCount) throw new Error("Nomreh's .node-version file was not found. No file was changed.");
@@ -759,7 +785,7 @@ async function main() {
             : ACTION === "disk"
               ? "The read-only Nomreh disk report completed. No build, deletion, restart, or settings change was attempted."
               : ACTION === "fix-node-version"
-                ? "Nomreh's incorrect Node 24 override was renamed to a preserved backup. No build or restart was attempted; disk verification remains pending."
+                ? "Nomreh's Node override fix completed with the original contents preserved. No build or restart was attempted; read-only command verification remains pending."
                 : domainFound
         ? "Plesk web login succeeded and the Nomreh domain was found. No remediation was attempted."
         : "Plesk web login completed, but the Nomreh domain was not visible on the inspected pages. No remediation was attempted.", "");

@@ -19,7 +19,7 @@ concurrency:
 jobs:
   fix-node-override:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 9
     steps:
       - name: Check private Plesk browser configuration
         id: config
