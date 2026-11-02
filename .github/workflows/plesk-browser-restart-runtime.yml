@@ -44,8 +44,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          build_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41448705413" --jq '.status + " " + .conclusion')"
-          disk_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41449075548" --jq '.status + " " + .conclusion')"
+          build_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41454148178" --jq '.status + " " + .conclusion')"
+          disk_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41454561076" --jq '.status + " " + .conclusion')"
           enable_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41430311614" --jq '.status + " " + .conclusion')"
           test "$build_state" = "completed success"
           test "$disk_state" = "completed success"
