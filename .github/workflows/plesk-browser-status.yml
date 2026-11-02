@@ -1,0 +1,87 @@
+name: Plesk Nomreh read-only status
+
+on:
+  push:
+    branches:
+      - arena/f4b832aa-animation
+    paths:
+      - .github/workflows/plesk-browser-status.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+
+concurrency:
+  group: plesk-nomreh-browser-status
+  cancel-in-progress: false
+
+jobs:
+  read-only-status:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Check private Plesk browser configuration
+        id: config
+        env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+        run: |
+          set -u
+          configured=false
+          if [ -n "$PLESK_PANEL_URL" ] && [ -n "$PLESK_API_USERNAME" ] && [ -n "$PLESK_API_PASSWORD" ]; then configured=true; fi
+          echo "configured=$configured" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the browser control script
+        if: steps.config.outputs.configured == 'true'
+        uses: actions/checkout@v4
+
+      - name: Prepare an isolated temporary browser
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/plesk-browser"
+          cd "$RUNNER_TEMP/plesk-browser"
+          npm init -y > /dev/null
+          npm install --ignore-scripts --no-audit --no-fund playwright@1.64.1
+          npx playwright install --with-deps chromium
+
+      - name: Read the Nomreh console and disk usage
+        id: status
+        if: steps.config.outputs.configured == 'true'
+        env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+          PLESK_BROWSER_ACTION: status
+          PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-plesk-status.md
+          NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
+        run: node scripts/plesk-browser-diagnostics.cjs
+
+      - name: Publish the sanitized status result
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CONFIGURED: ${{ steps.config.outputs.configured }}
+          STATUS_OUTCOME: ${{ steps.status.outcome }}
+        run: |
+          set -euo pipefail
+          conclusion=neutral
+          summary='Plesk browser status is not configured; no host was contacted.'
+          if [ "$CONFIGURED" = true ]; then
+            conclusion=success
+            if [ "$STATUS_OUTCOME" != success ]; then conclusion=failure; fi
+            if [ -f "$RUNNER_TEMP/nomreh-plesk-status.md" ]; then
+              summary="$(cat "$RUNNER_TEMP/nomreh-plesk-status.md")"
+            else
+              summary='Read-only status did not produce a report; no build, deletion, restart, or settings change was attempted.'
+            fi
+          fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name="Plesk Nomreh read-only status" \
+            -f head_sha="${GITHUB_SHA}" \
+            -f status=completed \
+            -f conclusion="$conclusion" \
+            -f 'output[title]=Nomreh read-only console and disk status' \
+            --raw-field "output[summary]=${summary}" > /dev/null

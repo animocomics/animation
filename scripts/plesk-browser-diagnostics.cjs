@@ -62,9 +62,9 @@ function labelValues(text, labels) {
 }
 
 async function main() {
-  if (!["diagnose", "upload", "extract", "build"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
+  if (!["diagnose", "upload", "extract", "build", "status"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
   const panel = normalizePanelUrl(process.env.PLESK_PANEL_URL || "");
-  const readOnly = ACTION === "diagnose";
+  const readOnly = ACTION === "diagnose" || ACTION === "status";
   const actionDescription = ACTION === "upload"
     ? "Controlled action: upload one validated application archive to Nomreh only. No extraction, build, restart, or settings change is attempted."
     : ACTION === "extract"
@@ -235,7 +235,7 @@ async function main() {
           if (fields.length || values.length) lines.push("");
         }
       }
-      if (["diagnose", "build"].includes(ACTION) && nomrehConsoleLink && await nomrehConsoleLink.count()) {
+      if (["diagnose", "build", "status"].includes(ACTION) && nomrehConsoleLink && await nomrehConsoleLink.count()) {
         const consoleResponsePromise = page.waitForResponse((item) => item.url().includes("/modules/nodejs/index.php/domain/console") && item.request().isNavigationRequest(), { timeout: 15000 }).catch(() => null);
         await nomrehConsoleLink.click({ timeout: 8000 }).catch(() => undefined);
         const consoleResponse = await consoleResponsePromise;
@@ -257,6 +257,37 @@ async function main() {
         })).filter((item) => /run|execute|npm|build/i.test(`${item.text} ${item.title}`)).slice(0, 20));
         for (const button of consoleButtons) lines.push(`- Console button: ${sanitize(JSON.stringify(button))}`);
         if (ACTION === "diagnose") lines.push("- Inspection only: no command was entered or executed.", "");
+        if (ACTION === "status") {
+          if (!consoleBody.includes(`Node.js on ${DOMAIN}`) || !consoleBody.includes("/nomreh.arounidea.com")) {
+            throw new Error("The Node command console is not scoped to Nomreh. The read-only disk report was not started.");
+          }
+          const commandInput = page.getByPlaceholder(/Pick a script or command/i).first();
+          const executeButton = page.locator("button[title='Execute command'], button[aria-label='Execute command']").first();
+          if (!await commandInput.count() || !await executeButton.count()) throw new Error("The Nomreh command controls were not found. The disk report was not started.");
+          lines.push("## Read-only Nomreh disk report", "", "- Command: run space:plesk", "");
+          await commandInput.fill("run space:plesk");
+          await executeButton.click({ timeout: 8000 });
+          const statusStartedAt = Date.now();
+          let statusOutput = "";
+          let statusSucceeded = false;
+          while (Date.now() - statusStartedAt < 6 * 60 * 1000) {
+            await page.waitForTimeout(3000);
+            const currentBody = await page.locator("body").innerText().catch(() => "");
+            const currentOutput = currentBody.startsWith(consoleBody) ? currentBody.slice(consoleBody.length) : currentBody;
+            if (/Report complete\. No files were changed or deleted\./i.test(currentOutput)) {
+              statusSucceeded = true;
+              statusOutput = currentOutput;
+              break;
+            }
+            const failure = currentOutput.split(/\r?\n/).find((line) => /npm ERR!|exited with status|Command failed|another.*command.*running/i.test(line));
+            if (failure) throw new Error(`The read-only Nomreh disk report could not run: ${sanitize(failure.slice(0, 350))}`);
+          }
+          if (!statusSucceeded) throw new Error("The read-only Nomreh disk report did not complete within 6 minutes. No build or settings change was attempted.");
+          const diskLines = statusOutput.split(/\r?\n/).map((line) => line.trim()).filter((line) => /Nomreh read-only disk|Application|Persistent|Git history|Dependencies|Production build|cache|Public files|runtime|uploads|Available space|temporary entries|Report complete|MiB|GiB/i.test(line) && !/secret|token|password|credential|api.key/i.test(line)).slice(-80);
+          for (const line of diskLines) lines.push(`- Disk report: ${sanitize(line.slice(0, 350))}`);
+          lines.push("- Read-only disk inspection completed; no build, deletion, restart, or settings change was attempted.", "");
+          actionCompleted = true;
+        }
         if (ACTION === "build") {
           if (!consoleBody.includes(`Node.js on ${DOMAIN}`) || !consoleBody.includes("/nomreh.arounidea.com")) {
             throw new Error("The Node command console is not scoped to the Nomreh application root. Build was not started.");
@@ -536,14 +567,16 @@ async function main() {
         }
       }
     }
-    if (["upload", "extract", "build"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Node.js was not enabled or restarted.`);
+    if (["upload", "extract", "build", "status"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Node.js was not enabled or restarted.`);
     lines.push("## Result", "", ACTION === "upload"
       ? "The validated application archive was uploaded to Nomreh. Extraction, dependency installation, build, and Node.js enablement remain pending."
       : ACTION === "extract"
         ? "The validated application source was extracted and verified in the Nomreh application root. Dependency installation, build, and Node.js enablement remain pending."
         : ACTION === "build"
           ? "The validated Nomreh production build and runtime smoke tests succeeded. Node.js enablement and live validation remain pending."
-          : domainFound
+          : ACTION === "status"
+            ? "The read-only Nomreh disk report completed. No build, deletion, restart, or settings change was attempted."
+            : domainFound
         ? "Plesk web login succeeded and the Nomreh domain was found. No remediation was attempted."
         : "Plesk web login completed, but the Nomreh domain was not visible on the inspected pages. No remediation was attempted.", "");
   } catch (error) {
