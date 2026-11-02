@@ -44,7 +44,6 @@ jobs:
         run: |
           set -euo pipefail
           echo "$EXPECTED_SHA256  package.json" | sha256sum --check -
-          git diff --exit-code 7ecb225764eb10be01357676feabe66fd7de680c -- package.json
 
       - name: Prepare an isolated temporary browser
         if: steps.config.outputs.configured == 'true'
