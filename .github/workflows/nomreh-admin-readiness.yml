@@ -46,6 +46,11 @@ jobs:
       - name: Test real admin login and inspect configuration controls
         id: readiness
         env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+          NOMREH_ADMIN_USERNAME: ${{ secrets.NOMREH_ADMIN_USERNAME }}
+          NOMREH_ADMIN_PASSWORD: ${{ secrets.NOMREH_ADMIN_PASSWORD }}
           NOMREH_E2E_OUTPUT: ${{ runner.temp }}/nomreh-admin-readiness.md
           NODE_PATH: ${{ runner.temp }}/nomreh-e2e/node_modules
         run: node scripts/nomreh-admin-readiness.cjs

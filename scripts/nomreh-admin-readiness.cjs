@@ -3,10 +3,12 @@
 
 const fs = require("node:fs");
 const { chromium } = require("playwright");
+const { normalizePanelUrl } = require("./plesk-api-diagnostics.cjs");
 
 const ORIGIN = "https://nomreh.arounidea.com";
+const DOMAIN = "nomreh.arounidea.com";
 const OUTPUT = process.env.NOMREH_E2E_OUTPUT || "";
-const lines = ["# Nomreh admin login and configuration readiness", "", "This check uses only the publicly offered initial admin account. It does not read custom credentials, reveal session cookies, save API settings, or change Shecan.", ""];
+const lines = ["# Nomreh admin login and configuration readiness", "", "This check uses the publicly offered initial account or the existing configured admin credentials in memory only. It never prints credentials or session cookies, and it does not save API settings or change Shecan.", ""];
 let browser;
 let context;
 let authenticated = false;
@@ -20,6 +22,98 @@ function report() {
   const text = lines.join("\n");
   if (OUTPUT) fs.writeFileSync(OUTPUT, text, { mode: 0o600 });
   return text;
+}
+
+function nestedValue(payload, key) {
+  let visited = 0;
+  const search = (value, depth = 0) => {
+    if (!value || depth > 9 || visited > 6000) return undefined;
+    visited += 1;
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        const found = search(entry, depth + 1);
+        if (found !== undefined) return found;
+      }
+      return undefined;
+    }
+    if (typeof value !== "object") return undefined;
+    if (typeof value[key] === "string" && value[key]) return value[key];
+    const name = value.name ?? value.key ?? value.variable ?? value.variable_name;
+    if (name === key && typeof value.value === "string" && value.value) return value.value;
+    for (const entry of Object.values(value)) {
+      const found = search(entry, depth + 1);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  };
+  return search(payload);
+}
+
+async function readConfiguredAdminFromPlesk() {
+  if (!process.env.PLESK_PANEL_URL || !process.env.PLESK_API_USERNAME || !process.env.PLESK_API_PASSWORD) return null;
+  const panel = normalizePanelUrl(process.env.PLESK_PANEL_URL);
+  const pleskContext = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1500, height: 1000 } });
+  try {
+    const page = await pleskContext.newPage();
+    page.setDefaultTimeout(18000);
+    await page.goto(`${panel}/login_up.php`, { waitUntil: "domcontentloaded", timeout: 45000 });
+    const cookieButton = page.getByRole("button", { name: /Accept necessary cookies/i }).first();
+    if (await cookieButton.count() && await cookieButton.isVisible().catch(() => false)) await cookieButton.click().catch(() => undefined);
+    const findInput = async (selectors) => {
+      for (const selector of selectors) {
+        const input = page.locator(selector).first();
+        if (await input.count() && await input.isVisible().catch(() => false)) return input;
+      }
+      return null;
+    };
+    const username = await findInput(['input[name="login_name"]', 'input[name="username"]', 'input[name="login"]', 'input[type="email"]']);
+    const password = await findInput(['input[name="passwd"]', 'input[name="password"]', 'input[type="password"]']);
+    if (!username || !password) throw new Error("The Plesk login form was not available for the in-memory credential lookup.");
+    await username.fill(process.env.PLESK_API_USERNAME);
+    await password.fill(process.env.PLESK_API_PASSWORD);
+    await password.press("Enter");
+    await page.waitForTimeout(3500);
+    if (await findInput(['input[type="password"]', 'input[name="passwd"]'])) throw new Error("Plesk authentication did not succeed; no application credentials were read.");
+
+    let domainFound = false;
+    for (const inspectPath of ["/smb/web/domains", "/admin/domain/list"]) {
+      await page.goto(`${panel}${inspectPath}`, { waitUntil: "domcontentloaded", timeout: 30000 });
+      await page.waitForTimeout(1400);
+      const domainElement = page.getByText(DOMAIN, { exact: false }).first();
+      if (!await domainElement.count()) continue;
+      await domainElement.click({ timeout: 8000 }).catch(() => undefined);
+      await page.waitForTimeout(1500);
+      const domainCard = domainElement.locator("xpath=ancestor::*[.//a[contains(@href, '/modules/nodejs/')] and .//a[contains(@href, '/smb/file-manager/')]][1]");
+      const nodeScope = await domainCard.count() ? domainCard : domainElement.locator("xpath=ancestor::*[.//a[contains(@href, '/modules/nodejs/')]][1]");
+      const nodeLink = await nodeScope.count() ? nodeScope.locator("a[href*='/modules/nodejs/']").first() : null;
+      if (!nodeLink || !await nodeLink.count()) continue;
+      await nodeLink.click({ timeout: 10000 });
+      domainFound = true;
+      break;
+    }
+    if (!domainFound) throw new Error("Nomreh's scoped Node.js settings were not found; no application credentials were read.");
+    await page.waitForTimeout(1800);
+    const body = await page.locator("body").innerText().catch(() => "");
+    if (!body.includes(`Node.js on ${DOMAIN}`) || !body.includes("Application Root") || !body.includes("/nomreh.arounidea.com") || !body.includes("server.js")) {
+      throw new Error("The Node.js page was not verified as Nomreh's server.js application; no application credentials were read.");
+    }
+    const result = await page.evaluate(async (url) => {
+      const response = await fetch(url, { credentials: "same-origin", cache: "no-store" });
+      return { status: response.status, body: (await response.text()).slice(0, 2000000) };
+    }, `${panel}/modules/nodejs/index.php/api/application/domainId/145`);
+    if (result.status !== 200) throw new Error("Nomreh's scoped application settings could not be read for login.");
+    const payload = JSON.parse(result.body);
+    const configuredUsername = nestedValue(payload, "NOMREH_ADMIN_USERNAME");
+    const configuredPassword = nestedValue(payload, "NOMREH_ADMIN_PASSWORD");
+    if (!configuredUsername && !configuredPassword) return null;
+    lines.push("- Existing custom admin settings were located in Nomreh's scoped application configuration; values remain in memory and are not printed.");
+    return {
+      username: configuredUsername || "admin",
+      password: configuredPassword || "Admin@1405",
+    };
+  } finally {
+    await pleskContext.close();
+  }
 }
 
 async function logout() {
@@ -44,24 +138,32 @@ async function main() {
   await page.getByRole("heading", { name: "به نمره خوش آمدید" }).waitFor({ state: "visible" });
   const initialAccess = await page.getByText("دسترسی اولیهٔ نصب", { exact: true }).count();
   lines.push(`- Publicly offered initial installation accounts: ${initialAccess ? "yes" : "no"}.`);
-  if (!initialAccess) throw new Error("Initial installation accounts are not exposed. No password was attempted; the existing custom admin credentials must be used or securely reset.");
+  const secretUsername = process.env.NOMREH_ADMIN_USERNAME || "";
+  const secretPassword = process.env.NOMREH_ADMIN_PASSWORD || "";
+  let credentials = initialAccess
+    ? { username: "admin", password: "Admin@1405" }
+    : (secretUsername || secretPassword
+      ? { username: secretUsername || "admin", password: secretPassword || "Admin@1405" }
+      : await readConfiguredAdminFromPlesk());
+  if (!credentials) throw new Error("Initial accounts are hidden and no configured admin credential fields were available in existing Secrets or Nomreh's scoped settings. No password was attempted.");
+  if (!credentials.username || !credentials.password) throw new Error("The configured admin login was incomplete. No password was attempted.");
 
-  await page.locator("#login-username").fill("admin");
-  await page.locator("#login-password").fill("Admin@1405");
+  await page.locator("#login-username").fill(credentials.username);
+  await page.locator("#login-password").fill(credentials.password);
   const navigation = page.waitForURL((url) => url.origin === ORIGIN && url.pathname === "/", { timeout: 30000 }).then(() => true).catch(() => false);
   await page.getByRole("button", { name: "ورود به فضای کاری", exact: true }).click();
   const reachedWorkspace = await navigation;
   if (!reachedWorkspace) {
     const alert = await page.getByRole("alert").innerText().catch(() => "");
-    throw new Error(`The initial admin login did not reach the workspace.${alert ? ` ${clean(alert)}` : ""}`);
+    throw new Error(`The admin login did not reach the workspace.${alert ? ` ${clean(alert)}` : ""}`);
   }
   authenticated = true;
   await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => undefined);
   await page.getByText("فضای کاری شما", { exact: true }).waitFor({ state: "visible" });
   const meResponse = await context.request.get(`${ORIGIN}/api/auth/me`);
   const me = await meResponse.json();
-  if (!meResponse.ok() || me.user?.role !== "admin" || me.user?.username !== "admin") throw new Error("The authenticated session was not verified as the initial admin account.");
-  lines.push("- Initial admin login succeeded and the real workspace loaded.", "- Authenticated role verified by /api/auth/me: admin.", "");
+  if (!meResponse.ok() || me.user?.role !== "admin" || String(me.user?.username || "").toLowerCase() !== credentials.username.toLowerCase()) throw new Error("The authenticated session was not verified as the expected admin account.");
+  lines.push("- Admin login succeeded and the real workspace loaded.", `- Authenticated username: ${clean(me.user.username)}.`, "- Authenticated role verified by /api/auth/me: admin.", "");
 
   lines.push("## Admin API and Shecan readiness", "");
   const adminResponse = await page.goto(`${ORIGIN}/admin`, { waitUntil: "domcontentloaded", timeout: 30000 });
