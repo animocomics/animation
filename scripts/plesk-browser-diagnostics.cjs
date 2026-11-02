@@ -260,7 +260,7 @@ async function main() {
             })).filter((item) => item.text || item.title).slice(0, 40));
             for (const control of toolbarButtons) lines.push(`- Toolbar button: ${sanitize(JSON.stringify(control))}`);
             if (toolbarButtons.length) lines.push("");
-            const addNewButton = page.locator("button[title='Add New']").first();
+            const addNewButton = page.getByRole("button", { name: "Add New", exact: true }).first();
             if (await addNewButton.count()) {
               await addNewButton.click({ timeout: 5000 }).catch(() => undefined);
               await page.waitForTimeout(500);
