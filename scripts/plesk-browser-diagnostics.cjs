@@ -1245,35 +1245,32 @@ async function main() {
               if (!serverLine || !/\b593\s*B\b/i.test(serverLine)) {
                 throw new Error("Extraction could not be verified: the hosted server.js is not the validated 593-byte launcher. No build or restart was attempted.");
               }
-              const extractedRootUrl = page.url();
+              let verifiedDeltaDirectory = null;
               for (const expected of EXPECTED_DELTA) {
                 const segments = expected.file.split("/");
                 const fileName = segments.pop();
-                await page.goto(extractedRootUrl, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => null);
-                await page.waitForTimeout(1500);
-                const navigateToEntry = async (name) => {
-                  await page.waitForFunction((expectedName) => Array.from(document.querySelectorAll("a")).some((anchor) => (anchor.textContent || "").trim() === expectedName), name, { timeout: 15000 }).catch(() => undefined);
-                  const href = await page.locator("a").evaluateAll((anchors, expectedName) => {
-                    const match = [...anchors].reverse().find((anchor) => (anchor.textContent || "").trim() === expectedName && (anchor.getAttribute("href") || "").includes("/smb/file-manager/"));
-                    return match ? match.getAttribute("href") || "" : "";
-                  }, name);
-                  if (href) {
-                    const target = new URL(href, page.url());
-                    if (target.origin !== new URL(panel).origin || !target.pathname.includes("/smb/file-manager/")) throw new Error(`The ${name} File Manager link left the validated panel scope.`);
-                    await page.goto(target.toString(), { waitUntil: "domcontentloaded", timeout: 30000 });
-                  } else {
-                    const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-                    const entry = page.locator("a").filter({ hasText: new RegExp(`^${escapedName}$`) }).last();
+                const directoryKey = segments.join("/");
+                if (verifiedDeltaDirectory !== null && verifiedDeltaDirectory !== directoryKey) throw new Error("This controlled verification expects all delta files in one directory; no build was attempted.");
+                if (verifiedDeltaDirectory === null) {
+                  for (const directory of segments) {
+                    await page.waitForFunction((expectedName) => Array.from(document.querySelectorAll("a")).some((anchor) => (anchor.textContent || "").trim() === expectedName), directory, { timeout: 15000 }).catch(() => undefined);
+                    const directoryText = page.getByText(directory, { exact: true }).last();
+                    const directoryRow = directoryText.locator("xpath=ancestor::*[.//input[@type='checkbox']][1]");
+                    let entry = directoryRow.locator("a").first();
+                    if (!await entry.count()) {
+                      const escapedName = directory.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+                      entry = page.locator("a:visible").filter({ hasText: new RegExp(`^${escapedName}$`) }).last();
+                    }
                     if (!await entry.count()) {
                       const visibleEntries = await page.locator("a:visible").evaluateAll((anchors) => [...new Set(anchors.map((anchor) => (anchor.textContent || "").trim()).filter((text) => /^[a-z0-9_.@-]+$/i.test(text) && text.length <= 100))].slice(0, 80));
                       lines.push(`- Verification directory: ${sanitize(new URL(page.url()).pathname)}`, `- Verification entries: ${sanitize(visibleEntries.join(", "))}`);
-                      throw new Error(`The ${name} File Manager entry was not available while verifying ${expected.file}.`);
+                      throw new Error(`The ${directory} File Manager entry was not available while verifying ${expected.file}.`);
                     }
                     await entry.click({ timeout: 8000 });
+                    await page.waitForTimeout(2500);
                   }
-                  await page.waitForTimeout(2500);
-                };
-                for (const directory of segments) await navigateToEntry(directory);
+                  verifiedDeltaDirectory = directoryKey;
+                }
                 const extractedFile = page.getByText(fileName, { exact: true }).first();
                 await extractedFile.waitFor({ state: "visible", timeout: 15000 }).catch(() => undefined);
                 if (!await extractedFile.count()) throw new Error(`The extracted ${expected.file} was not visible for hash verification.`);
