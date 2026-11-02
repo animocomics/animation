@@ -471,6 +471,16 @@ async function main() {
               if (actualPackageSha256 !== expectedPackageSha256) throw new Error("The local package.json does not match the validated legacy-build commit. No file was uploaded.");
               if (!await page.getByText("package.json", { exact: true }).count()) throw new Error("The existing Nomreh package.json was not found. No file was uploaded.");
               lines.push(`- Validated package.json bytes: ${packageBytes.length}`, `- Validated package.json SHA-256: ${actualPackageSha256}`, "");
+              const packageDialogHandler = async (dialog) => {
+                const message = dialog.message();
+                lines.push(`- Browser upload confirmation: ${sanitize(message.slice(0, 350))}`);
+                if (dialog.type() === "confirm" && /overwrite|replace|already exists/i.test(message) && (/package\.json/i.test(message) || !/[a-z0-9_-]+\.[a-z0-9]+/i.test(message.replace(/package\.json/ig, "")))) {
+                  await dialog.accept();
+                } else {
+                  await dialog.dismiss();
+                }
+              };
+              page.on("dialog", packageDialogHandler);
               const addNewButton = page.getByRole("button", { name: "Add New", exact: true }).first();
               if (!await addNewButton.count()) throw new Error("The Add New control was not found. package.json was not uploaded.");
               await addNewButton.click({ timeout: 5000 });
@@ -515,7 +525,13 @@ async function main() {
                 const editorBody = await page.locator("body").innerText().catch(() => "");
                 if (editorBody.includes("$npm_node_execpath") && editorBody.includes("build:plesk") && editorBody.includes("space:plesk")) verified = true;
               }
-              if (!verified) throw new Error("The hosted package.json launcher fix could not be verified. No build or restart was attempted.");
+              if (!verified) {
+                const unverifiedBody = await page.locator("body").innerText().catch(() => "");
+                const packageLines = unverifiedBody.split(/\r?\n/).map((line) => line.trim()).filter((line) => /build:plesk|space:plesk|npm_node_execpath|node scripts\/plesk/i.test(line) && !/secret|token|password|credential/i.test(line)).slice(0, 20);
+                for (const line of packageLines) lines.push(`- Unverified package content: ${sanitize(line.slice(0, 300))}`);
+                throw new Error("The hosted package.json launcher fix could not be verified. No build or restart was attempted.");
+              }
+              page.off("dialog", packageDialogHandler);
               lines.push("- Nomreh package.json was replaced only with the validated npm-node launcher fix and verified after upload.", "- No other application file, persistent data, build, restart, or other domain was changed.", "");
               actionCompleted = true;
             }
