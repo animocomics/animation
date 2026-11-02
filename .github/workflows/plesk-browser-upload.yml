@@ -46,7 +46,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          for run_id in 41509453279 41509896254 41510182001; do
+          for run_id in 41518506135 41518931030 41519181037; do
             test "$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}" --jq '.status + " " + .conclusion')" = 'completed success'
           done
 
@@ -54,17 +54,17 @@ jobs:
         if: steps.config.outputs.configured == 'true'
         run: |
           set -euo pipefail
-          base_sha=6d2832bfa0a1d44fe180b6c64c26391b91c00184
-          source_sha=a8eef6d117bffe0c2d8561e95dea02c908fbdc47
-          archive="$RUNNER_TEMP/nomreh-deploy-shecan-dns-first-v17-delta.zip"
-          expected='app/api/admin/api-network/route.ts lib/server/api-network.ts'
+          base_sha=a8eef6d117bffe0c2d8561e95dea02c908fbdc47
+          source_sha=582b6847b859784a08311cebd90345688da5dc05
+          archive="$RUNNER_TEMP/nomreh-deploy-shecan-doh-v18-delta.zip"
+          expected='lib/server/api-network.ts lib/server/provider-network.ts lib/server/shecan-doh.ts'
           runtime_changes="$(git diff --name-only "$base_sha" "$source_sha" -- app lib | tr '\n' ' ' | sed 's/ $//')"
           test "$runtime_changes" = "$expected"
           git archive --format=zip --output="$archive" "$source_sha" $expected
           for required in $expected; do
             unzip -Z1 "$archive" | grep -Fx "$required" > /dev/null
           done
-          test "$(unzip -Z1 "$archive" | grep -vc '/$')" -eq 2
+          test "$(unzip -Z1 "$archive" | grep -vc '/$')" -eq 3
           git show "$source_sha:scripts/plesk-node22.cjs" | grep -F 'Nomreh Passenger-aware launcher is active for this build.' > /dev/null
           git show "$source_sha:scripts/plesk-node22.cjs" | grep -F 'return [mainFile];' > /dev/null
           git show "$source_sha:scripts/plesk-node22.cjs" | grep -F 'syncPublicStatic();' > /dev/null
@@ -97,8 +97,8 @@ jobs:
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
           PLESK_BROWSER_ACTION: upload
-          PLESK_ARCHIVE_NAME: nomreh-deploy-shecan-dns-first-v17-delta.zip
-          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-shecan-dns-first-v17-delta.zip
+          PLESK_ARCHIVE_NAME: nomreh-deploy-shecan-doh-v18-delta.zip
+          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-shecan-doh-v18-delta.zip
           PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-plesk-upload.md
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
         run: node scripts/plesk-browser-diagnostics.cjs
