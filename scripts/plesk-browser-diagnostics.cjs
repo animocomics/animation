@@ -1251,15 +1251,22 @@ async function main() {
                 await page.goto(`${panel}${nomrehFilesPath}`, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => null);
                 await page.waitForTimeout(1500);
                 const navigateToEntry = async (name) => {
+                  await page.waitForFunction((expectedName) => Array.from(document.querySelectorAll("a")).some((anchor) => (anchor.textContent || "").trim() === expectedName), name, { timeout: 15000 }).catch(() => undefined);
                   const href = await page.locator("a").evaluateAll((anchors, expectedName) => {
                     const match = anchors.find((anchor) => (anchor.textContent || "").trim() === expectedName && (anchor.getAttribute("href") || "").includes("/smb/file-manager/"));
                     return match ? match.getAttribute("href") || "" : "";
                   }, name);
-                  if (!href) throw new Error(`The ${name} File Manager link was not available while verifying ${expected.file}.`);
-                  const target = new URL(href, page.url());
-                  if (target.origin !== new URL(panel).origin || !target.pathname.includes("/smb/file-manager/")) throw new Error(`The ${name} File Manager link left the validated panel scope.`);
-                  await page.goto(target.toString(), { waitUntil: "domcontentloaded", timeout: 30000 });
-                  await page.waitForTimeout(1800);
+                  if (href) {
+                    const target = new URL(href, page.url());
+                    if (target.origin !== new URL(panel).origin || !target.pathname.includes("/smb/file-manager/")) throw new Error(`The ${name} File Manager link left the validated panel scope.`);
+                    await page.goto(target.toString(), { waitUntil: "domcontentloaded", timeout: 30000 });
+                  } else {
+                    const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+                    const entry = page.locator("a").filter({ hasText: new RegExp(`^${escapedName}$`) }).last();
+                    if (!await entry.count()) throw new Error(`The ${name} File Manager entry was not available while verifying ${expected.file}.`);
+                    await entry.click({ timeout: 8000 });
+                  }
+                  await page.waitForTimeout(2500);
                 };
                 await navigateToEntry(DOMAIN);
                 for (const directory of segments) await navigateToEntry(directory);
