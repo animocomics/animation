@@ -64,7 +64,7 @@ jobs:
           for required in $expected; do
             unzip -Z1 "$archive" | grep -Fx "$required" > /dev/null
           done
-          test "$(unzip -Z1 "$archive" | wc -l)" -eq 2
+          test "$(unzip -Z1 "$archive" | grep -vc '/$')" -eq 2
           git show "$source_sha:scripts/plesk-node22.cjs" | grep -F 'Nomreh Passenger-aware launcher is active for this build.' > /dev/null
           git show "$source_sha:scripts/plesk-node22.cjs" | grep -F 'return [mainFile];' > /dev/null
           git show "$source_sha:scripts/plesk-node22.cjs" | grep -F 'syncPublicStatic();' > /dev/null
