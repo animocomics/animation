@@ -120,13 +120,20 @@ async function run() {
   await saveButton.click();
   const response = await responsePromise;
   const result = { status: response.status(), contentType: response.headers()["content-type"] || "none", text: await response.text() };
-  lines.push(`- Real admin Shecan save/activation test: HTTP ${result.status}; ${result.status === 200 ? "request accepted" : summarize(result)}.`);
+  lines.push(`- Real admin Shecan save/activation test: HTTP ${result.status}; ${[200, 202].includes(result.status) ? "request accepted" : summarize(result)}.`);
   await page.waitForTimeout(1200);
 
-  const after = await api(page, "/api/admin/api-network");
-  const afterStatus = payloadOf(after)?.status;
+  let after = await api(page, "/api/admin/api-network");
+  for (let attempt = 0; payloadOf(after)?.pending && attempt < 120; attempt += 1) {
+    await page.waitForTimeout(2000);
+    after = await api(page, "/api/admin/api-network");
+  }
+  const afterPayload = payloadOf(after);
+  const afterStatus = afterPayload?.status;
   lines.push(`- ${networkLine("Shecan after the requested test", after)}`);
-  if (result.status === 200 && afterStatus?.enabled) {
+  if (afterPayload?.jobError) lines.push(`- Background activation result: ${clean(afterPayload.jobError)}.`);
+  if (afterPayload?.pending) lines.push("- Background activation remained pending beyond the 240-second browser polling limit.");
+  if ([200, 202].includes(result.status) && afterStatus?.enabled && !afterPayload?.pending && !afterPayload?.jobError) {
     const providerStatusResult = await api(page, "/api/provider");
     const providerStatus = payloadOf(providerStatusResult)?.status;
     if (providerStatus?.configured) {

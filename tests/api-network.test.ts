@@ -246,6 +246,46 @@ test("native HTTPS fallback tries every scoped Shecan IPv4 address after fetch f
   }
 });
 
+test("background activation is deduplicated and exposes its final status without waiting for the HTTP request", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalResolve = Resolver.prototype.resolve4;
+  const updateUrl = "https://ddns.shecan.ir/update/test-background-activation";
+  let updateCalls = 0;
+  Resolver.prototype.resolve4 = (async () => [{ address: "203.0.113.38", ttl: 60 }]) as unknown as typeof Resolver.prototype.resolve4;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url === updateUrl) {
+      updateCalls += 1;
+      return new Response("updated", { status: 200 });
+    }
+    if (url === "https://generativelanguage.googleapis.com/v1beta/models") {
+      return Response.json({ error: { message: "API key not valid. Please pass a valid API key." } }, { status: 400 });
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  }) as typeof fetch;
+  try {
+    const { getApiNetworkJobStatus, getApiNetworkStatus, saveAndTestApiNetwork, startApiNetworkJob } = await import("../lib/server/api-network");
+    const { getDb } = await import("../lib/server/db");
+    const admin = getDb().prepare("SELECT id FROM users WHERE role='admin' ORDER BY created_at LIMIT 1").get() as { id: string };
+    const input = { enabled: true, plan: "pro" as const, servers: ["198.51.100.28", "198.51.100.29"] as [string, string], updateUrl };
+    const started = startApiNetworkJob(input, admin.id, { activationSettleMs: 0 });
+    assert.equal(started.pending, true);
+    assert.equal(startApiNetworkJob(input, admin.id, { activationSettleMs: 0 }).startedAt, started.startedAt, "a duplicate click must reuse the active job");
+    for (let attempt = 0; getApiNetworkJobStatus().pending && attempt < 100; attempt += 1) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 10));
+    }
+    const completed = getApiNetworkJobStatus();
+    assert.equal(completed.pending, false);
+    assert.equal(completed.error, undefined);
+    assert.equal(updateCalls, 1);
+    assert.equal((await getApiNetworkStatus()).enabled, true);
+    await saveAndTestApiNetwork({ ...input, enabled: false, updateUrl: undefined }, admin.id, { activationSettleMs: 0 });
+  } finally {
+    globalThis.fetch = originalFetch;
+    Resolver.prototype.resolve4 = originalResolve;
+  }
+});
+
 test("failed Google validation saves an actionable error and never enables Shecan", async () => {
   const originalFetch = globalThis.fetch;
   const originalResolve = Resolver.prototype.resolve4;

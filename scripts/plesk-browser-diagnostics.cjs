@@ -1245,31 +1245,36 @@ async function main() {
               if (!serverLine || !/\b593\s*B\b/i.test(serverLine)) {
                 throw new Error("Extraction could not be verified: the hosted server.js is not the validated 593-byte launcher. No build or restart was attempted.");
               }
-              let verifiedDeltaDirectory = null;
+              const currentDeltaSegments = [];
+              const clickCurrentFileEntry = async (name, expectedFile) => {
+                await page.waitForFunction((expectedName) => Array.from(document.querySelectorAll("a")).some((anchor) => (anchor.textContent || "").trim() === expectedName), name, { timeout: 15000 }).catch(() => undefined);
+                const entryText = page.getByText(name, { exact: true }).last();
+                const entryRow = entryText.locator("xpath=ancestor::*[.//input[@type='checkbox']][1]");
+                let entry = entryRow.locator("a").first();
+                if (!await entry.count()) {
+                  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+                  entry = page.locator("a:visible").filter({ hasText: new RegExp(`^${escapedName}$`) }).last();
+                }
+                if (!await entry.count()) {
+                  const visibleEntries = await page.locator("a:visible").evaluateAll((anchors) => [...new Set(anchors.map((anchor) => (anchor.textContent || "").trim()).filter((text) => /^[a-z0-9_.@-]+$/i.test(text) && text.length <= 100))].slice(0, 80));
+                  lines.push(`- Verification directory: ${sanitize(new URL(page.url()).pathname)}`, `- Verification entries: ${sanitize(visibleEntries.join(", "))}`);
+                  throw new Error(`The ${name} File Manager entry was not available while verifying ${expectedFile}.`);
+                }
+                await entry.click({ timeout: 8000 });
+                await page.waitForTimeout(2500);
+              };
               for (const expected of EXPECTED_DELTA) {
                 const segments = expected.file.split("/");
                 const fileName = segments.pop();
-                const directoryKey = segments.join("/");
-                if (verifiedDeltaDirectory !== null && verifiedDeltaDirectory !== directoryKey) throw new Error("This controlled verification expects all delta files in one directory; no build was attempted.");
-                if (verifiedDeltaDirectory === null) {
-                  for (const directory of segments) {
-                    await page.waitForFunction((expectedName) => Array.from(document.querySelectorAll("a")).some((anchor) => (anchor.textContent || "").trim() === expectedName), directory, { timeout: 15000 }).catch(() => undefined);
-                    const directoryText = page.getByText(directory, { exact: true }).last();
-                    const directoryRow = directoryText.locator("xpath=ancestor::*[.//input[@type='checkbox']][1]");
-                    let entry = directoryRow.locator("a").first();
-                    if (!await entry.count()) {
-                      const escapedName = directory.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-                      entry = page.locator("a:visible").filter({ hasText: new RegExp(`^${escapedName}$`) }).last();
-                    }
-                    if (!await entry.count()) {
-                      const visibleEntries = await page.locator("a:visible").evaluateAll((anchors) => [...new Set(anchors.map((anchor) => (anchor.textContent || "").trim()).filter((text) => /^[a-z0-9_.@-]+$/i.test(text) && text.length <= 100))].slice(0, 80));
-                      lines.push(`- Verification directory: ${sanitize(new URL(page.url()).pathname)}`, `- Verification entries: ${sanitize(visibleEntries.join(", "))}`);
-                      throw new Error(`The ${directory} File Manager entry was not available while verifying ${expected.file}.`);
-                    }
-                    await entry.click({ timeout: 8000 });
-                    await page.waitForTimeout(2500);
-                  }
-                  verifiedDeltaDirectory = directoryKey;
+                let common = 0;
+                while (common < currentDeltaSegments.length && common < segments.length && currentDeltaSegments[common] === segments[common]) common += 1;
+                while (currentDeltaSegments.length > common) {
+                  await clickCurrentFileEntry("..", expected.file);
+                  currentDeltaSegments.pop();
+                }
+                for (let index = common; index < segments.length; index += 1) {
+                  await clickCurrentFileEntry(segments[index], expected.file);
+                  currentDeltaSegments.push(segments[index]);
                 }
                 const extractedFile = page.getByText(fileName, { exact: true }).first();
                 await extractedFile.waitFor({ state: "visible", timeout: 15000 }).catch(() => undefined);

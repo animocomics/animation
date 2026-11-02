@@ -8,6 +8,27 @@ import { readJsonResponse } from "../lib/http-response";
 import type { ApiNetworkPublicStatus } from "../lib/types";
 import { faDate, faNumber } from "../lib/utils";
 
+type ApiNetworkPayload = {
+  status?: ApiNetworkPublicStatus;
+  error?: string;
+  pending?: boolean;
+  jobError?: string;
+};
+
+async function resolveNetworkJob(initial: ApiNetworkPayload, onPayload: (payload: ApiNetworkPayload) => void): Promise<ApiNetworkPayload> {
+  let current = initial;
+  onPayload(current);
+  for (let attempt = 0; current.pending && attempt < 150; attempt += 1) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 2000));
+    const response = await fetch("/api/admin/api-network", { cache: "no-store" });
+    current = await readJsonResponse<ApiNetworkPayload>(response, "دریافت وضعیت آزمایش شکن");
+    if (!response.ok) throw new Error(current.error || "وضعیت آزمایش شکن خوانده نشد.");
+    onPayload(current);
+  }
+  if (current.pending) throw new Error("آزمایش شکن بیش از زمان مجاز در حال اجراست؛ صفحه را دوباره بارگذاری کنید.");
+  return current;
+}
+
 export function ApiNetworkConnection() {
   const { notify, user } = useApp();
   const [status, setStatus] = useState<ApiNetworkPublicStatus | null>(null);
@@ -19,14 +40,20 @@ export function ApiNetworkConnection() {
   const [error, setError] = useState("");
   const [dirty, setDirty] = useState(false);
 
+  function applyPayload(payload: ApiNetworkPayload) {
+    if (!payload.status) return;
+    setStatus(payload.status);
+    setPlan(payload.status.plan);
+    setServers(payload.status.servers);
+  }
+
   useEffect(() => {
     if (user.role !== "admin") return;
     void fetch("/api/admin/api-network", { cache: "no-store" }).then(async (response) => {
-      const payload = await readJsonResponse<{ status?: ApiNetworkPublicStatus; error?: string }>(response, "دریافت وضعیت شکن");
+      const payload = await readJsonResponse<ApiNetworkPayload>(response, "دریافت وضعیت شکن");
       if (!response.ok || !payload.status) throw new Error(payload.error || "وضعیت شکن خوانده نشد.");
-      setStatus(payload.status);
-      setPlan(payload.status.plan);
-      setServers(payload.status.servers);
+      const completed = await resolveNetworkJob(payload, applyPayload);
+      if (completed.jobError) setError(completed.jobError);
     }).catch((reason) => setError(reason instanceof Error ? reason.message : "وضعیت شکن خوانده نشد.")).finally(() => setBusy(null));
   }, [user.role]);
 
@@ -49,13 +76,15 @@ export function ApiNetworkConnection() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled, plan, servers, updateUrl: updateUrl.trim() || undefined }),
       });
-      const payload = await readJsonResponse<{ status?: ApiNetworkPublicStatus; error?: string }>(response, "به‌روزرسانی شکن");
-      if (payload.status) setStatus(payload.status);
+      const payload = await readJsonResponse<ApiNetworkPayload>(response, "به‌روزرسانی شکن");
+      applyPayload(payload);
       if (!response.ok) throw new Error(payload.error || "آزمایش اتصال ناموفق بود.");
-      if (payload.status) {
-        setPlan(payload.status.plan);
-        setServers(payload.status.servers);
+      const completed = await resolveNetworkJob(payload, applyPayload);
+      if (completed.jobError) throw new Error(completed.jobError);
+      if (enabled && (!completed.status?.enabled || completed.status.lastTestStatus === "error")) {
+        throw new Error(completed.status?.lastTestMessage || "آزمایش اتصال ناموفق بود و شکن فعال نشد.");
       }
+      if (!enabled && completed.status?.enabled) throw new Error("شکن هنوز فعال است؛ غیرفعال‌سازی تأیید نشد.");
       setUpdateUrl("");
       setShowUpdateUrl(false);
       setDirty(false);
@@ -110,6 +139,6 @@ export function ApiNetworkConnection() {
       {enabled && <button className="btn btn-secondary" type="button" onClick={() => void save(false)} disabled={isBusy}>{busy === "disabling" ? <LoaderCircle className="spin-icon" size={16} /> : <Power size={16} />}غیرفعال‌کردن شکن</button>}
       <a className="api-network-help" href="https://shecan.ir/tutorials/tutorials-pro/" target="_blank" rel="noreferrer">راهنمای رسمی شکن</a>
     </div>
-    <p className="api-network-footnote">فعال‌سازی فقط پس از پاسخ معتبر DNS و Google انجام می‌شود. این تست بدون API Key است؛ صحت کلید و مدل را با دکمهٔ «آزمایش اتصال» در بخش بالا بسنجید.</p>
+    <p className="api-network-footnote">فعال‌سازی فقط پس از پاسخ معتبر DNS و Google انجام می‌شود. ثبت IP و توقف یک‌دقیقه‌ای در پس‌زمینه ادامه می‌یابد و وضعیت همین‌جا تا پایان به‌روزرسانی می‌شود. این تست بدون API Key است؛ صحت کلید و مدل را با دکمهٔ «آزمایش اتصال» در بخش بالا بسنجید.</p>
   </div>;
 }

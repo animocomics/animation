@@ -41,8 +41,17 @@ export interface SaveApiNetworkInput {
   updateUrl?: string;
 }
 
+interface ApiNetworkSaveJob {
+  pending: boolean;
+  startedAt: string;
+  finishedAt?: string;
+  error?: string;
+  promise: Promise<void>;
+}
+
 interface ActivationGlobal {
   __nomrehShecanActivation?: { key: string; promise: Promise<string> };
+  __nomrehShecanSaveJob?: ApiNetworkSaveJob;
 }
 
 const globalStore = globalThis as typeof globalThis & ActivationGlobal;
@@ -431,4 +440,39 @@ export async function saveAndTestApiNetwork(input: SaveApiNetworkInput, userId: 
     throw new ApiNetworkError("آزمایش شکن ناموفق بود و فعال‌سازی انجام نشد.", 502, { cause: failure });
   }
   return getApiNetworkStatus();
+}
+
+export function getApiNetworkJobStatus(): { pending: boolean; startedAt?: string; finishedAt?: string; error?: string } {
+  const job = globalStore.__nomrehShecanSaveJob;
+  if (!job) return { pending: false };
+  return { pending: job.pending, startedAt: job.startedAt, finishedAt: job.finishedAt, error: job.error };
+}
+
+export function clearApiNetworkJob(): void {
+  if (!globalStore.__nomrehShecanSaveJob?.pending) delete globalStore.__nomrehShecanSaveJob;
+}
+
+export function startApiNetworkJob(
+  input: SaveApiNetworkInput,
+  userId: string,
+  options: { activationSettleMs?: number } = {},
+): { pending: boolean; startedAt?: string; finishedAt?: string; error?: string } {
+  const current = globalStore.__nomrehShecanSaveJob;
+  if (current?.pending) return getApiNetworkJobStatus();
+  const job: ApiNetworkSaveJob = { pending: true, startedAt: new Date().toISOString(), promise: Promise.resolve() };
+  globalStore.__nomrehShecanSaveJob = job;
+  job.promise = (async () => {
+    try {
+      await saveAndTestApiNetwork(input, userId, options);
+      job.error = undefined;
+    } catch (error) {
+      job.error = error instanceof ApiNetworkError || error instanceof ProviderNetworkError
+        ? error.message
+        : "آزمایش شکن ناموفق بود و فعال‌سازی انجام نشد.";
+    } finally {
+      job.pending = false;
+      job.finishedAt = new Date().toISOString();
+    }
+  })();
+  return getApiNetworkJobStatus();
 }

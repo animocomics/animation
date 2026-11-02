@@ -75,6 +75,9 @@ test("Plesk-facing mutations use POST while authenticated PUT compatibility rema
   ]);
   assert.match(providerRoute, /saveProvider as POST, saveProvider as PUT/);
   assert.match(networkRoute, /saveApiNetwork as POST, saveApiNetwork as PUT/);
+  assert.match(networkRoute, /startApiNetworkJob/);
+  assert.match(networkRoute, /status: 202/);
+  assert.match(networkClient, /resolveNetworkJob/);
   assert.match(workspaceRoute, /updateWorkspace as POST, updateWorkspace as PUT/);
   for (const client of [providerClient, networkClient, workspaceClient]) {
     assert.match(client, /method: "POST"/);
