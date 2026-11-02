@@ -44,7 +44,7 @@ jobs:
         run: |
           set -euo pipefail
           source_sha=cc9087696690bc5e4e02797164ac5e19c64f0b8f
-          archive="$RUNNER_TEMP/nomreh-deploy-passenger.zip"
+          archive="$RUNNER_TEMP/nomreh-deploy-nginx-static.zip"
           git archive --format=zip --output="$archive" "$source_sha"
           for required in package.json package-lock.json server.js lib/server/sqlite.ts scripts/plesk-node22.cjs scripts/plesk-runtime/node-v22.22.3-linux-x64-glibc-217.tar.xz; do
             unzip -Z1 "$archive" | grep -Fx "$required" > /dev/null
@@ -81,8 +81,8 @@ jobs:
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
           PLESK_BROWSER_ACTION: upload
-          PLESK_ARCHIVE_NAME: nomreh-deploy-passenger.zip
-          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-passenger.zip
+          PLESK_ARCHIVE_NAME: nomreh-deploy-nginx-static.zip
+          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-nginx-static.zip
           PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-plesk-upload.md
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
         run: node scripts/plesk-browser-diagnostics.cjs
