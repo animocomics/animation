@@ -11,7 +11,9 @@ const DOMAIN = "nomreh.arounidea.com";
 const OUTPUT = process.env.PLESK_DIAGNOSTICS_OUTPUT || path.join(os.tmpdir(), "nomreh-plesk-browser-diagnostics.md");
 
 function sanitize(value) {
-  return redact(value).split("nomreh.[redacted]").join(DOMAIN);
+  return redact(value)
+    .split("nomreh.[redacted]").join(DOMAIN)
+    .replace(/(https?:\/\/)[^/\s:@]+(?::[^/\s@]*)?@/gi, "$1[redacted]@");
 }
 
 async function firstVisible(page, selectors) {
@@ -31,6 +33,17 @@ function relevantLines(text) {
     .map((line) => line.slice(0, 300)))]
     .slice(0, 40)
     .map(redact);
+}
+
+function toolLines(text) {
+  const pattern = /nomreh|error|failed|authentication|github|branch|commit|repository|deploy|node|application|startup|document|root|version|disabled|enabled|not found|no commits|npm|build/i;
+  return [...new Set(String(text || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && pattern.test(line) && !/webhook|secret|token|password|credential|api.key/i.test(line))
+    .map((line) => line.slice(0, 300)))]
+    .slice(0, 60)
+    .map(sanitize);
 }
 
 async function main() {
@@ -117,6 +130,28 @@ async function main() {
           if (tools.length) lines.push("");
         }
         break;
+      }
+    }
+    if (domainFound) {
+      const toolPages = [
+        ["Git", "/modules/git/index.php/domain/repositories"],
+        ["Node.js", "/modules/nodejs/index.php/domain/index"],
+      ];
+      for (const [label, toolPath] of toolPages) {
+        const response = await page.goto(`${panel}${toolPath}`, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => null);
+        await page.waitForTimeout(1800);
+        const body = await page.locator("body").innerText().catch(() => "");
+        lines.push(`## ${label} page`, "", `- HTTP status: ${response ? response.status() : "unavailable"}`, `- Current page: ${sanitize(new URL(page.url()).pathname)}`, "");
+        const selected = toolLines(body);
+        if (selected.length) lines.push(...selected.map((line) => `- ${line}`), "");
+        const controls = await page.locator("a, button, input[type='submit']").evaluateAll((elements) => elements.map((element) => ({
+          text: (element.textContent || element.getAttribute("value") || "").trim().replace(/\s+/g, " "),
+          href: element.getAttribute("href") || "",
+        })).filter((item) => /pull|deploy|repository|settings|branch|run|build|restart|enable|disable|install|npm/i.test(item.text)).slice(0, 30));
+        for (const control of controls) {
+          lines.push(`- Control: ${sanitize(control.text)}${control.href.startsWith("/") ? ` (${sanitize(new URL(control.href, page.url()).pathname)})` : ""}`);
+        }
+        if (controls.length) lines.push("");
       }
     }
     lines.push("## Result", "", domainFound
