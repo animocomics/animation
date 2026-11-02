@@ -8,6 +8,9 @@ const { chromium } = require("playwright");
 const { normalizePanelUrl, redact } = require("./plesk-api-diagnostics.cjs");
 
 const DOMAIN = "nomreh.arounidea.com";
+const ACTION = process.env.PLESK_BROWSER_ACTION || "diagnose";
+const UPLOAD_ARCHIVE = process.env.PLESK_UPLOAD_ARCHIVE || "";
+const ARCHIVE_NAME = "nomreh-deploy.zip";
 const OUTPUT = process.env.PLESK_DIAGNOSTICS_OUTPUT || path.join(os.tmpdir(), "nomreh-plesk-browser-diagnostics.md");
 
 function sanitize(value) {
@@ -59,8 +62,13 @@ function labelValues(text, labels) {
 }
 
 async function main() {
+  if (!["diagnose", "upload"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
   const panel = normalizePanelUrl(process.env.PLESK_PANEL_URL || "");
-  const lines = ["# Plesk browser diagnostics", "", "Read-only browser inspection. No settings, deployments or files were changed.", ""];
+  const readOnly = ACTION === "diagnose";
+  const lines = ["# Plesk browser diagnostics", "", readOnly
+    ? "Read-only browser inspection. No settings, deployments or files were changed."
+    : "Controlled action: upload one validated application archive to Nomreh only. No extraction, build, restart, or settings change is attempted.", ""];
+  let actionCompleted = false;
   let browser;
   try {
     browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
@@ -242,6 +250,9 @@ async function main() {
           for (const link of fileLinks) lines.push(`- File entry: ${sanitize(link.text)}${link.href.startsWith("/") ? ` (${sanitize(new URL(link.href, page.url()).pathname)})` : ""}`);
           if (fileLinks.length) lines.push("");
           if (depth === 1) {
+            if (ACTION === "upload" && fileBody.includes(ARCHIVE_NAME)) {
+              throw new Error(`${ARCHIVE_NAME} already exists in the Nomreh application directory. Upload stopped without overwriting it.`);
+            }
             const fileDetails = fileBody.split(/\r?\n/).map((line) => line.trim()).filter((line) => /package\.json|server\.js|next\.config|sqlite\.ts|plesk-node22|\.next\b/i.test(line) && !/secret|token|password|credential/i.test(line)).slice(0, 20);
             if (fileDetails.length) lines.push(...fileDetails.map((line) => `- Application file: ${sanitize(line.slice(0, 300))}`), "");
             const managerControls = await page.locator("button, a, input").evaluateAll((elements) => elements.map((element) => ({
@@ -277,6 +288,26 @@ async function main() {
               lines.push(`- File inputs after opening Add New: ${fileInputs.length}`, "");
               for (const input of fileInputs) lines.push(`- File input: ${sanitize(JSON.stringify(input))}`);
               if (fileInputs.length) lines.push("");
+              if (ACTION === "upload") {
+                if (!UPLOAD_ARCHIVE || !fs.existsSync(UPLOAD_ARCHIVE)) throw new Error("The validated Nomreh deployment archive is not available to the browser runner.");
+                if (!fileInputs.length) throw new Error("Plesk did not provide its file upload input. No archive was sent.");
+                const archiveSize = fs.statSync(UPLOAD_ARCHIVE).size;
+                if (archiveSize > 90 * 1024 * 1024) throw new Error("The deployment archive exceeds the 90 MB safety limit.");
+                lines.push("## Controlled Nomreh archive upload", "", `- Archive: ${ARCHIVE_NAME}`, `- Archive bytes: ${archiveSize}`, "");
+                await page.locator("input[type='file']").first().setInputFiles(UPLOAD_ARCHIVE);
+                await page.waitForTimeout(2000);
+                const confirmUpload = page.locator("button:visible").filter({ hasText: /^Upload/i }).first();
+                if (await confirmUpload.count()) await confirmUpload.click({ timeout: 5000 }).catch(() => undefined);
+                await page.waitForFunction((name) => Array.from(document.querySelectorAll("a")).some((anchor) => (anchor.textContent || "").trim() === name), ARCHIVE_NAME, { timeout: 180000 });
+                await page.waitForTimeout(2000);
+                const uploadedBody = await page.locator("body").innerText().catch(() => "");
+                const uploadFailure = uploadedBody.split(/\r?\n/).find((line) => /upload.*(failed|error)|(?:failed|error).*upload|quota exceeded|permission denied/i.test(line));
+                if (uploadFailure) throw new Error(`Plesk archive upload failed: ${sanitize(uploadFailure.slice(0, 250))}`);
+                const uploadedDetails = uploadedBody.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.includes(ARCHIVE_NAME)).slice(0, 5);
+                for (const detail of uploadedDetails) lines.push(`- Uploaded file: ${sanitize(detail.slice(0, 300))}`);
+                lines.push("- Upload completed and the archive is visible in the Nomreh application directory. No extraction or build was attempted.", "");
+                actionCompleted = true;
+              }
             }
           }
           const appLink = fileLinks.find((link) => link.text.toLowerCase() === DOMAIN);
@@ -296,9 +327,12 @@ async function main() {
         }
       }
     }
-    lines.push("## Result", "", domainFound
-      ? "Plesk web login succeeded and the Nomreh domain was found. No remediation was attempted."
-      : "Plesk web login completed, but the Nomreh domain was not visible on the inspected pages. No remediation was attempted.", "");
+    if (ACTION === "upload" && !actionCompleted) throw new Error("The controlled Nomreh archive upload did not complete. No extraction, build, restart, or settings change was attempted.");
+    lines.push("## Result", "", ACTION === "upload"
+      ? "The validated application archive was uploaded to Nomreh. Extraction, dependency installation, build, and Node.js enablement remain pending."
+      : domainFound
+        ? "Plesk web login succeeded and the Nomreh domain was found. No remediation was attempted."
+        : "Plesk web login completed, but the Nomreh domain was not visible on the inspected pages. No remediation was attempted.", "");
   } finally {
     if (browser) await browser.close();
   }
@@ -309,7 +343,7 @@ async function main() {
 
 if (require.main === module) {
   main().catch((error) => {
-    const output = sanitize(`# Plesk browser diagnostics\n\nBrowser diagnostics stopped: ${error.message}\n\nNo settings, deployments or files were changed.\n`);
+    const output = sanitize(`# Plesk browser diagnostics\n\nBrowser action stopped: ${error.message}\n\n${ACTION === "diagnose" ? "No settings, deployments or files were changed." : "No subsequent extraction, build, restart, or settings change was attempted. Review the step result before retrying."}\n`);
     fs.writeFileSync(OUTPUT, output, { mode: 0o600 });
     console.error(output);
     process.exitCode = 1;

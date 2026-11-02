@@ -13,6 +13,10 @@ permissions:
   contents: read
   checks: write
 
+concurrency:
+  group: plesk-nomreh-browser
+  cancel-in-progress: false
+
 jobs:
   browser-diagnose:
     runs-on: ubuntu-latest

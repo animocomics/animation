@@ -1,0 +1,111 @@
+name: Plesk Nomreh archive upload
+
+on:
+  push:
+    branches:
+      - arena/f4b832aa-animation
+    paths:
+      - .github/workflows/plesk-browser-upload.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+
+concurrency:
+  group: plesk-nomreh-browser
+  cancel-in-progress: false
+
+jobs:
+  upload-archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check private Plesk browser configuration
+        id: config
+        env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+        run: |
+          set -u
+          configured=false
+          if [ -n "$PLESK_PANEL_URL" ] && [ -n "$PLESK_API_USERNAME" ] && [ -n "$PLESK_API_PASSWORD" ]; then configured=true; fi
+          echo "configured=$configured" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the validated application source
+        if: steps.config.outputs.configured == 'true'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create and verify the tracked-files-only archive
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          source_sha=186950f1a879278fc47e026237e358fa7fa1fa5b
+          archive="$RUNNER_TEMP/nomreh-deploy.zip"
+          git archive --format=zip --output="$archive" "$source_sha"
+          for required in package.json package-lock.json server.js lib/server/sqlite.ts scripts/plesk-node22.cjs scripts/plesk-runtime/node-v22.22.3-linux-x64-glibc-217.tar.xz; do
+            unzip -Z1 "$archive" | grep -Fx "$required" > /dev/null
+          done
+          if unzip -Z1 "$archive" | grep -E '(^|/)(nomreh-data|node_modules|\.next|uploads?)(/|$)|(^|/)\.env$|(^|/)\.env\.(local|production|development|test)$'; then
+            echo 'Sensitive, persistent, uploaded, or generated content was included in the archive.' >&2
+            exit 1
+          fi
+          if git show "$source_sha:package.json" | grep -q 'better-sqlite3'; then
+            echo 'The archive source still contains the rejected native SQLite dependency.' >&2
+            exit 1
+          fi
+          sha256sum "$archive"
+          stat -c 'Archive bytes: %s' "$archive"
+
+      - name: Prepare an isolated temporary browser
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/plesk-browser"
+          cd "$RUNNER_TEMP/plesk-browser"
+          npm init -y > /dev/null
+          npm install --ignore-scripts --no-audit --no-fund playwright@1.64.1
+          npx playwright install --with-deps chromium
+
+      - name: Upload only the validated archive to Nomreh
+        id: upload
+        if: steps.config.outputs.configured == 'true'
+        env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+          PLESK_BROWSER_ACTION: upload
+          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy.zip
+          PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-plesk-upload.md
+          NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
+        run: node scripts/plesk-browser-diagnostics.cjs
+
+      - name: Publish the sanitized upload result
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CONFIGURED: ${{ steps.config.outputs.configured }}
+          UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
+        run: |
+          set -euo pipefail
+          conclusion=neutral
+          summary='Plesk browser upload is not configured; no host was contacted.'
+          if [ "$CONFIGURED" = true ]; then
+            conclusion=success
+            if [ "$UPLOAD_OUTCOME" != success ]; then conclusion=failure; fi
+            if [ -f "$RUNNER_TEMP/nomreh-plesk-upload.md" ]; then
+              summary="$(cat "$RUNNER_TEMP/nomreh-plesk-upload.md")"
+            else
+              summary='Archive preparation or upload did not produce a report; no extraction, build, restart, or settings change was attempted.'
+            fi
+          fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name="Plesk Nomreh archive upload" \
+            -f head_sha="${GITHUB_SHA}" \
+            -f status=completed \
+            -f conclusion="$conclusion" \
+            -f 'output[title]=Nomreh controlled archive upload' \
+            --raw-field "output[summary]=${summary}" > /dev/null
