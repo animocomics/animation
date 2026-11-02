@@ -1,7 +1,7 @@
 name: Plesk Nomreh archive extraction
 
 # Validated application source: 582b6847b859784a08311cebd90345688da5dc05
-# Retry only the unchanged delta extraction after the first session missed the application folder.
+# Hosted delta files are downloaded and SHA-256 verified before any build is allowed.
 
 on:
   push:

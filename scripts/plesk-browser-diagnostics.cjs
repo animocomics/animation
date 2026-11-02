@@ -1250,21 +1250,19 @@ async function main() {
                 const fileName = segments.pop();
                 await page.goto(`${panel}${nomrehFilesPath}`, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => null);
                 await page.waitForTimeout(1500);
-                const exactDomain = new RegExp(`^${DOMAIN.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`);
-                const rootFolder = page.locator("a.tree-item-content:visible").filter({ hasText: exactDomain }).first();
-                await rootFolder.waitFor({ state: "visible", timeout: 15000 }).catch(() => undefined);
-                if (!await rootFolder.count()) throw new Error(`The Nomreh application folder was not available while verifying ${expected.file}.`);
-                await rootFolder.click({ timeout: 8000 });
-                await page.waitForTimeout(1800);
-                for (const directory of segments) {
-                  const directoryText = page.getByText(directory, { exact: true }).last();
-                  const directoryRow = directoryText.locator("xpath=ancestor::*[.//input[@type='checkbox']][1]");
-                  const directoryLink = directoryRow.locator("a.tree-item-content:visible").first();
-                  await directoryLink.waitFor({ state: "visible", timeout: 15000 }).catch(() => undefined);
-                  if (!await directoryLink.count()) throw new Error(`The ${directory} directory was not available while verifying ${expected.file}.`);
-                  await directoryLink.click({ timeout: 8000 });
-                  await page.waitForTimeout(1500);
-                }
+                const navigateToEntry = async (name) => {
+                  const href = await page.locator("a").evaluateAll((anchors, expectedName) => {
+                    const match = anchors.find((anchor) => (anchor.textContent || "").trim() === expectedName && (anchor.getAttribute("href") || "").includes("/smb/file-manager/"));
+                    return match ? match.getAttribute("href") || "" : "";
+                  }, name);
+                  if (!href) throw new Error(`The ${name} File Manager link was not available while verifying ${expected.file}.`);
+                  const target = new URL(href, page.url());
+                  if (target.origin !== new URL(panel).origin || !target.pathname.includes("/smb/file-manager/")) throw new Error(`The ${name} File Manager link left the validated panel scope.`);
+                  await page.goto(target.toString(), { waitUntil: "domcontentloaded", timeout: 30000 });
+                  await page.waitForTimeout(1800);
+                };
+                await navigateToEntry(DOMAIN);
+                for (const directory of segments) await navigateToEntry(directory);
                 const extractedFile = page.getByText(fileName, { exact: true }).first();
                 await extractedFile.waitFor({ state: "visible", timeout: 15000 }).catch(() => undefined);
                 if (!await extractedFile.count()) throw new Error(`The extracted ${expected.file} was not visible for hash verification.`);
