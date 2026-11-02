@@ -295,6 +295,16 @@ async function main() {
                 extractChoice = page.locator("a:visible, button:visible").filter({ hasText: /Extract/i }).first();
                 if (await extractChoice.count()) break;
               }
+              if (!extractChoice || !await extractChoice.count()) {
+                const rowActions = archiveRow.locator("button[title='Actions'], button[aria-label='Actions']").first();
+                if (await rowActions.count()) {
+                  await rowActions.click({ timeout: 5000 }).catch(() => undefined);
+                  await page.waitForTimeout(400);
+                  const rowMenuItems = await page.locator("a:visible, button:visible").evaluateAll((elements) => elements.map((element) => (element.textContent || "").trim().replace(/\s+/g, " ")).filter((text) => /extract|unzip|archive|download|rename|edit|remove|delete/i.test(text)).slice(0, 20));
+                  for (const item of rowMenuItems) lines.push(`- Archive row menu: ${sanitize(item)}`);
+                  extractChoice = page.locator("a:visible, button:visible").filter({ hasText: /Extract|Unzip/i }).first();
+                }
+              }
               lines.push(`- Extract menu item found: ${extractChoice && await extractChoice.count() ? "yes" : "no"}`);
               if (extractChoice && await extractChoice.count()) {
                 await extractChoice.click({ timeout: 5000 }).catch(() => undefined);
