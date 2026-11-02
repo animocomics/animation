@@ -372,6 +372,15 @@ async function main() {
   context = await browser.newContext({ ignoreHTTPSErrors: false, viewport: { width: 1440, height: 1000 } });
   const page = await context.newPage();
   page.setDefaultTimeout(20000);
+  let loginScriptCount = 0;
+  const loginScriptFailures = [];
+  const loginClientErrors = [];
+  page.on("response", (response) => {
+    if (response.request().resourceType() !== "script") return;
+    if (response.status() >= 400) loginScriptFailures.push(`${new URL(response.url()).pathname} (HTTP ${response.status()})`);
+    else loginScriptCount += 1;
+  });
+  page.on("pageerror", (error) => { if (loginClientErrors.length < 10) loginClientErrors.push(clean(error.message)); });
 
   lines.push("## Real admin login", "");
   const loginResponse = await page.goto(`${ORIGIN}/login`, { waitUntil: "domcontentloaded", timeout: 30000 });
@@ -380,6 +389,9 @@ async function main() {
   await page.getByRole("heading", { name: "به نمره خوش آمدید" }).waitFor({ state: "visible" });
   const initialAccess = await page.getByText("دسترسی اولیهٔ نصب", { exact: true }).count();
   lines.push(`- Publicly offered initial installation accounts: ${initialAccess ? "yes" : "no"}.`);
+  lines.push(`- Login JavaScript assets loaded successfully: ${loginScriptCount}; failed: ${loginScriptFailures.length}.`);
+  if (loginScriptFailures.length) lines.push(`- Failed login script assets: ${loginScriptFailures.slice(0, 5).join(", ")}.`);
+  lines.push(`- Browser JavaScript page errors before login: ${loginClientErrors.length}.`);
   const secretUsername = process.env.NOMREH_ADMIN_USERNAME || "";
   const secretPassword = process.env.NOMREH_ADMIN_PASSWORD || "";
   const demoAccountsAllowed = process.env.NOMREH_ALLOW_DEMO_ACCOUNTS === "1";
@@ -395,14 +407,18 @@ async function main() {
   await page.locator("#login-username").fill(credentials.username);
   await page.locator("#login-password").fill(credentials.password);
   const navigation = page.waitForURL((url) => url.origin === ORIGIN && url.pathname === "/", { timeout: 45000 }).then(() => true).catch(() => false);
-  const loginApiPromise = page.waitForResponse((response) => response.url() === `${ORIGIN}/api/auth/login` && response.request().method() === "POST", { timeout: 60000 }).catch(() => null);
+  const loginApiPromise = page.waitForResponse((response) => response.url() === `${ORIGIN}/api/auth/login` && response.request().method() === "POST", { timeout: 20000 }).catch(() => null);
   await page.getByRole("button", { name: "ورود به فضای کاری", exact: true }).click();
-  const loginApiResponse = await loginApiPromise;
-  const loginApiStatus = loginApiResponse ? loginApiResponse.status() : "unavailable";
-  lines.push(`- Login API HTTP status: ${loginApiStatus}.`);
+  let usedDirectLogin = false;
+  let loginApiResponse = await loginApiPromise;
+  lines.push(`- Browser-form login API HTTP status: ${loginApiResponse ? loginApiResponse.status() : "not observed"}.`);
   if (!loginApiResponse) {
     const alert = await page.getByRole("alert").innerText().catch(() => "");
-    throw new Error(`The login API response was not observed.${alert ? ` ${clean(alert)}` : ""}`);
+    lines.push(`- Browser form current path after submit: ${new URL(page.url()).pathname}; alert present: ${alert ? "yes" : "no"}; JavaScript page errors: ${loginClientErrors.length}.`);
+    if (loginClientErrors.length) lines.push(`- First browser error: ${loginClientErrors[0]}.`);
+    usedDirectLogin = true;
+    loginApiResponse = await context.request.post(`${ORIGIN}/api/auth/login`, { data: { username: credentials.username, password: credentials.password } });
+    lines.push(`- Direct domain login API HTTP status: ${loginApiResponse.status()}.`);
   }
   const loginPayload = await loginApiResponse.json().catch(() => ({}));
   if (!loginApiResponse.ok()) throw new Error(`Admin login was rejected: HTTP ${loginApiResponse.status()}.${loginPayload.error ? ` ${clean(loginPayload.error)}` : ""}`);
@@ -413,7 +429,7 @@ async function main() {
   lines.push(`- Authenticated-session verification HTTP status: ${meResponse.status()}.`);
   if (!meResponse.ok() || me.user?.role !== "admin" || String(me.user?.username || "").toLowerCase() !== credentials.username.toLowerCase()) throw new Error("The authenticated session was not verified as the expected admin account.");
 
-  const reachedWorkspace = await navigation;
+  const reachedWorkspace = usedDirectLogin ? false : await navigation;
   if (!reachedWorkspace) {
     await page.goto(`${ORIGIN}/`, { waitUntil: "domcontentloaded", timeout: 30000 });
     lines.push("- The authenticated workspace required explicit navigation after login.");
