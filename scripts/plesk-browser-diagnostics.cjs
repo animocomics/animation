@@ -384,11 +384,18 @@ async function main() {
           let lastProgressSignature = "";
           let lastProgressReport = 0;
           let completedOutput = "";
+          let latestBuildOutput = "";
           let buildSucceeded = false;
+          const appendBuildFailureContext = (output) => {
+            const contextLines = String(output || "").split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !/^\{"code":/.test(line) && /Nomreh|npm|node|Next|next|SWC|WASM|wasm|GLIBC|SQLite|canvas|error|failed|ERR|Cannot|cannot|Could not|could not|permission|space|memory|heap|install|Building|Compiled|Generating|Finalizing|exit|download|runtime|tar|package|dependenc/i.test(line) && !/secret|token|password|credential|api.key|authorization|cookie|environment/i.test(line)).slice(-60);
+            for (const line of contextLines) lines.push(`- Build failure context: ${sanitize(line.slice(0, 500))}`);
+            if (!contextLines.length) lines.push("- No sanitized build failure context was exposed by Plesk.");
+          };
           while (Date.now() - buildStartedAt < 40 * 60 * 1000) {
             await page.waitForTimeout(4000);
             const currentBody = await page.locator("body").innerText().catch(() => "");
             const currentOutput = currentBody.startsWith(consoleBody) ? currentBody.slice(consoleBody.length) : currentBody;
+            latestBuildOutput = currentOutput;
             const progressLines = currentOutput.split(/\r?\n/).map((line) => line.trim()).filter((line) => /\[Nomreh|Node 22|SQLite|canvas|production build|Installing application dependencies|Building Nomreh|npm ERR|GLIBC|exited with status/i.test(line) && !/secret|token|password|credential|api.key/i.test(line));
             const signature = progressLines.slice(-6).join("\n");
             if (signature && signature !== lastProgressSignature && Date.now() - lastProgressReport > 15000) {
@@ -402,9 +409,15 @@ async function main() {
               break;
             }
             const failure = currentOutput.split(/\r?\n/).find((line) => /\[Nomreh FAILED;|npm ERR!|exited with status|Build failed|Command failed|nodenv: version .*not installed|nodenv: node: command not found|node: not found/i.test(line));
-            if (failure) throw new Error(`Nomreh build failed: ${sanitize(failure.slice(0, 400))}`);
+            if (failure) {
+              appendBuildFailureContext(currentOutput);
+              throw new Error(`Nomreh build failed: ${sanitize(failure.slice(0, 400))}`);
+            }
           }
-          if (!buildSucceeded) throw new Error("The Nomreh build did not report completion within 40 minutes. Node.js was not enabled or restarted.");
+          if (!buildSucceeded) {
+            appendBuildFailureContext(latestBuildOutput);
+            throw new Error("The Nomreh build did not report completion within 40 minutes. Node.js was not enabled or restarted.");
+          }
           const buildLines = completedOutput.split(/\r?\n/).map((line) => line.trim()).filter((line) => /\[Nomreh|Node 22|SQLite|canvas|production build|Installing application dependencies|Building Nomreh|added |removed |Compiled|Generating|Finalizing|BUILD_ID/i.test(line) && !/secret|token|password|credential|api.key/i.test(line)).slice(-80);
           for (const line of buildLines) lines.push(`- Build output: ${sanitize(line.slice(0, 400))}`);
           lines.push("- The domain-local Node 22 build and SQLite/canvas smoke tests completed successfully. Node.js enablement remains pending.", "");
