@@ -8,8 +8,7 @@ on:
   push:
     branches: [arena/f4b832aa-animation]
     paths:
-      - scripts/nomreh-browser-shecan-check.cjs
-      - .github/workflows/nomreh-browser-shecan-check.yml
+      - deploy/shecan-check.trigger
 
 permissions:
   contents: read
