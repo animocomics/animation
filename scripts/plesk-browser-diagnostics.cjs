@@ -62,7 +62,7 @@ function labelValues(text, labels) {
 }
 
 async function main() {
-  if (!["diagnose", "upload", "extract", "build", "status", "disk"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
+  if (!["diagnose", "upload", "extract", "build", "status", "disk", "fix-node-version"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
   const panel = normalizePanelUrl(process.env.PLESK_PANEL_URL || "");
   const readOnly = ACTION === "diagnose" || ACTION === "status";
   const actionDescription = ACTION === "upload"
@@ -71,7 +71,9 @@ async function main() {
       ? "Controlled action: extract the validated archive inside the Nomreh application root only. Persistent data, uploads, environment files, build, restart, and settings changes are not touched."
       : ACTION === "disk"
         ? "Controlled read-only action: run Nomreh's disk report only. No build, deletion, restart, or settings change is attempted."
-        : "Controlled action: run the validated Nomreh production build with its domain-local Node 22 runtime. Node.js enablement and restart remain pending.";
+        : ACTION === "fix-node-version"
+          ? "Controlled action: rename only Nomreh's untracked .node-version file to a backup name. No application source, persistent data, build, restart, or other domain is touched."
+          : "Controlled action: run the validated Nomreh production build with its domain-local Node 22 runtime. Node.js enablement and restart remain pending.";
   const lines = ["# Plesk browser diagnostics", "", readOnly
     ? "Read-only browser inspection. No settings, deployments or files were changed."
     : actionDescription, ""];
@@ -336,7 +338,7 @@ async function main() {
                 completedOutput = combined;
                 break;
               }
-              const failure = combined.split(/\r?\n/).find((line) => /npm ERR!|Command failed|another.*command.*running|quota exceeded|permission denied/i.test(line));
+              const failure = combined.split(/\r?\n/).find((line) => /npm ERR!|Command failed|another.*command.*running|quota exceeded|permission denied|nodenv: version .*not installed|node: not found/i.test(line));
               if (failure) throw new Error(`The read-only Nomreh disk report could not run: ${sanitize(failure.slice(0, 350))}`);
               if (!responseSummaries.length && !consoleOutput.trim() && Date.now() - diskStartedAt > 45000) {
                 throw new Error("Plesk did not issue an execution request or display output after the command button was clicked. The disk report did not start.");
@@ -387,7 +389,7 @@ async function main() {
               completedOutput = currentOutput;
               break;
             }
-            const failure = currentOutput.split(/\r?\n/).find((line) => /\[Nomreh FAILED;|npm ERR!|exited with status|Build failed|Command failed/i.test(line));
+            const failure = currentOutput.split(/\r?\n/).find((line) => /\[Nomreh FAILED;|npm ERR!|exited with status|Build failed|Command failed|nodenv: version .*not installed|node: not found/i.test(line));
             if (failure) throw new Error(`Nomreh build failed: ${sanitize(failure.slice(0, 400))}`);
           }
           if (!buildSucceeded) throw new Error("The Nomreh build did not report completion within 40 minutes. Node.js was not enabled or restarted.");
@@ -452,6 +454,82 @@ async function main() {
               }
               lines.push("- Persistent-data inspection only; no file was saved or changed.", "");
               actionCompleted = true;
+            }
+            if (ACTION === "fix-node-version") {
+              const originalName = ".node-version";
+              const backupName = ".node-version.nomreh-backup";
+              lines.push("## Controlled Nomreh Node version override fix", "");
+              if (!fileBody.includes("package.json") || !fileBody.includes("server.js") || !fileBody.includes(ARCHIVE_NAME)) {
+                throw new Error("The File Manager is not verified at Nomreh's application root. The Node version override was not changed.");
+              }
+              const originalLink = page.getByText(originalName, { exact: true }).first();
+              const backupLink = page.getByText(backupName, { exact: true }).first();
+              const originalCount = await originalLink.count();
+              const backupCount = await backupLink.count();
+              if (!originalCount && backupCount) {
+                lines.push("- The Node 24 override is already renamed and its backup is present; no further change was needed.", "");
+                actionCompleted = true;
+              } else {
+                if (!originalCount) throw new Error("Nomreh's .node-version file was not found. No file was changed.");
+                if (backupCount) throw new Error("The .node-version backup already exists. Rename stopped to avoid overwriting it.");
+                const originalRowText = await originalLink.locator("xpath=ancestor::*[.//input[@type='checkbox']][1]").innerText().catch(() => "");
+                lines.push(`- Override entry: ${sanitize(originalRowText.slice(0, 350))}`);
+                const originalRow = originalLink.locator("xpath=ancestor::*[.//input[@type='checkbox']][1]");
+                const checkbox = originalRow.locator("input[type='checkbox']").first();
+                if (!await checkbox.count()) throw new Error("The .node-version row could not be selected. No file was changed.");
+                await checkbox.check({ force: true, timeout: 5000 }).catch(async () => checkbox.click({ force: true, timeout: 5000 }));
+                if (!await checkbox.isChecked().catch(() => false)) throw new Error("The .node-version row was not selected. No file was changed.");
+                let renameChoice = null;
+                const rowActions = originalRow.locator("button[title='Actions'], button[aria-label='Actions']").first();
+                if (await rowActions.count()) {
+                  await rowActions.click({ timeout: 5000 });
+                  await page.waitForTimeout(400);
+                  renameChoice = page.locator("a:visible, button:visible").filter({ hasText: /^Rename$/i }).first();
+                }
+                if (!renameChoice || !await renameChoice.count()) {
+                  const moreButton = page.getByRole("button", { name: /^More/i }).first();
+                  if (await moreButton.count()) {
+                    await moreButton.click({ timeout: 5000 }).catch(() => undefined);
+                    await page.waitForTimeout(400);
+                    renameChoice = page.locator("a:visible, button:visible").filter({ hasText: /^Rename$/i }).first();
+                  }
+                }
+                if (!renameChoice || !await renameChoice.count()) throw new Error("The Rename command was not available for Nomreh's .node-version file. No file was changed.");
+                await renameChoice.click({ timeout: 8000 });
+                await page.waitForTimeout(700);
+                const renameBody = await page.locator("body").innerText().catch(() => "");
+                const renameLines = renameBody.split(/\r?\n/).map((line) => line.trim()).filter((line) => /rename|new name|file name/i.test(line) && !/secret|token|password|credential/i.test(line)).slice(0, 15);
+                for (const line of renameLines) lines.push(`- Rename form: ${sanitize(line.slice(0, 250))}`);
+                let renameInput = page.locator(`input[value="${originalName}"]:visible`).first();
+                if (!await renameInput.count()) {
+                  const candidates = page.locator("input:visible");
+                  for (let index = 0; index < Math.min(await candidates.count(), 30); index += 1) {
+                    const candidate = candidates.nth(index);
+                    if (await candidate.inputValue().catch(() => "") === originalName) {
+                      renameInput = candidate;
+                      break;
+                    }
+                  }
+                }
+                if (!await renameInput.count()) throw new Error("The Rename input did not contain the expected .node-version name. Rename was not confirmed.");
+                await renameInput.fill(backupName);
+                if (await renameInput.inputValue() !== backupName) throw new Error("The backup name was not retained. Rename was not confirmed.");
+                const dialog = page.locator("[role='dialog']:visible, .pul-modal:visible, .modal:visible").last();
+                const scope = await dialog.count() ? dialog : page;
+                const confirmRename = scope.getByRole("button", { name: /^(OK|Rename|Confirm)$/i }).last();
+                if (!await confirmRename.count()) throw new Error("The Rename confirmation control was not found. Rename was not confirmed.");
+                await confirmRename.click({ timeout: 8000 });
+                await page.waitForTimeout(2500);
+                await page.waitForFunction(({ originalName: original, backupName: backup }) => {
+                  const names = Array.from(document.querySelectorAll("a")).map((anchor) => (anchor.textContent || "").trim());
+                  return !names.includes(original) && names.includes(backup);
+                }, { originalName, backupName }, { timeout: 12000 }).catch(() => undefined);
+                const remainingOriginal = await page.getByText(originalName, { exact: true }).count();
+                const createdBackup = await page.getByText(backupName, { exact: true }).count();
+                if (remainingOriginal || !createdBackup) throw new Error("The .node-version rename could not be verified. No build or further host change was attempted.");
+                lines.push(`- Renamed ${originalName} to ${backupName} inside Nomreh only.`, "- The incorrect Node 24 override is no longer active; its contents remain preserved in the backup.", "- No application source, persistent data, build, restart, or other domain was changed.", "");
+                actionCompleted = true;
+              }
             }
             const archivePresent = fileBody.includes(ARCHIVE_NAME);
             if (ACTION === "upload" && archivePresent) {
@@ -669,7 +747,7 @@ async function main() {
         }
       }
     }
-    if (["upload", "extract", "build", "status", "disk"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Node.js was not enabled or restarted.`);
+    if (["upload", "extract", "build", "status", "disk", "fix-node-version"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Node.js was not enabled or restarted.`);
     lines.push("## Result", "", ACTION === "upload"
       ? "The validated application archive was uploaded to Nomreh. Extraction, dependency installation, build, and Node.js enablement remain pending."
       : ACTION === "extract"
@@ -680,7 +758,9 @@ async function main() {
             ? "The read-only Nomreh console and persistent-data inspection completed. No command, build, deletion, restart, or settings change was attempted."
             : ACTION === "disk"
               ? "The read-only Nomreh disk report completed. No build, deletion, restart, or settings change was attempted."
-              : domainFound
+              : ACTION === "fix-node-version"
+                ? "Nomreh's incorrect Node 24 override was renamed to a preserved backup. No build or restart was attempted; disk verification remains pending."
+                : domainFound
         ? "Plesk web login succeeded and the Nomreh domain was found. No remediation was attempted."
         : "Plesk web login completed, but the Nomreh domain was not visible on the inspected pages. No remediation was attempted.", "");
   } catch (error) {
