@@ -1,8 +1,8 @@
 name: Nomreh real-browser Shecan and provider check
 
-# Application source under test: d68de92f6734536338178179aa9de1286c3a5c9c
-# Hosted source verified by SHA-256 in extraction run 41534001639 and restarted in run 41534896605.
-# Test the official curl activation path; test the stored Gemini key only after Shecan is verified active.
+# Application source under test: 404652a495aebbb49f35fbe254169733ed5a9651
+# Hosted source verified by SHA-256 in extraction run 41536647735 and restarted in run 41537570660.
+# Test official curl with fresh Pro DoH addresses; test stored Gemini only after Shecan is verified active.
 
 on:
   push:
