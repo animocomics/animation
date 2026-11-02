@@ -355,6 +355,31 @@ function installDependencies(runtime) {
   runRuntimeNpm(runtime, ["install", "--ignore-scripts", "--engine-strict=false", "--no-audit", "--no-fund"]);
 }
 
+function stashPublicStaticForBuild(root = APP_ROOT) {
+  const publicNext = path.join(root, "public", "_next");
+  const backup = path.join(root, `.nomreh-public-next-backup-${process.pid}-${Date.now()}`);
+  if (!inside(root, publicNext) || publicNext === root || !inside(root, backup) || backup === root || fs.existsSync(backup)) {
+    throw new Error("Refusing to stash Nomreh static assets at an unsafe path.");
+  }
+  if (!fs.existsSync(publicNext)) return { root, publicNext, backup, moved: false };
+  fs.renameSync(publicNext, backup);
+  return { root, publicNext, backup, moved: true };
+}
+
+function restorePublicStaticAfterBuild(stash, keepBackup = false) {
+  if (!stash?.moved || !fs.existsSync(stash.backup)) return;
+  if (!inside(stash.root, stash.publicNext) || !inside(stash.root, stash.backup)) throw new Error("Refusing to restore Nomreh static assets at an unsafe path.");
+  if (fs.existsSync(stash.publicNext)) fs.rmSync(stash.publicNext, { recursive: true, force: true });
+  if (keepBackup) fs.cpSync(stash.backup, stash.publicNext, { recursive: true, force: false, errorOnExist: false });
+  else fs.renameSync(stash.backup, stash.publicNext);
+}
+
+function discardPublicStaticBackup(stash) {
+  if (!stash?.moved || !fs.existsSync(stash.backup)) return;
+  if (!inside(stash.root, stash.backup) || stash.backup === stash.root) throw new Error("Refusing to remove a Nomreh static backup at an unsafe path.");
+  fs.rmSync(stash.backup, { recursive: true, force: true });
+}
+
 function syncPublicStatic(root = APP_ROOT) {
   const source = path.join(root, ".next", "static");
   const publicNext = path.join(root, "public", "_next");
@@ -428,6 +453,7 @@ function smokeRuntime(runtime) {
 async function build() {
   progressStartedAt = Date.now();
   progressEnabled = true;
+  let staticStash = null;
   try {
     console.log("Nomreh Passenger-aware launcher is active for this build.");
     progress("Checking or installing the private Node 22 runtime");
@@ -439,18 +465,24 @@ async function build() {
     // Plesk's legacy libc cannot load Next's native SWC packages. Force the
     // pinned WASM fallback in the parent and every child instead of repeatedly
     // attempting incompatible native binaries during the same build.
+    // Next refuses an existing public/_next directory. Move only Nomreh's
+    // generated public directory aside, then restore it for the guarded sync.
+    staticStash = stashPublicStaticForBuild();
     runRuntimeNpm(runtime, ["run", "build"], { NEXT_TEST_WASM: "1" });
     if (!fs.existsSync(path.join(APP_ROOT, ".next", "BUILD_ID"))) throw new Error("The production build did not create .next/BUILD_ID; nothing was compacted.");
+    restorePublicStaticAfterBuild(staticStash, true);
     progress("Publishing Next.js static assets for nginx");
     syncPublicStatic();
     progress("Removing development-only packages and regenerable build caches");
     compactProduction(runtime);
     progress("Testing SQLite and canvas with the production runtime");
     smokeRuntime(runtime);
+    discardPublicStaticBackup(staticStash);
     console.log(`Nomreh production build is ready with the domain-local Node ${NODE_VERSION} (${runtime.kind}).`);
     progress("Nomreh production build is ready", "READY");
     try { fs.unlinkSync(PROGRESS_FILE); } catch { /* The successful build is already complete. */ }
   } catch (error) {
+    try { restorePublicStaticAfterBuild(staticStash); } catch (restoreError) { console.error(`The previous public static assets could not be restored: ${restoreError.message}`); }
     progress(error instanceof Error ? error.message : String(error), "FAILED");
     throw error;
   } finally {
@@ -536,4 +568,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { build, ensureRuntime, launchServer, passengerLaunchArguments, probeNode, readActiveRuntime, smokeRuntime, syncPublicStatic };
+module.exports = { build, discardPublicStaticBackup, ensureRuntime, launchServer, passengerLaunchArguments, probeNode, readActiveRuntime, restorePublicStaticAfterBuild, smokeRuntime, stashPublicStaticForBuild, syncPublicStatic };

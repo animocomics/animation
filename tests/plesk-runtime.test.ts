@@ -7,7 +7,7 @@ import { spawnSync } from "node:child_process";
 
 const root = path.resolve(__dirname, "..");
 const launcherPath = path.join(root, "scripts", "plesk-node22.cjs");
-const { passengerLaunchArguments, probeNode, syncPublicStatic } = require(launcherPath);
+const { discardPublicStaticBackup, passengerLaunchArguments, probeNode, restorePublicStaticAfterBuild, stashPublicStaticForBuild, syncPublicStatic } = require(launcherPath);
 
 function fakeNode(directory: string, version: string) {
   const binary = path.join(directory, "node");
@@ -98,6 +98,41 @@ test("Plesk build publishes only generated Next.js assets for nginx and preserve
     syncPublicStatic(directory);
     assert.equal(fs.readFileSync(path.join(target, "chunks", "app.js"), "utf8"), "next-build");
     assert.equal(fs.readdirSync(path.join(directory, "public", "_next")).some((entry) => entry.startsWith(".static-")), false);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("Plesk build stashes public Next assets for conflict-free builds and safe rollback", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nomreh-public-build-stash-"));
+  try {
+    const publicNext = path.join(directory, "public", "_next");
+    const oldStatic = path.join(publicNext, "static", "chunks");
+    const newSource = path.join(directory, ".next", "static", "chunks");
+    fs.mkdirSync(oldStatic, { recursive: true });
+    fs.mkdirSync(newSource, { recursive: true });
+    fs.writeFileSync(path.join(directory, ".next", "BUILD_ID"), "new-build");
+    fs.writeFileSync(path.join(oldStatic, "old.js"), "old-assets");
+    fs.writeFileSync(path.join(publicNext, "keep.txt"), "preserved-public-entry");
+    fs.writeFileSync(path.join(newSource, "new.js"), "new-assets");
+
+    const rollback = stashPublicStaticForBuild(directory);
+    assert.equal(fs.existsSync(publicNext), false);
+    fs.mkdirSync(path.join(publicNext, "static"), { recursive: true });
+    fs.writeFileSync(path.join(publicNext, "static", "incomplete.js"), "incomplete");
+    restorePublicStaticAfterBuild(rollback);
+    assert.equal(fs.readFileSync(path.join(oldStatic, "old.js"), "utf8"), "old-assets");
+    assert.equal(fs.existsSync(path.join(publicNext, "static", "incomplete.js")), false);
+    assert.equal(fs.readFileSync(path.join(publicNext, "keep.txt"), "utf8"), "preserved-public-entry");
+
+    const successful = stashPublicStaticForBuild(directory);
+    restorePublicStaticAfterBuild(successful, true);
+    syncPublicStatic(directory);
+    assert.equal(fs.readFileSync(path.join(publicNext, "static", "chunks", "new.js"), "utf8"), "new-assets");
+    assert.equal(fs.existsSync(path.join(publicNext, "static", "chunks", "old.js")), false);
+    assert.equal(fs.readFileSync(path.join(publicNext, "keep.txt"), "utf8"), "preserved-public-entry");
+    discardPublicStaticBackup(successful);
+    assert.equal(fs.existsSync(successful.backup), false);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

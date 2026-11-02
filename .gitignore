@@ -13,3 +13,4 @@ data/
 *.db
 *.db-shm
 *.db-wal
+.nomreh-public-next-backup-*
