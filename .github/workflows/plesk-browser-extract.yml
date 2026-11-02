@@ -44,7 +44,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          upload_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41465774811" --jq '.status + " " + .conclusion')"
+          upload_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41475893904" --jq '.status + " " + .conclusion')"
           test "$upload_state" = "completed success"
           grep -F 'Nomreh Passenger-aware launcher is active for this build.' scripts/plesk-node22.cjs > /dev/null
           grep -F 'return [mainFile];' scripts/plesk-node22.cjs > /dev/null
@@ -68,7 +68,7 @@ jobs:
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
           PLESK_BROWSER_ACTION: extract
-          PLESK_ARCHIVE_NAME: nomreh-deploy-provider-cleanup-v8.zip
+          PLESK_ARCHIVE_NAME: nomreh-deploy-gemini-schema-v9.zip
           PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-plesk-extract.md
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
         run: node scripts/plesk-browser-diagnostics.cjs
