@@ -1,0 +1,60 @@
+name: Nomreh live HTTPS validation
+
+on:
+  push:
+    branches:
+      - arena/f4b832aa-animation
+    paths:
+      - .github/workflows/nomreh-live-validation.yml
+      - scripts/nomreh-live-check.cjs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+  actions: read
+
+concurrency:
+  group: nomreh-live-validation
+  cancel-in-progress: false
+
+jobs:
+  public-live-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out the independent live validator
+        uses: actions/checkout@v4
+
+      - name: Verify the acknowledged Passenger restart
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          restart_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41430615575" --jq '.status + " " + .conclusion')"
+          test "$restart_state" = "completed success"
+
+      - name: Validate the real public Nomreh site
+        id: live
+        env:
+          NOMREH_LIVE_OUTPUT: ${{ runner.temp }}/nomreh-live.md
+        run: node scripts/nomreh-live-check.cjs
+
+      - name: Publish the independent live-validation evidence
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LIVE_OUTCOME: ${{ steps.live.outcome }}
+        run: |
+          set -euo pipefail
+          conclusion=failure
+          summary='The live validator did not produce a report; no live-success claim was made.'
+          if [ "$LIVE_OUTCOME" = success ]; then conclusion=success; fi
+          if [ -f "$RUNNER_TEMP/nomreh-live.md" ]; then summary="$(cat "$RUNNER_TEMP/nomreh-live.md")"; fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name="Nomreh live HTTPS validation" \
+            -f head_sha="${GITHUB_SHA}" \
+            -f status=completed \
+            -f conclusion="$conclusion" \
+            -f 'output[title]=Independent public Nomreh response checks' \
+            --raw-field "output[summary]=${summary}" > /dev/null
