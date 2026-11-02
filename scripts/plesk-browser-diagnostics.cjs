@@ -150,7 +150,6 @@ async function main() {
     }
     if (domainFound) {
       const toolPages = [
-        ["Git", "/modules/git/index.php/domain/repositories"],
         ["Node.js", "/modules/nodejs/index.php/domain/index"],
       ];
       for (const [label, toolPath] of toolPages) {
@@ -193,7 +192,7 @@ async function main() {
           const fileLinks = await page.locator("a").evaluateAll((anchors) => anchors.map((anchor) => ({
             text: (anchor.textContent || "").trim().replace(/\s+/g, " "),
             href: anchor.getAttribute("href") || "",
-          })).filter((item) => /^(nomreh\.|nomreh-data|public|package(-lock)?\.json|server\.js|next\.config|scripts|node_modules|\.next|git)$/i.test(item.text)).slice(0, 30));
+          })).filter((item) => /^(nomreh\.|nomreh-data|httpdocs|public|package(-lock)?\.json|server\.js|next\.config|scripts|node_modules|\.next|git)$/i.test(item.text)).slice(0, 30));
           for (const link of fileLinks) lines.push(`- File entry: ${sanitize(link.text)}${link.href.startsWith("/") ? ` (${sanitize(new URL(link.href, page.url()).pathname)})` : ""}`);
           if (fileLinks.length) lines.push("");
           const appLink = fileLinks.find((link) => link.text.toLowerCase() === DOMAIN);
