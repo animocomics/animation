@@ -9,7 +9,8 @@ export interface ShecanDohRecord {
   ttl: number;
 }
 
-function encodeQuery(hostname: string): Buffer {
+export function encodeShecanDnsQuery(hostname: string, id = 0): Buffer {
+  if (!Number.isInteger(id) || id < 0 || id > 65_535) throw new Error("Shecan DNS received an invalid query ID");
   const normalized = hostname.toLowerCase().replace(/\.$/, "");
   if (!normalized || normalized.length > 253 || !/^[a-z0-9.-]+$/.test(normalized)) {
     throw new Error("Shecan DoH received an invalid hostname");
@@ -28,7 +29,7 @@ function encodeQuery(hostname: string): Buffer {
   const header = Buffer.alloc(12);
   // ID zero is valid for a cacheable RFC 8484 GET request. RD is set; no
   // cookies, update-link paths, credentials, or client identifiers are sent.
-  header.writeUInt16BE(0, 0);
+  header.writeUInt16BE(id, 0);
   header.writeUInt16BE(0x0100, 2);
   header.writeUInt16BE(1, 4);
   const question = Buffer.alloc(4);
@@ -54,9 +55,9 @@ function skipName(packet: Buffer, initialOffset: number): number {
   throw new Error("Shecan DoH returned too many DNS labels");
 }
 
-export function parseShecanDohMessage(packet: Buffer): ShecanDohRecord[] {
+export function parseShecanDohMessage(packet: Buffer, expectedId = 0): ShecanDohRecord[] {
   if (packet.length < 12 || packet.length > MAX_DNS_MESSAGE_BYTES) throw new Error("Shecan DoH returned an invalid DNS message size");
-  if (packet.readUInt16BE(0) !== 0 || !(packet.readUInt16BE(2) & 0x8000)) throw new Error("Shecan DoH returned a mismatched DNS response");
+  if (packet.readUInt16BE(0) !== expectedId || !(packet.readUInt16BE(2) & 0x8000)) throw new Error("Shecan DoH returned a mismatched DNS response");
   const flags = packet.readUInt16BE(2);
   if (flags & 0x0200) throw new Error("Shecan DoH returned a truncated DNS response");
   if ((flags & 0x000f) !== 0) throw new Error(`Shecan DoH returned DNS status ${flags & 0x000f}`);
@@ -90,7 +91,7 @@ export function parseShecanDohMessage(packet: Buffer): ShecanDohRecord[] {
 
 export async function resolveShecanDoh(hostname: string): Promise<ShecanDohRecord[]> {
   const endpoint = new URL(SHECAN_DOH_ENDPOINT);
-  endpoint.searchParams.set("dns", encodeQuery(hostname).toString("base64url"));
+  endpoint.searchParams.set("dns", encodeShecanDnsQuery(hostname).toString("base64url"));
   return new Promise<ShecanDohRecord[]>((resolve, reject) => {
     const request = https.request(endpoint, {
       method: "GET",

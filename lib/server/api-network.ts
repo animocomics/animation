@@ -9,6 +9,7 @@ import type { ApiNetworkPublicStatus } from "../types";
 import { SHECAN_DNS, type ProviderNetworkConfig } from "../api-network";
 import { closeProviderNetwork, createShecanLookup, providerFetch, ProviderNetworkError } from "./provider-network";
 import { resolveShecanDoh } from "./shecan-doh";
+import { resolveShecanDns5353 } from "./shecan-dns5353";
 import { decryptSecret, encryptSecret } from "./secret-crypto";
 
 const UPDATE_URL_PURPOSE = "nomreh-api-network-v1";
@@ -348,12 +349,17 @@ async function curlUpdateStatus(updateUrl: string, servers: [string, string], ad
   return status;
 }
 
-async function curlUpdateStatusWithFallback(updateUrl: string, servers: [string, string]): Promise<number> {
+async function curlUpdateStatusWithFallback(
+  updateUrl: string,
+  servers: [string, string],
+  dns5353Resolver: typeof resolveShecanDns5353 = resolveShecanDns5353,
+): Promise<number> {
   const hostname = new URL(updateUrl).hostname;
   const shecan = createShecanLookup(servers);
   const attempted = new Set<string>();
   let lastError: unknown;
   let dohNote = "";
+  let dns5353Note = "";
   const shecanAddresses = await shecan.resolve(hostname).catch(() => [] as string[]);
   for (const address of shecanAddresses) {
     attempted.add(address);
@@ -387,6 +393,30 @@ async function curlUpdateStatusWithFallback(updateUrl: string, servers: [string,
       }
     }
   }
+  // The official DNS-cache guide forwards to Shecan on port 5353. Query that
+  // service directly inside this process, without installing a DNS server or
+  // changing the host resolver, and retry only fresh addresses with curl.
+  if (safeNetworkCode(lastError) !== "ENOENT") {
+    let dns5353Addresses: string[] | undefined;
+    try {
+      dns5353Addresses = await dns5353Resolver(hostname, servers).then((records) => records.map((record) => record.address).filter(isIPv4));
+    } catch (error) {
+      const code = safeNetworkCode(error);
+      dns5353Note = ["TIMEOUT", "DNS_5353_TIMEOUT"].includes(code) ? "TIMEOUT" : "FAILED";
+    }
+    if (dns5353Addresses) {
+      const freshAddresses = [...new Set(dns5353Addresses)].filter((address) => !attempted.has(address));
+      dns5353Note = freshAddresses.length ? "RETRIED" : "SAME";
+      for (const address of freshAddresses) {
+        attempted.add(address);
+        try { return await curlUpdateStatus(updateUrl, servers, address); }
+        catch (error) {
+          if (error instanceof ApiNetworkError) throw error;
+          lastError = error;
+        }
+      }
+    }
+  }
   // Native HTTPS handles the next independent attempt after connection errors.
   // System resolution is needed here only when no address has failed yet.
   if (!lastError) {
@@ -403,12 +433,15 @@ async function curlUpdateStatusWithFallback(updateUrl: string, servers: [string,
       }
     }
   }
+  if (lastError && dns5353Note) {
+    throw Object.assign(new Error("Shecan curl and documented port-5353 DNS fallback failed"), { code: `CURL_5353_${dns5353Note}`, cause: lastError });
+  }
   if (lastError && dohNote) {
     const baseCode = safeNetworkCode(lastError);
     const prefix = baseCode === "TIMEOUT" ? "CURL_TIMEOUT" : baseCode === "CURL_CONNECT_FAILED" ? "CURL_CONNECT" : "CURL";
     throw Object.assign(new Error("Shecan curl and official DoH fallback failed"), { code: `${prefix}_DOH_${dohNote}`, cause: lastError });
   }
-  throw lastError || Object.assign(new Error("Shecan curl did not return a response"), { code: dohNote ? `CURL_DOH_${dohNote}` : "NO_RESPONSE" });
+  throw lastError || Object.assign(new Error("Shecan curl did not return a response"), { code: dns5353Note ? `CURL_5353_${dns5353Note}` : dohNote ? `CURL_DOH_${dohNote}` : "NO_RESPONSE" });
 }
 
 async function nativeUpdateStatus(updateUrl: string, lookup: NonNullable<TcpSocketConnectOpts["lookup"]>, redirectCount = 0): Promise<number> {
@@ -493,7 +526,12 @@ async function nativeUpdateStatusWithFallback(updateUrl: string, servers: [strin
   throw lastError || Object.assign(new Error("Shecan native HTTPS did not return a response"), { code: "NO_RESPONSE" });
 }
 
-async function activateUpdateUrl(updateUrl: string, servers: [string, string], settleMs = 60_000): Promise<string> {
+async function activateUpdateUrl(
+  updateUrl: string,
+  servers: [string, string],
+  settleMs = 60_000,
+  dns5353Resolver: typeof resolveShecanDns5353 = resolveShecanDns5353,
+): Promise<string> {
   try {
     await activateUpdateUrlWithFetch(updateUrl, servers);
   } catch (error) {
@@ -502,7 +540,7 @@ async function activateUpdateUrl(updateUrl: string, servers: [string, string], s
     // Native Node HTTPS remains an independent fallback if libcurl is absent
     // or cannot establish the update connection either.
     try {
-      const status = await curlUpdateStatusWithFallback(updateUrl, servers);
+      const status = await curlUpdateStatusWithFallback(updateUrl, servers, dns5353Resolver);
       if (status < 200 || status >= 300) {
         throw new ApiNetworkError(`شکن لینک به‌روزرسان را نپذیرفت (HTTP ${status}). لینک را از همان سفارش فعال دوباره کپی کنید.`, 400);
       }
@@ -547,7 +585,7 @@ async function testGoogleThroughShecan(network: ProviderNetworkConfig): Promise<
   const startedAt = Date.now();
   const response = await providerFetch(`https://${TEST_HOST}/v1beta/models`, {
     cache: "no-store",
-    signal: AbortSignal.timeout(20_000),
+    signal: AbortSignal.timeout(60_000),
   }, { ...network, enabled: true });
   const text = await response.text();
   let payload: { error?: { message?: string }; models?: unknown[] } = {};
@@ -562,7 +600,11 @@ async function testGoogleThroughShecan(network: ProviderNetworkConfig): Promise<
   throw new ApiNetworkError(`پاسخ Google برای آزمایش شبکه معتبر نبود (HTTP ${response.status})؛ شکن فعال‌سازی نمی‌شود.`, 502);
 }
 
-export async function saveAndTestApiNetwork(input: SaveApiNetworkInput, userId: string, options: { activationSettleMs?: number } = {}): Promise<ApiNetworkPublicStatus> {
+export async function saveAndTestApiNetwork(
+  input: SaveApiNetworkInput,
+  userId: string,
+  options: { activationSettleMs?: number; dns5353Resolver?: typeof resolveShecanDns5353 } = {},
+): Promise<ApiNetworkPublicStatus> {
   if (!input.servers.every((server) => isIPv4(server))) throw new ApiNetworkError("هر دو آدرس DNS باید IPv4 معتبر باشند.", 400);
   const previous = await findRow();
   const now = new Date().toISOString();
@@ -590,7 +632,7 @@ export async function saveAndTestApiNetwork(input: SaveApiNetworkInput, userId: 
 
   if (input.enabled) {
     try {
-      if (updateUrl) activatedAt = await activateUpdateUrl(updateUrl, input.servers, options.activationSettleMs ?? 60_000);
+      if (updateUrl) activatedAt = await activateUpdateUrl(updateUrl, input.servers, options.activationSettleMs ?? 60_000, options.dns5353Resolver);
       latency = await testGoogleThroughShecan(network);
       enabled = true;
       testStatus = "success";

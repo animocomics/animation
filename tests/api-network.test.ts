@@ -7,7 +7,7 @@ import childProcess from "node:child_process";
 import { EventEmitter } from "node:events";
 import { Resolver } from "node:dns/promises";
 import test from "node:test";
-import { createShecanLookup, providerFetch, ProviderNetworkError } from "../lib/server/provider-network";
+import { closeProviderNetwork, createShecanLookup, providerFetch, ProviderNetworkError } from "../lib/server/provider-network";
 import { parseShecanDohMessage } from "../lib/server/shecan-doh";
 
 const dataDirectory = mkdtempSync(path.join(tmpdir(), "nomreh-api-network-"));
@@ -109,6 +109,38 @@ test("providerFetch attaches an AI-only dispatcher when enabled and stays direct
     assert.equal(seen[1].dispatcher, undefined, "ordinary traffic must not inherit the provider dispatcher");
     assert.equal(seen[2].dispatcher, undefined, "disabled network must preserve direct provider behavior");
   } finally {
+    globalThis.fetch = originalFetch;
+    Resolver.prototype.resolve4 = originalResolve;
+  }
+});
+
+test("Pro provider fetch retries through documented DNS 5353 without direct fallback", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalResolve = Resolver.prototype.resolve4;
+  const dispatchers: unknown[] = [];
+  let dns5353Calls = 0;
+  Resolver.prototype.resolve4 = (async () => [{ address: "203.0.113.50", ttl: 60 }]) as unknown as typeof Resolver.prototype.resolve4;
+  globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+    dispatchers.push((init as RequestInit & { dispatcher?: unknown } | undefined)?.dispatcher);
+    if (dispatchers.length === 1) throw Object.assign(new Error("mock cached route timeout"), { code: "UND_ERR_CONNECT_TIMEOUT" });
+    return Response.json({ ok: true });
+  }) as typeof fetch;
+  const network = { enabled: true, plan: "pro" as const, servers: ["198.51.100.40", "198.51.100.41"] as [string, string] };
+  try {
+    const response = await providerFetch("https://generativelanguage.googleapis.com/v1beta/models", {}, network, async (hostname, servers) => {
+      dns5353Calls += 1;
+      assert.equal(hostname, "generativelanguage.googleapis.com");
+      assert.deepEqual(servers, network.servers);
+      return [{ address: "203.0.113.51", ttl: 180 }];
+    });
+    assert.deepEqual(await response.json(), { ok: true });
+    assert.equal(dns5353Calls, 1);
+    assert.equal(dispatchers.length, 2);
+    assert.ok(dispatchers[0]);
+    assert.ok(dispatchers[1]);
+    assert.notEqual(dispatchers[0], dispatchers[1]);
+  } finally {
+    closeProviderNetwork();
     globalThis.fetch = originalFetch;
     Resolver.prototype.resolve4 = originalResolve;
   }
@@ -379,6 +411,93 @@ test("curl timeout retries a fresh official DoH address without using native HTT
     assert.equal(configs.length, 2);
     assert.match(configs[0], /ddns\.shecan\.ir:443:203\.0\.113\.41/);
     assert.match(configs[1], /ddns\.shecan\.ir:443:185\.143\.234\.133/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    https.request = originalRequest;
+    childProcess.spawn = originalSpawn;
+    Resolver.prototype.resolve4 = originalResolve;
+  }
+});
+
+test("curl timeout uses a fresh documented DNS 5353 address after a stale DoH answer", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalRequest = https.request;
+  const originalSpawn = childProcess.spawn;
+  const originalResolve = Resolver.prototype.resolve4;
+  const updateUrl = "https://ddns.shecan.ir/update/test-curl-5353-retry";
+  const configs: string[] = [];
+  let dns5353Calls = 0;
+  Resolver.prototype.resolve4 = (async () => [{ address: "203.0.113.41", ttl: 60 }]) as unknown as typeof Resolver.prototype.resolve4;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url === updateUrl) throw Object.assign(new Error("mock fetch transport failure"), { code: "FETCH_FAILED" });
+    if (url === "https://ddns.shecan.ir") return new Response(null, { status: 404 });
+    if (url === "https://generativelanguage.googleapis.com/v1beta/models") {
+      return Response.json({ error: { message: "API key not valid. Please pass a valid API key." } }, { status: 400 });
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  }) as typeof fetch;
+  https.request = ((input: URL, _options: unknown, callback: (response: EventEmitter) => void) => {
+    assert.equal(new URL(String(input)).hostname, "pro.shecan.ir");
+    const request = new EventEmitter() as EventEmitter & { end: () => void; destroy: (error?: Error) => void };
+    request.end = () => {
+      const response = new EventEmitter() as EventEmitter & { statusCode: number };
+      response.statusCode = 200;
+      const question = Buffer.from([4, 100, 100, 110, 115, 6, 115, 104, 101, 99, 97, 110, 2, 105, 114, 0, 0, 1, 0, 1]);
+      const answer = Buffer.from([0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 180, 0, 4, 203, 0, 113, 41]);
+      const header = Buffer.from([0, 0, 0x81, 0x80, 0, 1, 0, 1, 0, 0, 0, 0]);
+      callback(response);
+      process.nextTick(() => {
+        response.emit("data", Buffer.concat([header, question, answer]));
+        response.emit("end");
+      });
+    };
+    request.destroy = (error?: Error) => { if (error) request.emit("error", error); };
+    return request as unknown as ReturnType<typeof https.request>;
+  }) as typeof https.request;
+  childProcess.spawn = (() => {
+    const call = configs.length;
+    const child = new EventEmitter() as EventEmitter & {
+      stdout: EventEmitter;
+      stderr: EventEmitter;
+      stdin: EventEmitter & { end: (value: string) => void };
+      kill: () => void;
+    };
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.stdin = Object.assign(new EventEmitter(), {
+      end: (value: string) => {
+        configs.push(value);
+        process.nextTick(() => {
+          if (call === 0) child.emit("close", 28);
+          else child.stdout.emit("data", Buffer.from("HTTP/1.1 200 OK\r\n\r\n"));
+        });
+      },
+    });
+    child.kill = () => undefined;
+    return child as unknown as ReturnType<typeof childProcess.spawn>;
+  }) as typeof childProcess.spawn;
+  try {
+    const { saveAndTestApiNetwork } = await import("../lib/server/api-network");
+    const { getDb } = await import("../lib/server/db");
+    const admin = getDb().prepare("SELECT id FROM users WHERE role='admin' ORDER BY created_at LIMIT 1").get() as { id: string };
+    const status = await saveAndTestApiNetwork(
+      { enabled: true, plan: "pro", servers: ["198.51.100.42", "198.51.100.43"], updateUrl },
+      admin.id,
+      {
+        activationSettleMs: 0,
+        dns5353Resolver: async (hostname, servers) => {
+          dns5353Calls += 1;
+          assert.equal(hostname, "ddns.shecan.ir");
+          assert.deepEqual(servers, ["198.51.100.42", "198.51.100.43"]);
+          return [{ address: "185.143.233.133", ttl: 180 }];
+        },
+      },
+    );
+    assert.equal(status.enabled, true);
+    assert.equal(dns5353Calls, 1);
+    assert.equal(configs.length, 2);
+    assert.match(configs[1], /ddns\.shecan\.ir:443:185\.143\.233\.133/);
   } finally {
     globalThis.fetch = originalFetch;
     https.request = originalRequest;

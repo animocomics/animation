@@ -5,6 +5,7 @@ import type { TcpSocketConnectOpts } from "node:net";
 import { Agent } from "undici";
 import type { ProviderNetworkConfig } from "../api-network";
 import { resolveShecanDoh, type ShecanDohRecord } from "./shecan-doh";
+import { resolveShecanDns5353 } from "./shecan-dns5353";
 
 const PROVIDER_HOSTNAMES = new Set([
   "api.openai.com",
@@ -34,6 +35,7 @@ interface CachedNetwork {
   agent: Agent;
   lookup: Lookup;
   resolve: (hostname: string) => Promise<string[]>;
+  fallbackAgents: Map<string, Agent>;
 }
 
 interface NetworkGlobal {
@@ -115,6 +117,19 @@ export function createShecanLookup(
   return { lookup, resolve };
 }
 
+function fixedIpv4Lookup(address: string): Lookup {
+  return (_hostname, options: LookupOptions, callback: LookupCallback) => {
+    if (options.all) callback(null, [{ address, family: 4 }]);
+    else callback(null, address, 4);
+  };
+}
+
+function closeCachedNetwork(network: CachedNetwork): void {
+  void network.agent.close().catch(() => undefined);
+  for (const agent of network.fallbackAgents.values()) void agent.close().catch(() => undefined);
+  network.fallbackAgents.clear();
+}
+
 function networkKey(config: ProviderNetworkConfig): string {
   return `${config.plan}:${config.servers.join(",")}`;
 }
@@ -122,14 +137,14 @@ function networkKey(config: ProviderNetworkConfig): string {
 function getNetwork(config: ProviderNetworkConfig): CachedNetwork {
   const key = networkKey(config);
   if (globalStore.__nomrehProviderNetwork?.key === key) return globalStore.__nomrehProviderNetwork;
-  if (globalStore.__nomrehProviderNetwork) void globalStore.__nomrehProviderNetwork.agent.close().catch(() => undefined);
+  if (globalStore.__nomrehProviderNetwork) closeCachedNetwork(globalStore.__nomrehProviderNetwork);
   const { lookup, resolve } = createShecanLookup(config.servers);
   const agent = new Agent({
     connect: { lookup, timeout: 20_000 },
     keepAliveTimeout: 10_000,
     keepAliveMaxTimeout: 60_000,
   });
-  globalStore.__nomrehProviderNetwork = { key, agent, lookup, resolve };
+  globalStore.__nomrehProviderNetwork = { key, agent, lookup, resolve, fallbackAgents: new Map() };
   return globalStore.__nomrehProviderNetwork;
 }
 
@@ -141,24 +156,53 @@ export function closeProviderNetwork(): void {
   const current = globalStore.__nomrehProviderNetwork;
   if (!current) return;
   delete globalStore.__nomrehProviderNetwork;
-  void current.agent.close().catch(() => undefined);
+  closeCachedNetwork(current);
 }
 
 /** Fetch only a provider API through Shecan. Other application traffic never receives this dispatcher. */
-export async function providerFetch(url: string, init: RequestInit = {}, network?: ProviderNetworkConfig): Promise<Response> {
+export async function providerFetch(
+  url: string,
+  init: RequestInit = {},
+  network?: ProviderNetworkConfig,
+  dns5353Resolver: typeof resolveShecanDns5353 = resolveShecanDns5353,
+): Promise<Response> {
   const hostname = new URL(url).hostname.toLowerCase();
   if (!network?.enabled || !isProviderHostname(hostname)) {
     if (!network?.enabled && isProviderHostname(hostname)) closeProviderNetwork();
     return fetch(url, init);
   }
   const entry = getNetwork(network);
-  // Resolve before fetch so DNS failures remain distinguishable and cannot silently fall back to a direct request.
-  await entry.resolve(hostname);
+  let lastError: unknown;
   try {
-    const requestInit = { ...init, dispatcher: entry.agent } as RequestInit;
-    return await fetch(url, requestInit);
+    // Resolve before fetch so DNS failures remain distinguishable and cannot silently fall back to a direct request.
+    await entry.resolve(hostname);
+    return await fetch(url, { ...init, dispatcher: entry.agent } as RequestInit);
   } catch (error) {
-    if (error instanceof Error && ["TimeoutError", "AbortError"].includes(error.name)) throw error;
-    throw new ProviderNetworkError("ارتباط HTTPS با سرویس‌دهنده از مسیر شکن برقرار نشد؛ وضعیت شکن را در مدیریت سامانه آزمایش کنید.", "connection", { cause: error });
+    lastError = error;
   }
+  // Shecan documents port 5353 for ISP DNS-cache cases. Retry Pro provider
+  // traffic only with fresh, explicitly resolved addresses and a scoped agent.
+  if (network.plan === "pro") {
+    const addresses = await dns5353Resolver(hostname, network.servers)
+      .then((records) => [...new Set(records.map((record) => record.address).filter(isIPv4))])
+      .catch(() => [] as string[]);
+    for (const address of addresses) {
+      let agent = entry.fallbackAgents.get(address);
+      if (!agent) {
+        agent = new Agent({
+          connect: { lookup: fixedIpv4Lookup(address), timeout: 20_000 },
+          keepAliveTimeout: 10_000,
+          keepAliveMaxTimeout: 60_000,
+        });
+        entry.fallbackAgents.set(address, agent);
+      }
+      try {
+        return await fetch(url, { ...init, dispatcher: agent } as RequestInit);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+  }
+  if (lastError instanceof Error && ["TimeoutError", "AbortError"].includes(lastError.name)) throw lastError;
+  throw new ProviderNetworkError("ارتباط HTTPS با سرویس‌دهنده از مسیر شکن برقرار نشد؛ وضعیت شکن را در مدیریت سامانه آزمایش کنید.", "connection", { cause: lastError });
 }
