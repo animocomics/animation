@@ -72,7 +72,7 @@ async function main() {
       : ACTION === "disk"
         ? "Controlled read-only action: run Nomreh's disk report only. No build, deletion, restart, or settings change is attempted."
         : ACTION === "fix-node-version"
-          ? "Controlled action: preserve Nomreh's incorrect Node 24 override as a backup and pin its untracked .node-version file to Plesk's installed Node 17.9.1. No application source, persistent data, build, restart, or other domain is touched."
+          ? "Controlled action: preserve Nomreh's Node override backups and pin its untracked .node-version file only to a verified installed nodenv version. No application source, persistent data, build, restart, or other domain is touched."
           : "Controlled action: run the validated Nomreh production build with its domain-local Node 22 runtime. Node.js enablement and restart remain pending.";
   const lines = ["# Plesk browser diagnostics", "", readOnly
     ? "Read-only browser inspection. No settings, deployments or files were changed."
@@ -326,7 +326,7 @@ async function main() {
               const consoleOutput = await outputElement.innerText().catch(() => "");
               latestConsoleOutput = consoleOutput;
               if (Date.now() - lastDiskProgressReport > 15000) {
-                const partial = `${consoleOutput}\n${responseOutput}`.split(/\r?\n/).map((line) => line.trim()).filter((line) => /Nomreh|Application|Persistent|Dependencies|Production build|Runtime|uploads|Available space|MiB|GiB|npm|space:plesk|node|du\b|df\b|failed|error/i.test(line) && !/secret|token|password|credential|api.key/i.test(line)).slice(-12);
+                const partial = `${consoleOutput}\n${responseOutput}`.split(/\r?\n/).map((line) => line.trim()).filter((line) => (/Nomreh|Application|Persistent|Dependencies|Production build|Runtime|uploads|Available space|MiB|GiB|npm|space:plesk|node|du\b|df\b|failed|error/i.test(line) || /^\d+\.\d+\.\d+$/.test(line)) && !/secret|token|password|credential|api.key/i.test(line)).slice(-12);
                 if (partial.length) console.log(sanitize(partial.join("\n")));
                 if (responseSummaries.length) console.log(sanitize(responseSummaries.slice(-5).join("\n")));
                 lastDiskProgressReport = Date.now();
@@ -353,7 +353,7 @@ async function main() {
             capturing = false;
             page.off("response", responseHandler);
             for (const response of responseSummaries.slice(0, 20)) lines.push(`- Execution response: ${sanitize(response)}`);
-            const partialLines = `${latestConsoleOutput}\n${responseOutput}`.split(/\r?\n/).map((line) => line.trim()).filter((line) => /Nomreh|Application|Persistent|Dependencies|Production build|Runtime|uploads|Available space|MiB|GiB|npm|space:plesk|node|du\b|df\b|failed|error/i.test(line) && !/secret|token|password|credential|api.key/i.test(line)).slice(-40);
+            const partialLines = `${latestConsoleOutput}\n${responseOutput}`.split(/\r?\n/).map((line) => line.trim()).filter((line) => (/Nomreh|Application|Persistent|Dependencies|Production build|Runtime|uploads|Available space|MiB|GiB|npm|space:plesk|node|du\b|df\b|failed|error/i.test(line) || /^\d+\.\d+\.\d+$/.test(line)) && !/secret|token|password|credential|api.key/i.test(line)).slice(-40);
             for (const line of partialLines) lines.push(`- Partial disk output: ${sanitize(line.slice(0, 400))}`);
             if (!responseSummaries.length && !partialLines.length) lines.push("- No execution response or sanitized partial output was exposed by Plesk.");
           }
@@ -457,7 +457,10 @@ async function main() {
             }
             if (ACTION === "fix-node-version") {
               const originalName = ".node-version";
-              const backupName = ".node-version.nomreh-backup";
+              const backupName = process.env.PLESK_NODE_BACKUP_NAME || ".node-version.nomreh-backup";
+              const desiredNodeVersion = process.env.PLESK_NODENV_VERSION || "17.9.1";
+              if (!/^\.node-version\.[a-z0-9.-]+$/i.test(backupName) || backupName === originalName) throw new Error("The requested Node override backup name is invalid. No file was changed.");
+              if (!/^\d+\.\d+\.\d+$/.test(desiredNodeVersion)) throw new Error("The requested nodenv version must be an exact numeric version. No file was changed.");
               lines.push("## Controlled Nomreh Node version override fix", "");
               if (!fileBody.includes("package.json") || !fileBody.includes("server.js") || !fileBody.includes(ARCHIVE_NAME)) {
                 throw new Error("The File Manager is not verified at Nomreh's application root. The Node version override was not changed.");
@@ -470,8 +473,10 @@ async function main() {
                 const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "nomreh-node-version-"));
                 const localVersionFile = path.join(temporaryDirectory, originalName);
                 try {
-                  fs.writeFileSync(localVersionFile, "17.9.1\n", { mode: 0o600 });
-                  lines.push("- The original Node 24 override is preserved as a backup. Uploading a new .node-version pinned to Plesk's installed Node 17.9.1.", "");
+                  const versionFileContents = `${desiredNodeVersion}\n`;
+                  const expectedVersionBytes = Buffer.byteLength(versionFileContents);
+                  fs.writeFileSync(localVersionFile, versionFileContents, { mode: 0o600 });
+                  lines.push(`- The original Node 24 override is preserved as a backup. Uploading a new .node-version pinned to the verified installed nodenv version ${desiredNodeVersion}.`, "");
                   const addNewButton = page.getByRole("button", { name: "Add New", exact: true }).first();
                   if (!await addNewButton.count()) throw new Error("The Add New control was not found. The corrected Node version file was not uploaded.");
                   await addNewButton.click({ timeout: 5000 });
@@ -485,9 +490,9 @@ async function main() {
                   await page.waitForFunction((expected) => Array.from(document.querySelectorAll("a")).some((anchor) => (anchor.textContent || "").trim() === expected), originalName, { timeout: 60000 });
                   await page.waitForTimeout(1000);
                   const uploadedRow = await page.getByText(originalName, { exact: true }).first().locator("xpath=ancestor::*[.//input[@type='checkbox']][1]").innerText().catch(() => "");
-                  if (!/\b7\s*B\b/i.test(uploadedRow)) throw new Error("The uploaded .node-version did not have the expected seven-byte size. No overwrite or build was attempted.");
+                  if (!new RegExp(`\\b${expectedVersionBytes}\\s*B\\b`, "i").test(uploadedRow)) throw new Error("The uploaded .node-version did not have the expected byte size. No overwrite or build was attempted.");
                   if (!await page.getByText(backupName, { exact: true }).count()) throw new Error("The preserved Node 24 backup is no longer visible. No build or further host change was attempted.");
-                  lines.push(`- Corrected override entry: ${sanitize(uploadedRow.slice(0, 350))}`, "- Uploaded .node-version with Node 17.9.1; the Node 24 backup remains preserved.", "- No existing file was overwritten and no application source, persistent data, build, restart, or other domain was changed.", "");
+                  lines.push(`- Corrected override entry: ${sanitize(uploadedRow.slice(0, 350))}`, `- Uploaded .node-version with nodenv ${desiredNodeVersion}; the Node 24 backup remains preserved.`, "- No existing file was overwritten and no application source, persistent data, build, restart, or other domain was changed.", "");
                   actionCompleted = true;
                 } finally {
                   fs.rmSync(temporaryDirectory, { recursive: true, force: true });
@@ -553,7 +558,7 @@ async function main() {
                 const remainingOriginal = await page.getByText(originalName, { exact: true }).count();
                 const createdBackup = await page.getByText(backupName, { exact: true }).count();
                 if (remainingOriginal || !createdBackup) throw new Error("The .node-version rename could not be verified. No build or further host change was attempted.");
-                lines.push(`- Renamed ${originalName} to ${backupName} inside Nomreh only.`, "- The incorrect Node 24 override is no longer active; its contents remain preserved in the backup.", "- No application source, persistent data, build, restart, or other domain was changed.", "");
+                lines.push(`- Renamed ${originalName} to ${backupName} inside Nomreh only.`, "- The previous override is no longer active; its contents remain preserved in the backup.", "- No application source, persistent data, build, restart, or other domain was changed.", "");
                 actionCompleted = true;
               }
             }
