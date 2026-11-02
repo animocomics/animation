@@ -1,0 +1,72 @@
+name: Nomreh real-browser Shecan and provider check
+
+on:
+  push:
+    branches: [arena/f4b832aa-animation]
+    paths:
+      - scripts/nomreh-browser-shecan-check.cjs
+      - .github/workflows/nomreh-browser-shecan-check.yml
+
+permissions:
+  contents: read
+  checks: write
+
+concurrency:
+  group: nomreh-browser-shecan-check
+  cancel-in-progress: false
+
+jobs:
+  browser-shecan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install browser diagnostics
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund --package-lock=false
+          npm install --no-save --package-lock=false --ignore-scripts --no-audit --no-fund playwright
+          npx playwright install --with-deps chromium
+      - name: Run the real Shecan activation and provider test
+        env:
+          NOMREH_ADMIN_USERNAME: ${{ secrets.NOMREH_ADMIN_USERNAME }}
+          NOMREH_ADMIN_PASSWORD: ${{ secrets.NOMREH_ADMIN_PASSWORD }}
+          SHECAN_UPDATE_URL: ${{ secrets.SHECAN }}
+          NOMREH_BROWSER_SHECAN_OUTPUT: /tmp/nomreh-browser-shecan.md
+        run: node scripts/nomreh-browser-shecan-check.cjs
+      - name: Publish redacted browser evidence
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          test -s /tmp/nomreh-browser-shecan.md
+          python - <<'PY'
+          from pathlib import Path
+          import os, re
+          text = Path('/tmp/nomreh-browser-shecan.md').read_text()
+          if re.search(r'AIza[0-9A-Za-z_-]{8,}|nomreh_session=[^ ]+|Bearer\s+[A-Za-z0-9]|https?://', text):
+              raise SystemExit('Credential-like data or a private link was found in the browser report')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write(text)
+          print(text)
+          PY
+      - name: Store browser evidence in check output
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          test -s /tmp/nomreh-browser-shecan.md
+          check_id=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs" --jq '.check_runs[] | select(.name == "browser-shecan") | .id' | head -n 1)
+          test -n "$check_id"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          text = Path('/tmp/nomreh-browser-shecan.md').read_text()
+          Path('/tmp/nomreh-browser-shecan-check.json').write_text(json.dumps({'output': {'title': 'Nomreh real-browser Shecan and provider check', 'summary': text}}))
+          PY
+          gh api --method PATCH "repos/${GITHUB_REPOSITORY}/check-runs/${check_id}" --input /tmp/nomreh-browser-shecan-check.json >/dev/null
