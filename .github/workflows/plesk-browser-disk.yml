@@ -6,6 +6,7 @@ on:
       - arena/f4b832aa-animation
     paths:
       - .github/workflows/plesk-browser-disk.yml
+      - scripts/plesk-space.cjs
   workflow_dispatch:
 
 permissions:
