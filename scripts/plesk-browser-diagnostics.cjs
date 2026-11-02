@@ -771,6 +771,32 @@ async function main() {
           }
           break;
         }
+        if (ACTION === "diagnose") {
+          lines.push("## Existing nodenv runtime versions", "");
+          await page.goto(`${panel}${nomrehFilesPath}`, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => null);
+          await page.waitForTimeout(1500);
+          const nodenvLink = page.locator("a").filter({ hasText: /^\.nodenv$/ }).first();
+          if (!await nodenvLink.count()) {
+            lines.push("- The existing .nodenv directory was not visible; no runtime configuration was changed.", "");
+          } else {
+            await nodenvLink.click({ timeout: 8000 }).catch(() => undefined);
+            await page.waitForTimeout(1500);
+            const versionsLink = page.locator("a").filter({ hasText: /^versions$/ }).first();
+            if (!await versionsLink.count()) {
+              lines.push("- The existing .nodenv/versions directory was not visible; no runtime configuration was changed.", "");
+            } else {
+              await versionsLink.click({ timeout: 8000 }).catch(() => undefined);
+              await page.waitForTimeout(1500);
+              const versionNames = await page.locator("a").evaluateAll((anchors) => [...new Set(anchors.map((anchor) => (anchor.textContent || "").trim()).filter((text) => /^\d+\.\d+\.\d+$/.test(text)))]);
+              if (versionNames.length) {
+                for (const version of versionNames) lines.push(`- Installed nodenv version: ${version}`);
+              } else {
+                lines.push("- No numeric nodenv runtime versions were exposed in the directory listing.");
+              }
+              lines.push("- Read-only runtime inspection; no nodenv configuration or domain setting was changed.", "");
+            }
+          }
+        }
       }
     }
     if (["upload", "extract", "build", "status", "disk", "fix-node-version"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Node.js was not enabled or restarted.`);
