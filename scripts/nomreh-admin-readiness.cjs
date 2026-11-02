@@ -89,6 +89,12 @@ async function readAdminFromNodeDom(page) {
     };
     for (const key of keys) {
       const inputs = Array.from(document.querySelectorAll("input, textarea"));
+      const namedValue = inputs.find((input) => `${input.name || ""} ${input.id || ""} ${input.getAttribute("data-name") || ""}`.includes(key) && usable(String(input.value || ""), key));
+      if (namedValue) {
+        result.visibleKeys.push(key);
+        result.values[key] = namedValue.value;
+        continue;
+      }
       let marker = inputs.find((input) => String(input.value || "").trim() === key);
       if (!marker) {
         marker = Array.from(document.querySelectorAll("label, td, th, span, div")).find((element) => element.children.length === 0 && (element.textContent || "").trim() === key);
@@ -152,6 +158,11 @@ async function readConfiguredAdminFromPlesk() {
     if (!body.includes(`Node.js on ${DOMAIN}`) || !body.includes("Application Root") || !body.includes("/nomreh.arounidea.com") || !body.includes("server.js")) {
       throw new Error("The Node.js page was not verified as Nomreh's server.js application; no application credentials were read.");
     }
+    const scopedFileManagerHref = await page.locator("a[href*='/smb/file-manager/']").evaluateAll((anchors) => {
+      const match = anchors.map((anchor) => anchor.getAttribute("href") || "").find((href) => /domainId(?:\/|=)145(?:\D|$)/.test(href));
+      return match || "";
+    }).catch(() => "");
+    const scopedFileManagerUrl = scopedFileManagerHref ? new URL(scopedFileManagerHref, page.url()).toString() : "";
     const result = await page.evaluate(async (url) => {
       const response = await fetch(url, { credentials: "same-origin", cache: "no-store" });
       return { status: response.status, body: (await response.text()).slice(0, 2000000) };
@@ -185,17 +196,27 @@ async function readConfiguredAdminFromPlesk() {
       }
     }
     if (!configuredUsername || !configuredPassword) {
-      await page.goto(`${panel}/smb/file-manager/list/domainId/145`, { waitUntil: "domcontentloaded", timeout: 30000 });
-      await page.waitForTimeout(1800);
+      lines.push(`- File Manager link taken from the verified scoped Node.js page: ${scopedFileManagerUrl ? "yes" : "no; scoped numeric fallback used"}.`);
+      await page.goto(scopedFileManagerUrl || `${panel}/smb/file-manager/list/domainId/145`, { waitUntil: "domcontentloaded", timeout: 30000 });
+      await page.waitForTimeout(2500);
       const appFolder = page.locator("a.tree-item-content").filter({ hasText: DOMAIN }).first();
       if (await appFolder.count()) {
         await appFolder.click({ timeout: 8000 }).catch(() => undefined);
-        await page.waitForTimeout(2000);
+        await page.waitForTimeout(3000);
       }
-      const envLink = page.getByText(".env", { exact: true }).first();
-      const envVisible = await envLink.count();
-      lines.push(`- Nomreh .env entry visible in the scoped File Manager: ${envVisible ? "yes" : "no"}.`);
-      if (envVisible) {
+      const knownEntries = [];
+      for (const name of ["server.js", "package.json", "public", DOMAIN]) {
+        if (await page.getByText(name, { exact: true }).count()) knownEntries.push(name);
+      }
+      lines.push(`- Known entries visible at the inspected scoped File Manager location: ${knownEntries.length ? knownEntries.join(", ") : "none"}.`);
+      const environmentFileNames = [".env", ".env.local", ".env.production", ".env.production.local"];
+      const visibleEnvironmentFiles = [];
+      for (const name of environmentFileNames) {
+        if (await page.getByText(name, { exact: true }).count()) visibleEnvironmentFiles.push(name);
+      }
+      lines.push(`- Environment files visible in the scoped File Manager: ${visibleEnvironmentFiles.length ? visibleEnvironmentFiles.join(", ") : "none"}.`);
+      const envLink = visibleEnvironmentFiles.length ? page.getByText(visibleEnvironmentFiles[0], { exact: true }).first() : null;
+      if (envLink) {
         const cancelDownload = (download) => { void download.cancel(); };
         page.on("download", cancelDownload);
         await envLink.click({ timeout: 8000 }).catch(() => undefined);
