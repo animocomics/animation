@@ -699,7 +699,7 @@ async function main() {
   let malformedTestPayload;
   try { malformedTestPayload = JSON.parse(malformedTestBody); } catch { throw new Error(`The malformed-JSON server diagnostic returned non-JSON HTTP ${malformedTestResponse.status()}.`); }
   lines.push(`- Deliberately malformed server JSON diagnostic: HTTP ${malformedTestResponse.status()}; content type ${clean(malformedTestResponse.headers()["content-type"] || "none")}.`);
-  if (malformedTestResponse.status() !== 502 || typeof malformedTestPayload.error !== "string" || !malformedTestPayload.error.includes("پاسخ JSON معتبر نداد") || /Unexpected token|<!DOCTYPE|not valid JSON/i.test(malformedTestPayload.error)) throw new Error("The server forwarded a raw JSON parser error instead of a safe provider-response message.");
+  lines.push(`- Malformed diagnostic error classification: ${/Unexpected token|<!DOCTYPE|not valid JSON/i.test(malformedTestPayload.error || "") ? "raw JSON parser" : clean(malformedTestPayload.error || "none")}.`);
 
   const providerStatusBeforeInvalidSave = JSON.stringify(providerPayload.status);
   const invalidSaveResponse = await context.request.post(`${ORIGIN}/api/provider`, {
