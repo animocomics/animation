@@ -358,6 +358,72 @@ async function readConfiguredAdminFromPlesk() {
   }
 }
 
+async function testTeacherAccess() {
+  lines.push("## Teacher workspace and access boundaries", "");
+  if (process.env.NOMREH_ALLOW_DEMO_ACCOUNTS !== "1") {
+    lines.push("- Demo teacher access test was not authorized for this run; skipped.");
+    return;
+  }
+  const teacherContext = await browser.newContext({ ignoreHTTPSErrors: false, viewport: { width: 1440, height: 1000 } });
+  let teacherAuthenticated = false;
+  let teacherLoggedOut = false;
+  try {
+    const login = await teacherContext.request.post(`${ORIGIN}/api/auth/login`, { data: { username: "teacher", password: "Teacher@1405" } });
+    lines.push(`- Demo teacher login API HTTP status: ${login.status()}.`);
+    if (!login.ok()) throw new Error("The documented demo teacher login was rejected.");
+    teacherAuthenticated = true;
+    const meResponse = await teacherContext.request.get(`${ORIGIN}/api/auth/me`);
+    const me = await meResponse.json().catch(() => ({}));
+    if (!meResponse.ok() || me.user?.role !== "teacher") throw new Error("The demo teacher session was not verified with the teacher role.");
+    lines.push("- Teacher session and role verified by /api/auth/me.");
+
+    const teacherPage = await teacherContext.newPage();
+    teacherPage.setDefaultTimeout(20000);
+    const workspaceResponse = await teacherPage.goto(`${ORIGIN}/`, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await teacherPage.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => undefined);
+    await teacherPage.locator(".workspace-loading").waitFor({ state: "hidden", timeout: 20000 }).catch(() => undefined);
+    await teacherPage.getByRole("heading", { name: "داشبورد", exact: true }).waitFor({ state: "visible" });
+    if (!workspaceResponse || workspaceResponse.status() !== 200) throw new Error("The teacher workspace did not load successfully.");
+    if (await teacherPage.getByRole("link", { name: "مدیریت سامانه", exact: true }).count()) throw new Error("The teacher navigation exposed the admin area.");
+    lines.push("- Teacher dashboard loaded without an admin navigation link.");
+
+    const adminPage = await teacherPage.goto(`${ORIGIN}/admin`, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await teacherPage.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => undefined);
+    const finalPath = new URL(teacherPage.url()).pathname;
+    if (!adminPage || adminPage.status() !== 200 || finalPath !== "/") throw new Error("The teacher was not redirected away from /admin.");
+    if (await teacherPage.getByText("پیکربندی سراسری مدل", { exact: true }).count()) throw new Error("The teacher could see provider configuration content.");
+    lines.push("- Direct teacher access to /admin redirected to the ordinary dashboard; provider configuration was not exposed.");
+
+    const adminChecks = [
+      ["/api/admin/users", "account management"],
+      ["/api/admin/usage", "usage reporting"],
+      ["/api/admin/api-network", "Shecan configuration"],
+    ];
+    for (const [pathname, label] of adminChecks) {
+      const response = await teacherContext.request.get(`${ORIGIN}${pathname}`);
+      lines.push(`- Teacher ${label} API: HTTP ${response.status()}.`);
+      if (response.status() !== 403) throw new Error(`Teacher access to ${label} was not rejected with HTTP 403.`);
+    }
+    const provider = await teacherContext.request.get(`${ORIGIN}/api/provider`);
+    const providerPayload = await provider.json().catch(() => ({}));
+    if (!provider.ok() || !providerPayload.status || providerPayload.status.keyHint !== undefined) throw new Error("The teacher provider status was unavailable or exposed a key hint.");
+    lines.push("- Teacher provider status is available without any API-key hint.");
+
+    await teacherPage.goto(`${ORIGIN}/settings`, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await teacherPage.locator(".workspace-loading").waitFor({ state: "hidden", timeout: 20000 }).catch(() => undefined);
+    if (await teacherPage.locator("#admin-api-key, #shecan-update-url").count()) throw new Error("Teacher settings exposed admin credential fields.");
+    lines.push("- Teacher settings contain no admin API-key or Shecan update-link fields.");
+
+    const logoutResponse = await teacherContext.request.post(`${ORIGIN}/api/auth/logout`);
+    if (!logoutResponse.ok()) throw new Error("The teacher test session could not be closed cleanly.");
+    teacherLoggedOut = true;
+    lines.push(`- Teacher test session closed: HTTP ${logoutResponse.status()}.`, "");
+  } finally {
+    if (teacherAuthenticated && !teacherLoggedOut) await teacherContext.request.post(`${ORIGIN}/api/auth/logout`).catch(() => undefined);
+    await teacherContext.close();
+  }
+}
+
 async function logout() {
   if (!authenticated || loggedOut || !context) return;
   const response = await context.request.post(`${ORIGIN}/api/auth/logout`).catch(() => null);
@@ -473,8 +539,44 @@ async function main() {
   await page.getByRole("button", { name: /آزمایش، ذخیره و فعال‌سازی|آزمایش مجدد اتصال/ }).waitFor({ state: "visible" });
   lines.push("- Shecan free/pro selection, update-link entry, DNS editing, and test/save/enable controls are available in the real admin UI.", "- No API key, update link, DNS value, or enable/disable state was submitted or changed.", "");
 
+  lines.push("## Authenticated application pages and read APIs", "");
+  const workspaceApi = await context.request.get(`${ORIGIN}/api/workspace`);
+  const workspacePayload = await workspaceApi.json().catch(() => ({}));
+  if (!workspaceApi.ok() || typeof workspacePayload.revision !== "number") throw new Error("The authenticated workspace read API was not operational.");
+  lines.push(`- Workspace read API: HTTP ${workspaceApi.status()}; revision verified without exposing workspace content.`);
+  const usageApi = await context.request.get(`${ORIGIN}/api/admin/usage`);
+  const usagePayload = await usageApi.json().catch(() => ({}));
+  if (!usageApi.ok() || typeof usagePayload.summary?.jobs !== "number") throw new Error("The admin usage reporting API was not operational.");
+  lines.push(`- Admin usage API: HTTP ${usageApi.status()}; ${usagePayload.summary.jobs} recorded job(s) reported without student content.`);
+
+  const workspacePages = [
+    ["/", "داشبورد"],
+    ["/classes", "کلاس‌ها و دانش‌آموزان"],
+    ["/exams", "آزمون‌های من"],
+    ["/grading", "آزمون جدید"],
+    ["/review", "بازبینی نمرات"],
+    ["/reports", "گزارش و تحلیل"],
+    ["/settings", "تنظیمات"],
+    ["/help", "راهنمای نمره"],
+  ];
+  for (const [pathname, title] of workspacePages) {
+    const scriptFailuresBefore = loginScriptFailures.length;
+    const clientErrorsBefore = loginClientErrors.length;
+    const response = await page.goto(`${ORIGIN}${pathname}`, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.waitForLoadState("networkidle", { timeout: 8000 }).catch(() => undefined);
+    await page.locator(".workspace-loading").waitFor({ state: "hidden", timeout: 20000 }).catch(() => undefined);
+    await page.getByRole("heading", { name: title, exact: true }).first().waitFor({ state: "visible" });
+    if (!response || response.status() !== 200) throw new Error(`${title} did not return HTTP 200.`);
+    if (await page.locator(".workspace-loading:visible").count()) throw new Error(`${title} remained on the workspace loading screen.`);
+    if (await page.getByText(/Application error|فضای کاری بارگذاری نشد|خطای غیرمنتظره/).count()) throw new Error(`${title} displayed an application or workspace error.`);
+    if (loginScriptFailures.length > scriptFailuresBefore) throw new Error(`${title} loaded a failed JavaScript asset: ${loginScriptFailures[loginScriptFailures.length - 1]}.`);
+    if (loginClientErrors.length > clientErrorsBefore) throw new Error(`${title} caused a browser JavaScript error: ${loginClientErrors[loginClientErrors.length - 1]}.`);
+    lines.push(`- ${title}: HTTP 200; authenticated content rendered without new script or browser errors.`);
+  }
+
   await logout();
-  lines.push("", "## Result", "", "Real admin login, workspace access, admin-only APIs, provider controls, GLM 5.3 Flash, and Shecan configuration controls are operational. External provider-key validity and Shecan activation were not changed or tested in this read-only configuration check.");
+  await testTeacherAccess();
+  lines.push("", "## Result", "", "Real admin login, workspace pages, admin-only APIs, provider controls, GLM 5.3 Flash, Shecan configuration controls, and teacher access boundaries are operational. External provider-key validity and Shecan activation were not changed or tested; no real grading job was run without a configured provider.");
 }
 
 main().catch(async (error) => {
