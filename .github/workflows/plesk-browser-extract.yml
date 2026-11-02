@@ -1,6 +1,7 @@
 name: Plesk Nomreh archive extraction
 
 # Validated application source: a8eef6d117bffe0c2d8561e95dea02c908fbdc47
+# Retry only the unchanged delta extraction after the first session missed the application folder.
 
 on:
   push:
