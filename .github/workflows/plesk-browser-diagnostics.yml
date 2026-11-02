@@ -1,0 +1,83 @@
+name: Plesk browser diagnostics
+
+on:
+  push:
+    branches:
+      - arena/f4b832aa-animation
+    paths:
+      - .github/workflows/plesk-browser-diagnostics.yml
+      - scripts/plesk-browser-diagnostics.cjs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  browser-diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check private Plesk browser configuration
+        id: config
+        env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+        run: |
+          set -u
+          configured=false
+          if [ -n "$PLESK_PANEL_URL" ] && [ -n "$PLESK_API_USERNAME" ] && [ -n "$PLESK_API_PASSWORD" ]; then configured=true; fi
+          echo "configured=$configured" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the browser diagnostics script
+        if: steps.config.outputs.configured == 'true'
+        uses: actions/checkout@v4
+
+      - name: Prepare an isolated temporary browser
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/plesk-browser"
+          cd "$RUNNER_TEMP/plesk-browser"
+          npm init -y > /dev/null
+          npm install --ignore-scripts --no-audit --no-fund playwright@1.64.1
+          npx playwright install --with-deps chromium
+
+      - name: Inspect only the Plesk login and Nomreh domain pages
+        id: diagnose
+        if: steps.config.outputs.configured == 'true'
+        env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+          PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-plesk-browser-diagnostics.md
+          NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
+        run: node scripts/plesk-browser-diagnostics.cjs
+
+      - name: Publish the sanitized browser diagnostic result
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CONFIGURED: ${{ steps.config.outputs.configured }}
+          DIAGNOSTIC_OUTCOME: ${{ steps.diagnose.outcome }}
+        run: |
+          set -euo pipefail
+          conclusion=neutral
+          summary='Plesk browser diagnostics are not configured; no host was contacted.'
+          if [ "$CONFIGURED" = true ]; then
+            conclusion=success
+            if [ "$DIAGNOSTIC_OUTCOME" != success ]; then conclusion=failure; fi
+            if [ -f "$RUNNER_TEMP/nomreh-plesk-browser-diagnostics.md" ]; then
+              summary="$(cat "$RUNNER_TEMP/nomreh-plesk-browser-diagnostics.md")"
+            else
+              summary='Browser preparation or diagnostics did not produce a report; no remediation was attempted.'
+            fi
+          fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name="Plesk browser diagnostics" \
+            -f head_sha="${GITHUB_SHA}" \
+            -f status=completed \
+            -f conclusion="$conclusion" \
+            -f 'output[title]=Plesk read-only browser diagnostics' \
+            --raw-field "output[summary]=${summary}" > /dev/null
