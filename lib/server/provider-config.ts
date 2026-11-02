@@ -47,6 +47,11 @@ export async function getProviderConfig(): Promise<{ provider: ProviderId; model
   return { provider: row.provider, model: row.model, apiKey: await decryptSecret(row.encrypted_api_key, PROVIDER_SECRET_PURPOSE), network };
 }
 
+export async function disconnectProviderConfig(): Promise<ProviderPublicStatus> {
+  (await import("./db")).getDb().prepare("DELETE FROM provider_settings WHERE id = 1").run();
+  return getProviderStatus(true);
+}
+
 export async function saveProviderConfig(input: { provider: ProviderId; model?: string; apiKey?: string }, userId: string): Promise<ProviderPublicStatus> {
   if (!["openai", "gemini", "deepseek", "zai", "minimax", "inkling", "mistral"].includes(input.provider)) throw new Error("ارائه‌دهنده انتخاب‌شده معتبر نیست.");
   const previous = await findProviderRow();
