@@ -10,6 +10,10 @@ const { normalizePanelUrl, redact } = require("./plesk-api-diagnostics.cjs");
 const DOMAIN = "nomreh.arounidea.com";
 const OUTPUT = process.env.PLESK_DIAGNOSTICS_OUTPUT || path.join(os.tmpdir(), "nomreh-plesk-browser-diagnostics.md");
 
+function sanitize(value) {
+  return redact(value).split("nomreh.[redacted]").join(DOMAIN);
+}
+
 async function firstVisible(page, selectors) {
   for (const selector of selectors) {
     const locator = page.locator(selector).first();
@@ -19,7 +23,7 @@ async function firstVisible(page, selectors) {
 }
 
 function relevantLines(text) {
-  const pattern = /nomreh|arounidea|error|failed|failure|forbidden|suspended|disabled|expired|invalid|incorrect|verification|required|خطا|معلق|غیرفعال|دامنه/i;
+  const pattern = /nomreh|error|failed|failure|forbidden|suspended|disabled|expired|invalid|incorrect|verification|required|خطا|معلق|غیرفعال|دامنه/i;
   return [...new Set(String(text || "")
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -66,13 +70,13 @@ async function main() {
 
     const remainingPassword = await firstVisible(page, ['input[type="password"]', 'input[name="passwd"]']);
     const currentPath = new URL(page.url()).pathname;
-    lines.push("## Login result", "", `- Current page: ${redact(currentPath)}`, `- Plesk page title: ${redact(await page.title())}`, `- Login form still present: ${remainingPassword ? "yes" : "no"}`, "");
+    lines.push("## Login result", "", `- Current page: ${sanitize(currentPath)}`, `- Plesk page title: ${sanitize(await page.title())}`, `- Login form still present: ${remainingPassword ? "yes" : "no"}`, "");
 
     const initialLines = relevantLines(await page.locator("body").innerText());
     if (initialLines.length) lines.push("### Relevant messages", "", ...initialLines.map((line) => `- ${line}`), "");
     if (remainingPassword) {
       lines.push("## Result", "", "Plesk returned the login form again. No domain pages were inspected and no remediation was attempted.", "");
-      const output = redact(lines.join("\n"));
+      const output = sanitize(lines.join("\n"));
       fs.writeFileSync(OUTPUT, output, { mode: 0o600 });
       console.error(output);
       process.exitCode = 1;
@@ -93,7 +97,24 @@ async function main() {
         const link = page.locator(`a:has-text("${DOMAIN}")`).first();
         if (await link.count()) {
           const href = await link.getAttribute("href");
-          if (href) lines.push(`- Nomreh link: ${redact(new URL(href, page.url()).pathname)}`, "");
+          if (href) lines.push(`- Nomreh link: ${sanitize(new URL(href, page.url()).pathname)}`, "");
+        }
+        const domainElement = page.getByText(DOMAIN, { exact: false }).first();
+        if (await domainElement.count()) {
+          await domainElement.click({ timeout: 8000 }).catch(() => undefined);
+          await page.waitForTimeout(2000);
+          const overview = await page.locator("body").innerText().catch(() => "");
+          lines.push("## Nomreh overview", "", `- Current page: ${sanitize(new URL(page.url()).pathname)}`, `- Page title: ${sanitize(await page.title())}`, "");
+          const overviewLines = relevantLines(overview);
+          if (overviewLines.length) lines.push(...overviewLines.map((line) => `- ${line}`), "");
+          const tools = await page.locator("a").evaluateAll((anchors) => anchors.map((anchor) => ({
+            text: (anchor.textContent || "").trim().replace(/\s+/g, " "),
+            href: anchor.getAttribute("href") || "",
+          })).filter((item) => /^(Git|Node\.js|File Manager|Hosting Settings|Dashboard)/i.test(item.text)).slice(0, 20));
+          for (const tool of tools) {
+            lines.push(`- Tool: ${sanitize(tool.text)}${tool.href.startsWith("/") ? ` (${sanitize(new URL(tool.href, page.url()).pathname)})` : ""}`);
+          }
+          if (tools.length) lines.push("");
         }
         break;
       }
@@ -104,14 +125,14 @@ async function main() {
   } finally {
     if (browser) await browser.close();
   }
-  const output = redact(lines.join("\n"));
+  const output = sanitize(lines.join("\n"));
   fs.writeFileSync(OUTPUT, output, { mode: 0o600 });
   console.log(output);
 }
 
 if (require.main === module) {
   main().catch((error) => {
-    const output = redact(`# Plesk browser diagnostics\n\nBrowser diagnostics stopped: ${error.message}\n\nNo settings, deployments or files were changed.\n`);
+    const output = sanitize(`# Plesk browser diagnostics\n\nBrowser diagnostics stopped: ${error.message}\n\nNo settings, deployments or files were changed.\n`);
     fs.writeFileSync(OUTPUT, output, { mode: 0o600 });
     console.error(output);
     process.exitCode = 1;
