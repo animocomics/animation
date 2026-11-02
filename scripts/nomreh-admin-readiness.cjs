@@ -49,6 +49,28 @@ function nestedValue(payload, key) {
   return search(payload);
 }
 
+function nestedAccountVariableNames(payload) {
+  const names = new Set();
+  let visited = 0;
+  const search = (value, depth = 0) => {
+    if (!value || depth > 9 || visited > 6000) return;
+    visited += 1;
+    if (Array.isArray(value)) {
+      for (const entry of value) search(entry, depth + 1);
+      return;
+    }
+    if (typeof value !== "object") return;
+    for (const key of Object.keys(value)) {
+      if (/^NOMREH_(?:ADMIN|TEACHER)_(?:USERNAME|PASSWORD)$/.test(key)) names.add(key);
+    }
+    const name = value.name ?? value.key ?? value.variable ?? value.variable_name;
+    if (typeof name === "string" && /^NOMREH_(?:ADMIN|TEACHER)_(?:USERNAME|PASSWORD)$/.test(name)) names.add(name);
+    for (const entry of Object.values(value)) search(entry, depth + 1);
+  };
+  search(payload);
+  return [...names].sort();
+}
+
 function dotenvValue(text, key) {
   const line = String(text || "").split(/\r?\n/).find((entry) => new RegExp(`^\\s*(?:export\\s+)?${key}\\s*=`).test(entry));
   if (!line) return "";
@@ -193,7 +215,10 @@ async function readConfiguredAdminFromPlesk() {
     };
     await Promise.allSettled([...scopedResponseReads]);
     applyCapturedAdmin();
+    const accountVariableNames = new Set(nestedAccountVariableNames(payload));
+    for (const captured of scopedPayloads) for (const name of nestedAccountVariableNames(captured)) accountVariableNames.add(name);
     lines.push(`- Scoped Node.js JSON responses inspected in memory: ${scopedPayloads.length}.`);
+    lines.push(`- Account variable names present in scoped configuration: ${accountVariableNames.size ? [...accountVariableNames].sort().join(", ") : "none"}.`);
     if (!configuredUsername || !configuredPassword) {
       lines.push(`- Scoped application API admin fields available: ${configuredUsername || configuredPassword ? "partially" : "no"}.`);
       const dom = await readAdminFromNodeDom(page);
@@ -227,9 +252,11 @@ async function readConfiguredAdminFromPlesk() {
       await page.waitForTimeout(2500);
       const appFolder = page.locator("a.tree-item-content").filter({ hasText: DOMAIN }).first();
       if (await appFolder.count()) {
-        await appFolder.click({ timeout: 8000 }).catch(() => undefined);
+        await appFolder.evaluate((element) => element.click()).catch(() => undefined);
         await page.waitForTimeout(3000);
       }
+      const fileManagerLocation = new URL(page.url());
+      lines.push(`- Scoped File Manager location: ${clean(`${fileManagerLocation.pathname}${fileManagerLocation.search}`)}.`);
       const knownEntries = [];
       for (const name of ["server.js", "package.json", "public", DOMAIN]) {
         if (await page.getByText(name, { exact: true }).count()) knownEntries.push(name);
