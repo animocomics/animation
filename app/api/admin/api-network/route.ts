@@ -24,7 +24,7 @@ export async function GET() {
   }
 }
 
-export async function PUT(request: Request) {
+async function saveApiNetwork(request: Request) {
   try {
     const user = await requireAdmin();
     const input = schema.parse(await request.json());
@@ -40,3 +40,5 @@ export async function PUT(request: Request) {
     return NextResponse.json({ error: "ذخیره یا آزمایش اتصال انجام نشد؛ دوباره تلاش کنید." }, { status: 500 });
   }
 }
+
+export { saveApiNetwork as POST, saveApiNetwork as PUT };

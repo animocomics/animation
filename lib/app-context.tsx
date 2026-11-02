@@ -2,6 +2,7 @@
 
 import { createContext, type ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { createDemoExams, createDemoWorkspace, DEFAULT_WORKSPACE_SETTINGS } from "./demo";
+import { readJsonResponse } from "./http-response";
 import type { AuthUser, Exam, ProviderPublicStatus, SchoolClass, Submission, ToastMessage, WorkspaceData, WorkspaceSettings } from "./types";
 import { safeJsonParse, uid } from "./utils";
 
@@ -92,11 +93,11 @@ export function AppProvider({ children, initialUser, initialProvider }: { childr
       setSaveState("saving");
       try {
         const response = await fetch("/api/workspace", {
-          method: "PUT",
+          method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ data, expectedRevision: expectedRevision ?? revision.current }),
         });
-        const payload = await response.json() as { revision?: number; error?: string };
+        const payload = await readJsonResponse<{ revision?: number; error?: string }>(response, "ذخیرهٔ فضای کاری");
         if (!response.ok) {
           if (response.status === 401) window.location.assign("/login");
           throw new Error(payload.error || "ذخیرهٔ فضای کاری ناموفق بود.");
@@ -126,7 +127,7 @@ export function AppProvider({ children, initialUser, initialProvider }: { childr
       try {
         const response = await fetch("/api/workspace", { cache: "no-store" });
         if (response.status === 401) { window.location.assign("/login"); return; }
-        const payload = await response.json() as { data: WorkspaceData | null; revision: number; error?: string };
+        const payload = await readJsonResponse<{ data: WorkspaceData | null; revision: number; error?: string }>(response, "همگام‌سازی فضای کاری");
         if (!response.ok) throw new Error(payload.error || "خواندن فضای کاری ناموفق بود.");
         if (cancelled) return;
         revision.current = payload.revision;
@@ -193,7 +194,7 @@ export function AppProvider({ children, initialUser, initialProvider }: { childr
   }, [persist]);
   const refreshProviderStatus = useCallback(async () => {
     const response = await fetch("/api/provider", { cache: "no-store" });
-    const payload = await response.json() as { status?: ProviderPublicStatus; error?: string };
+    const payload = await readJsonResponse<{ status?: ProviderPublicStatus; error?: string }>(response, "دریافت وضعیت اتصال");
     if (!response.ok || !payload.status) throw new Error(payload.error || "وضعیت اتصال خوانده نشد.");
     setProviderStatus(payload.status);
     setSettings((current) => ({ ...current, provider: payload.status!.provider, model: payload.status!.model }));

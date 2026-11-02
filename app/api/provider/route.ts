@@ -19,7 +19,7 @@ export async function GET() {
   }
 }
 
-export async function PUT(request: Request) {
+async function saveProvider(request: Request) {
   try {
     const admin = await requireAdmin();
     const input = schema.parse(await request.json());
@@ -30,3 +30,6 @@ export async function PUT(request: Request) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "ذخیرهٔ اتصال ناموفق بود." }, { status });
   }
 }
+
+// POST avoids the host's HTML 403 response for PUT; PUT remains for backward compatibility.
+export { saveProvider as POST, saveProvider as PUT };

@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { CheckCircle2, Eye, EyeOff, Globe2, Link2, LoaderCircle, LockKeyhole, Power, RefreshCw, ShieldCheck, TriangleAlert } from "lucide-react";
 import { SHECAN_DNS } from "../lib/api-network";
 import { useApp } from "../lib/app-context";
+import { readJsonResponse } from "../lib/http-response";
 import type { ApiNetworkPublicStatus } from "../lib/types";
 import { faDate, faNumber } from "../lib/utils";
 
@@ -21,7 +22,7 @@ export function ApiNetworkConnection() {
   useEffect(() => {
     if (user.role !== "admin") return;
     void fetch("/api/admin/api-network", { cache: "no-store" }).then(async (response) => {
-      const payload = await response.json() as { status?: ApiNetworkPublicStatus; error?: string };
+      const payload = await readJsonResponse<{ status?: ApiNetworkPublicStatus; error?: string }>(response, "دریافت وضعیت شکن");
       if (!response.ok || !payload.status) throw new Error(payload.error || "وضعیت شکن خوانده نشد.");
       setStatus(payload.status);
       setPlan(payload.status.plan);
@@ -44,11 +45,11 @@ export function ApiNetworkConnection() {
     setError("");
     try {
       const response = await fetch("/api/admin/api-network", {
-        method: "PUT",
+        method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled, plan, servers, updateUrl: updateUrl.trim() || undefined }),
       });
-      const payload = await response.json() as { status?: ApiNetworkPublicStatus; error?: string };
+      const payload = await readJsonResponse<{ status?: ApiNetworkPublicStatus; error?: string }>(response, "به‌روزرسانی شکن");
       if (payload.status) setStatus(payload.status);
       if (!response.ok) throw new Error(payload.error || "آزمایش اتصال ناموفق بود.");
       if (payload.status) {

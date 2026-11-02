@@ -13,7 +13,7 @@ export async function GET() {
   }
 }
 
-export async function PUT(request: Request) {
+async function updateWorkspace(request: Request) {
   try {
     const user = await requireWorkspaceUser();
     const body = z.object({ data: z.unknown(), expectedRevision: z.number().int().nonnegative().optional() }).parse(await request.json());
@@ -26,3 +26,5 @@ export async function PUT(request: Request) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "ذخیرهٔ فضای کاری ناموفق بود." }, { status });
   }
 }
+
+export { updateWorkspace as POST, updateWorkspace as PUT };

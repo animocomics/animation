@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Check, CheckCircle2, Eye, EyeOff, KeyRound, LoaderCircle, LockKeyhole, RefreshCw, ShieldCheck, Sparkles, TriangleAlert, Zap, BrainCircuit, ScanText, Cpu, AudioLines, Layers } from "lucide-react";
 import { useApp } from "../lib/app-context";
+import { readJsonResponse } from "../lib/http-response";
 import { FALLBACK_MODEL_OPTIONS, mergeModelOptions, RECOMMENDED_MODELS, SUPPORTS_ACCOUNT_MODEL_DISCOVERY } from "../lib/provider-catalog";
 import type { ProviderId } from "../lib/types";
 import { faNumber } from "../lib/utils";
@@ -64,7 +65,7 @@ export function ApiConnection() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ provider, apiKey: keyInput.trim() || undefined }),
       });
-      const payload = await response.json() as { models?: string[]; error?: string };
+      const payload = await readJsonResponse<{ models?: string[]; error?: string }>(response, "دریافت مدل‌های حساب");
       if (!response.ok) throw new Error(payload.error || "خواندن مدل‌های حساب ناموفق بود.");
       if (!Array.isArray(payload.models) || !payload.models.length) throw new Error("فهرست مدل‌های دریافتی خالی است.");
       setAccountModels(payload.models);
@@ -87,11 +88,11 @@ export function ApiConnection() {
     setTestState(saveAfter ? "saving" : "testing"); setMessage("");
     try {
       const response = await fetch("/api/provider/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider, model: selectedModel, apiKey: keyInput.trim() || undefined }) });
-      const payload = await response.json() as { error?: string; message?: string };
+      const payload = await readJsonResponse<{ error?: string; message?: string }>(response, "آزمایش اتصال");
       if (!response.ok) throw new Error(payload.error || "بررسی اتصال ناموفق بود.");
       if (saveAfter) {
-        const saved = await fetch("/api/provider", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider, model: selectedModel, apiKey: keyInput.trim() || undefined }) });
-        const savedPayload = await saved.json() as { error?: string };
+        const saved = await fetch("/api/provider", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ provider, model: selectedModel, apiKey: keyInput.trim() || undefined }) });
+        const savedPayload = await readJsonResponse<{ error?: string }>(saved, "ذخیرهٔ اتصال");
         if (!saved.ok) throw new Error(savedPayload.error || "ذخیرهٔ کلید ناموفق بود.");
         await refreshProviderStatus();
         setKeyInput("");
