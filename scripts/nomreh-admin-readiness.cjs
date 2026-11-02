@@ -262,7 +262,10 @@ async function readConfiguredAdminFromPlesk() {
         if (await page.getByText(name, { exact: true }).count()) knownEntries.push(name);
       }
       lines.push(`- Known entries visible at the inspected scoped File Manager location: ${knownEntries.length ? knownEntries.join(", ") : "none"}.`);
-      const serverFileHref = await page.getByText("server.js", { exact: true }).first().getAttribute("href").catch(() => "");
+      const serverFileHref = await page.locator("a").evaluateAll((anchors) => {
+        const match = anchors.find((anchor) => (anchor.textContent || "").trim().replace(/\s+/g, " ") === "server.js");
+        return match ? match.getAttribute("href") || "" : "";
+      }).catch(() => "");
       const environmentFileNames = [".env", ".env.local", ".env.production", ".env.production.local"];
       const visibleEnvironmentFiles = [];
       for (const name of environmentFileNames) {
