@@ -145,7 +145,8 @@ async function main() {
           })).filter((item) => /^(Git|Node\.js|Files|File Manager|Hosting Settings|Dashboard)/i.test(item.text) || /\/modules\/nodejs\/|\/smb\/file-manager\//.test(item.href)).slice(0, 20));
           for (const tool of tools) {
             if (!nomrehFilesPath && /\/smb\/file-manager\/.*domainId\/\d+/.test(tool.href)) {
-              nomrehFilesPath = new URL(tool.href, page.url()).pathname;
+              const fileUrl = new URL(tool.href, page.url());
+              nomrehFilesPath = `${fileUrl.pathname}${fileUrl.search}`;
             }
             lines.push(`- Tool: ${sanitize(tool.text)}${tool.href.startsWith("/") ? ` (${sanitize(new URL(tool.href, page.url()).pathname)})` : ""}`);
           }
@@ -205,7 +206,8 @@ async function main() {
         for (let depth = 0; depth < 2; depth += 1) {
           const response = await page.goto(`${panel}${filePath}`, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => null);
           await page.waitForTimeout(2000);
-          lines.push("## Nomreh File Manager", "", `- HTTP status: ${response ? response.status() : "unavailable"}`, `- Current page: ${sanitize(new URL(page.url()).pathname)}`, "");
+          const currentFileUrl = new URL(page.url());
+          lines.push("## Nomreh File Manager", "", `- HTTP status: ${response ? response.status() : "unavailable"}`, `- Current page: ${sanitize(`${currentFileUrl.pathname}${currentFileUrl.search}`)}`, "");
           const fileLinks = await page.locator("a").evaluateAll((anchors) => anchors.map((anchor) => ({
             text: (anchor.textContent || "").trim().replace(/\s+/g, " "),
             href: anchor.getAttribute("href") || "",
@@ -214,7 +216,8 @@ async function main() {
           if (fileLinks.length) lines.push("");
           const appLink = fileLinks.find((link) => link.text.toLowerCase() === DOMAIN);
           if (depth === 0 && appLink && appLink.href.startsWith("/")) {
-            filePath = new URL(appLink.href, page.url()).pathname;
+            const appUrl = new URL(appLink.href, page.url());
+            filePath = `${appUrl.pathname}${appUrl.search}`;
             continue;
           }
           break;
