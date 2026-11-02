@@ -241,6 +241,20 @@ async function main() {
           })).filter((item) => /^(nomreh\.|nomreh-data|httpdocs|public|package(-lock)?\.json|server\.js|next\.config|scripts|node_modules|\.next|git)$/i.test(item.text)).slice(0, 30));
           for (const link of fileLinks) lines.push(`- File entry: ${sanitize(link.text)}${link.href.startsWith("/") ? ` (${sanitize(new URL(link.href, page.url()).pathname)})` : ""}`);
           if (fileLinks.length) lines.push("");
+          if (depth === 1) {
+            const fileDetails = fileBody.split(/\r?\n/).map((line) => line.trim()).filter((line) => /package\.json|server\.js|next\.config|sqlite\.ts|plesk-node22|\.next\b/i.test(line) && !/secret|token|password|credential/i.test(line)).slice(0, 20);
+            if (fileDetails.length) lines.push(...fileDetails.map((line) => `- Application file: ${sanitize(line.slice(0, 300))}`), "");
+            const packageLink = page.locator("a").filter({ hasText: /^package\.json$/ }).first();
+            if (await packageLink.count()) {
+              await packageLink.click({ timeout: 8000 }).catch(() => undefined);
+              await page.waitForTimeout(1800);
+              const packageBody = await page.locator("body").innerText().catch(() => "");
+              const packageLines = packageBody.split(/\r?\n/).map((line) => line.trim()).filter((line) => /build:plesk|better-sqlite3|plesk-node22|next\s*--webpack|"build"\s*:|"next"\s*:/i.test(line)).slice(0, 20);
+              lines.push("## Hosted package.json inspection", "");
+              if (packageLines.length) lines.push(...packageLines.map((line) => `- ${sanitize(line.slice(0, 300))}`), "");
+              else lines.push("- The package file did not expose readable script/dependency lines in the viewer.", "");
+            }
+          }
           const appLink = fileLinks.find((link) => link.text.toLowerCase() === DOMAIN);
           if (depth === 0 && appLink && appLink.href.startsWith("/")) {
             const appUrl = new URL(appLink.href, page.url());
