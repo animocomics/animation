@@ -419,7 +419,7 @@ async function main() {
           const fileLinks = await page.locator("a").evaluateAll((anchors) => anchors.map((anchor) => ({
             text: (anchor.textContent || "").trim().replace(/\s+/g, " "),
             href: anchor.getAttribute("href") || "",
-          })).filter((item) => /^(nomreh\.|nomreh-data|httpdocs|public|package(-lock)?\.json|server\.js|next\.config|scripts|node_modules|\.next|git|runtime|build-progress\.txt|runtime\.json|BUILD_ID)$/i.test(item.text)).slice(0, 30));
+          })).filter((item) => /^(nomreh\.|nomreh-data|httpdocs|public|package(-lock)?\.json|server\.js|next\.config|scripts|node_modules|\.next|git|runtime|build-progress\.txt|runtime\.json|BUILD_ID|\.node-version(?:\.nomreh-backup)?)$/i.test(item.text)).slice(0, 30));
           for (const link of fileLinks) lines.push(`- File entry: ${sanitize(link.text)}${link.href.startsWith("/") ? ` (${sanitize(new URL(link.href, page.url()).pathname)})` : ""}`);
           if (fileLinks.length) lines.push("");
           if (depth === 1) {
@@ -538,7 +538,7 @@ async function main() {
             if (ACTION === "extract" && !archivePresent) {
               throw new Error(`${ARCHIVE_NAME} is not present in the Nomreh application directory. Extraction was not started.`);
             }
-            const fileDetails = fileBody.split(/\r?\n/).map((line) => line.trim()).filter((line) => /package\.json|server\.js|next\.config|sqlite\.ts|plesk-node22|\.next\b/i.test(line) && !/secret|token|password|credential/i.test(line)).slice(0, 20);
+            const fileDetails = fileBody.split(/\r?\n/).map((line) => line.trim()).filter((line) => /package\.json|server\.js|next\.config|sqlite\.ts|plesk-node22|\.next\b|\.node-version/i.test(line) && !/secret|token|password|credential/i.test(line)).slice(0, 20);
             if (fileDetails.length) lines.push(...fileDetails.map((line) => `- Application file: ${sanitize(line.slice(0, 300))}`), "");
             const managerControls = await page.locator("button, a, input").evaluateAll((elements) => elements.map((element) => ({
               tag: element.tagName,
