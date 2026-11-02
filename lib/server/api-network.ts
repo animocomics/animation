@@ -120,7 +120,7 @@ function validateUpdateUrl(value: string): string {
 function safeNetworkCode(error: unknown): string {
   let current = error;
   for (let depth = 0; depth < 3 && current; depth += 1) {
-    if (current instanceof Error && current.name === "TimeoutError") return "TIMEOUT";
+    if (current instanceof Error && ["TimeoutError", "AbortError"].includes(current.name)) return "TIMEOUT";
     const code = typeof current === "object" && "code" in current ? (current as { code?: unknown }).code : undefined;
     if (typeof code === "string" && /^[A-Z][A-Z0-9_]{2,30}$/.test(code)) return code;
     current = typeof current === "object" && "cause" in current ? (current as { cause?: unknown }).cause : undefined;
@@ -151,6 +151,13 @@ async function probeUpdateService(updateUrl: string): Promise<string> {
   }
 }
 
+function fixedIpv4Lookup(address: string): NonNullable<TcpSocketConnectOpts["lookup"]> {
+  return (_hostname, options: LookupOptions, callback) => {
+    if (options.all) callback(null, [{ address, family: 4 }]);
+    else callback(null, address, 4);
+  };
+}
+
 async function activateUpdateUrlWithFetch(updateUrl: string, servers: [string, string]): Promise<void> {
   let response: Response | undefined;
   const agents: Agent[] = [];
@@ -158,10 +165,7 @@ async function activateUpdateUrlWithFetch(updateUrl: string, servers: [string, s
   const request = async (address?: string, useShecan = false) => {
     let lookup: NonNullable<TcpSocketConnectOpts["lookup"]> | undefined;
     if (address) {
-      lookup = (_hostname, options: LookupOptions, callback) => {
-        if (options.all) callback(null, [{ address, family: 4 }]);
-        else callback(null, address, 4);
-      };
+      lookup = fixedIpv4Lookup(address);
     } else if (useShecan) {
       lookup = shecan.lookup;
     }
@@ -270,6 +274,30 @@ async function nativeUpdateStatus(updateUrl: string, lookup: NonNullable<TcpSock
   });
 }
 
+async function nativeUpdateStatusWithFallback(updateUrl: string, servers: [string, string]): Promise<number> {
+  const shecan = createShecanLookup(servers);
+  let lastError: unknown;
+  try {
+    return await nativeUpdateStatus(updateUrl, shecan.lookup);
+  } catch (error) {
+    if (error instanceof ApiNetworkError) throw error;
+    lastError = error;
+  }
+  const hostname = new URL(updateUrl).hostname;
+  // The fetch path already tried host-resolver addresses. Native fallback now
+  // tries every current Shecan answer (including DoH), retaining TLS/SNI.
+  const shecanAddresses = await shecan.resolve(hostname).catch(() => [] as string[]);
+  for (const address of [...new Set(shecanAddresses)]) {
+    try {
+      return await nativeUpdateStatus(updateUrl, fixedIpv4Lookup(address));
+    } catch (error) {
+      if (error instanceof ApiNetworkError) throw error;
+      lastError = error;
+    }
+  }
+  throw lastError || new Error("Shecan native HTTPS did not return a response");
+}
+
 async function activateUpdateUrl(updateUrl: string, servers: [string, string], settleMs = 60_000): Promise<string> {
   try {
     await activateUpdateUrlWithFetch(updateUrl, servers);
@@ -278,8 +306,7 @@ async function activateUpdateUrl(updateUrl: string, servers: [string, string], s
     // Match the documented curl/WebRequest behavior with Node's independent
     // native HTTPS stack. This is still scoped to Shecan's own resolver.
     try {
-      const shecan = createShecanLookup(servers);
-      const status = await nativeUpdateStatus(updateUrl, shecan.lookup);
+      const status = await nativeUpdateStatusWithFallback(updateUrl, servers);
       if (status < 200 || status >= 300) {
         throw new ApiNetworkError(`شکن لینک به‌روزرسان را نپذیرفت (HTTP ${status}). لینک را از همان سفارش فعال دوباره کپی کنید.`, 400);
       }

@@ -4,6 +4,7 @@ import type { LookupOptions } from "node:dns";
 import type { TcpSocketConnectOpts } from "node:net";
 import { Agent } from "undici";
 import type { ProviderNetworkConfig } from "../api-network";
+import { resolveShecanDoh, type ShecanDohRecord } from "./shecan-doh";
 
 const PROVIDER_HOSTNAMES = new Set([
   "api.openai.com",
@@ -56,12 +57,19 @@ function asErrnoError(error: unknown): NodeJS.ErrnoException {
   return new Error("DNS resolution failed");
 }
 
-export function createShecanLookup(servers: [string, string], resolver?: ShecanResolver): {
+export function createShecanLookup(
+  servers: [string, string],
+  resolver?: ShecanResolver,
+  dohResolver?: (hostname: string) => Promise<ShecanDohRecord[]>,
+): {
   lookup: Lookup;
   resolve: (hostname: string) => Promise<string[]>;
 } {
   const dnsResolver = resolver || new Resolver();
   dnsResolver.setServers?.(servers);
+  // Injected test resolvers stay fully deterministic. On the real host, the
+  // official Pro DoH endpoint is a scoped fallback when outbound UDP/53 is blocked.
+  const officialDohFallback = dohResolver || (!resolver ? resolveShecanDoh : undefined);
   const cache = new Map<string, { records: ResolveRecord[]; expiresAt: number }>();
 
   async function resolve(hostname: string): Promise<string[]> {
@@ -70,8 +78,15 @@ export function createShecanLookup(servers: [string, string], resolver?: ShecanR
     let records: ResolveRecord[];
     try {
       records = await dnsResolver.resolve4(hostname, { ttl: true });
-    } catch (error) {
-      throw new ProviderNetworkError("DNS شکن پاسخ نداد؛ آدرس‌های DNS و اجازهٔ ارتباط خروجی هاست را بررسی کنید.", "dns", { cause: error });
+    } catch (udpError) {
+      if (!officialDohFallback) {
+        throw new ProviderNetworkError("DNS شکن پاسخ نداد؛ آدرس‌های DNS و اجازهٔ ارتباط خروجی هاست را بررسی کنید.", "dns", { cause: udpError });
+      }
+      try {
+        records = await officialDohFallback(hostname);
+      } catch (dohError) {
+        throw new ProviderNetworkError("DNS شکن از مسیر UDP و DoH رسمی Pro پاسخ نداد؛ ارتباط خروجی هاست را بررسی کنید.", "dns", { cause: dohError });
+      }
     }
     records = records.filter((record) => isIPv4(record.address));
     if (!records.length) throw new ProviderNetworkError("DNS شکن برای دامنهٔ سرویس‌دهنده آدرس IPv4 معتبر برنگرداند.", "dns");

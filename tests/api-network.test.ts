@@ -7,6 +7,7 @@ import { EventEmitter } from "node:events";
 import { Resolver } from "node:dns/promises";
 import test from "node:test";
 import { createShecanLookup, providerFetch, ProviderNetworkError } from "../lib/server/provider-network";
+import { parseShecanDohMessage } from "../lib/server/shecan-doh";
 
 const dataDirectory = mkdtempSync(path.join(tmpdir(), "nomreh-api-network-"));
 process.env.NOMREH_DATA_DIR = dataDirectory;
@@ -43,6 +44,38 @@ test("Shecan DNS failures are explicit and never become direct lookups", async (
     resolve4: async () => { throw Object.assign(new Error("mock DNS unavailable"), { code: "ETIMEOUT" }); },
   });
   await assert.rejects(resolve("api.z.ai"), (error: unknown) => error instanceof ProviderNetworkError && error.stage === "dns");
+});
+
+test("Shecan DNS falls back to the official Pro DoH resolver without losing TTL caching", async () => {
+  let dohCalls = 0;
+  const { resolve } = createShecanLookup(["178.22.122.101", "185.51.200.1"], {
+    resolve4: async () => { throw Object.assign(new Error("mock UDP blocked"), { code: "ETIMEOUT" }); },
+  }, async (hostname) => {
+    dohCalls += 1;
+    assert.equal(hostname, "ddns.shecan.ir");
+    return [{ address: "185.143.234.133", ttl: 180 }, { address: "185.143.233.133", ttl: 180 }];
+  });
+  assert.deepEqual(await resolve("ddns.shecan.ir"), ["185.143.234.133", "185.143.233.133"]);
+  assert.deepEqual(await resolve("ddns.shecan.ir"), ["185.143.234.133", "185.143.233.133"]);
+  assert.equal(dohCalls, 1);
+});
+
+test("Shecan DoH parser reads compressed A answers and rejects DNS errors", () => {
+  const question = Buffer.from([
+    4, 100, 100, 110, 115, 6, 115, 104, 101, 99, 97, 110, 2, 105, 114, 0,
+    0, 1, 0, 1,
+  ]);
+  const answer = (third: number) => Buffer.from([
+    0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 180, 0, 4, 185, 143, third, 133,
+  ]);
+  const header = Buffer.from([0, 0, 0x81, 0x80, 0, 1, 0, 2, 0, 0, 0, 0]);
+  assert.deepEqual(parseShecanDohMessage(Buffer.concat([header, question, answer(234), answer(233)])), [
+    { address: "185.143.234.133", ttl: 180 },
+    { address: "185.143.233.133", ttl: 180 },
+  ]);
+  const failed = Buffer.from(header);
+  failed[3] = 0x82;
+  assert.throws(() => parseShecanDohMessage(Buffer.concat([failed, question])), /DNS status 2/);
 });
 
 test("providerFetch attaches an AI-only dispatcher when enabled and stays direct otherwise", async () => {
@@ -148,14 +181,15 @@ test("Pro activation accepts HTTP headers without waiting for an unterminated bo
   }
 });
 
-test("native HTTPS fallback activates through the scoped Shecan lookup after fetch failure", async () => {
+test("native HTTPS fallback tries every scoped Shecan IPv4 address after fetch failure", async () => {
   const originalFetch = globalThis.fetch;
   const originalRequest = https.request;
   const originalResolve = Resolver.prototype.resolve4;
   const updateUrl = "https://ddns.shecan.ir/update/test-native-fallback";
   let nativeLookup = false;
+  let nativeRequests = 0;
   let responseDestroyed = 0;
-  Resolver.prototype.resolve4 = (async () => [{ address: "203.0.113.36", ttl: 60 }]) as unknown as typeof Resolver.prototype.resolve4;
+  Resolver.prototype.resolve4 = (async () => [{ address: "203.0.113.36", ttl: 60 }, { address: "203.0.113.37", ttl: 60 }]) as unknown as typeof Resolver.prototype.resolve4;
   globalThis.fetch = (async (input: string | URL | Request) => {
     const url = String(input);
     if (url === updateUrl) throw Object.assign(new Error("mock fetch transport failure"), { code: "FETCH_FAILED" });
@@ -167,9 +201,14 @@ test("native HTTPS fallback activates through the scoped Shecan lookup after fet
   }) as typeof fetch;
   https.request = ((input: URL, options: { lookup?: unknown }, callback: (response: EventEmitter) => void) => {
     assert.equal(String(input), updateUrl);
-    nativeLookup = typeof options.lookup === "function";
+    nativeLookup = nativeLookup || typeof options.lookup === "function";
     const request = new EventEmitter() as EventEmitter & { end: () => void; destroy: (error?: Error) => void };
     request.end = () => {
+      nativeRequests += 1;
+      if (nativeRequests < 3) {
+        request.emit("error", Object.assign(new Error("mock native address unreachable"), { code: "ECONNRESET" }));
+        return;
+      }
       const response = new EventEmitter() as EventEmitter & { statusCode: number; headers: Record<string, string>; destroy: () => void };
       response.statusCode = 200;
       response.headers = {};
@@ -187,6 +226,7 @@ test("native HTTPS fallback activates through the scoped Shecan lookup after fet
     assert.equal(status.enabled, true);
     assert.equal(status.lastTestStatus, "success");
     assert.equal(nativeLookup, true, "native activation must use Shecan DNS without changing host DNS");
+    assert.equal(nativeRequests, 3, "native activation must retry every scoped Shecan IPv4 address");
     assert.equal(responseDestroyed, 1, "native activation must not wait for the response body");
   } finally {
     globalThis.fetch = originalFetch;
