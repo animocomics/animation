@@ -49,6 +49,21 @@ function nestedValue(payload, key) {
   return search(payload);
 }
 
+function dotenvValue(text, key) {
+  const line = String(text || "").split(/\r?\n/).find((entry) => new RegExp(`^\\s*(?:export\\s+)?${key}\\s*=`).test(entry));
+  if (!line) return "";
+  let value = line.slice(line.indexOf("=") + 1).trim();
+  if (value.startsWith('"')) {
+    try { value = JSON.parse(value); } catch { return ""; }
+  } else if (value.startsWith("'")) {
+    const end = value.lastIndexOf("'");
+    if (end > 0) value = value.slice(1, end);
+  } else {
+    value = value.replace(/\s+#.*$/, "").trim();
+  }
+  return typeof value === "string" ? value : "";
+}
+
 async function readConfiguredAdminFromPlesk() {
   if (!process.env.PLESK_PANEL_URL || !process.env.PLESK_API_USERNAME || !process.env.PLESK_API_PASSWORD) return null;
   const panel = normalizePanelUrl(process.env.PLESK_PANEL_URL);
@@ -103,10 +118,35 @@ async function readConfiguredAdminFromPlesk() {
     }, `${panel}/modules/nodejs/index.php/api/application/domainId/145`);
     if (result.status !== 200) throw new Error("Nomreh's scoped application settings could not be read for login.");
     const payload = JSON.parse(result.body);
-    const configuredUsername = nestedValue(payload, "NOMREH_ADMIN_USERNAME");
-    const configuredPassword = nestedValue(payload, "NOMREH_ADMIN_PASSWORD");
+    let configuredUsername = nestedValue(payload, "NOMREH_ADMIN_USERNAME") || "";
+    let configuredPassword = nestedValue(payload, "NOMREH_ADMIN_PASSWORD") || "";
+    if (!configuredUsername || !configuredPassword) {
+      await page.goto(`${panel}/smb/file-manager/list/domainId/145`, { waitUntil: "domcontentloaded", timeout: 30000 });
+      await page.waitForTimeout(1800);
+      const appFolder = page.locator("a.tree-item-content").filter({ hasText: DOMAIN }).first();
+      if (await appFolder.count()) {
+        await appFolder.click({ timeout: 8000 }).catch(() => undefined);
+        await page.waitForTimeout(2000);
+      }
+      const envLink = page.getByText(".env", { exact: true }).first();
+      if (await envLink.count()) {
+        const cancelDownload = (download) => { void download.cancel(); };
+        page.on("download", cancelDownload);
+        await envLink.click({ timeout: 8000 }).catch(() => undefined);
+        await page.waitForTimeout(1500);
+        page.off("download", cancelDownload);
+        const bodyText = await page.locator("body").innerText().catch(() => "");
+        const textAreas = await page.locator("textarea").evaluateAll((elements) => elements.map((element) => element.value || "").filter((value) => /NOMREH_[A-Z0-9_]+/.test(value))).catch(() => []);
+        const codeEditors = await page.locator(".CodeMirror").evaluateAll((elements) => elements.map((element) => {
+          try { return element.CodeMirror && typeof element.CodeMirror.getValue === "function" ? element.CodeMirror.getValue() : element.innerText || ""; } catch { return ""; }
+        }).filter((value) => /NOMREH_[A-Z0-9_]+/.test(value))).catch(() => []);
+        const environmentText = [bodyText, ...textAreas, ...codeEditors].join("\n");
+        configuredUsername = configuredUsername || dotenvValue(environmentText, "NOMREH_ADMIN_USERNAME");
+        configuredPassword = configuredPassword || dotenvValue(environmentText, "NOMREH_ADMIN_PASSWORD");
+      }
+    }
     if (!configuredUsername && !configuredPassword) return null;
-    lines.push("- Existing custom admin settings were located in Nomreh's scoped application configuration; values remain in memory and are not printed.");
+    lines.push("- Existing custom admin settings were located in Nomreh's scoped configuration; values remained in memory and no file or setting was saved.");
     return {
       username: configuredUsername || "admin",
       password: configuredPassword || "Admin@1405",
