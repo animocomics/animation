@@ -7,7 +7,7 @@ import { spawnSync } from "node:child_process";
 
 const root = path.resolve(__dirname, "..");
 const launcherPath = path.join(root, "scripts", "plesk-node22.cjs");
-const { passengerLaunchArguments, probeNode } = require(launcherPath);
+const { passengerLaunchArguments, probeNode, syncPublicStatic } = require(launcherPath);
 
 function fakeNode(directory: string, version: string) {
   const binary = path.join(directory, "node");
@@ -70,6 +70,34 @@ test("Node 22 delegation preserves Passenger's loader and direct non-Passenger s
     assert.equal(delegated.status, 0, delegated.stderr);
     const output = delegated.stdout.trim().split(/\r?\n/).pop() || "";
     assert.deepEqual(JSON.parse(output), [loader]);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("Plesk build publishes only generated Next.js assets for nginx and preserves other public files", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nomreh-public-static-"));
+  try {
+    const sourceChunks = path.join(directory, ".next", "static", "chunks");
+    const target = path.join(directory, "public", "_next", "static");
+    fs.mkdirSync(sourceChunks, { recursive: true });
+    fs.mkdirSync(path.join(target, "chunks"), { recursive: true });
+    fs.writeFileSync(path.join(directory, ".next", "BUILD_ID"), "test-build");
+    fs.writeFileSync(path.join(sourceChunks, "app.js"), "new-assets");
+    fs.writeFileSync(path.join(target, "chunks", "stale.js"), "stale-assets");
+    fs.writeFileSync(path.join(directory, "public", "nomreh-mark.svg"), "preserved");
+    fs.writeFileSync(path.join(directory, "public", "_next", "keep.txt"), "preserved");
+
+    assert.equal(syncPublicStatic(directory), target);
+    assert.equal(fs.readFileSync(path.join(target, "chunks", "app.js"), "utf8"), "new-assets");
+    assert.equal(fs.existsSync(path.join(target, "chunks", "stale.js")), false);
+    assert.equal(fs.readFileSync(path.join(directory, "public", "nomreh-mark.svg"), "utf8"), "preserved");
+    assert.equal(fs.readFileSync(path.join(directory, "public", "_next", "keep.txt"), "utf8"), "preserved");
+
+    fs.writeFileSync(path.join(sourceChunks, "app.js"), "next-build");
+    syncPublicStatic(directory);
+    assert.equal(fs.readFileSync(path.join(target, "chunks", "app.js"), "utf8"), "next-build");
+    assert.equal(fs.readdirSync(path.join(directory, "public", "_next")).some((entry) => entry.startsWith(".static-")), false);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

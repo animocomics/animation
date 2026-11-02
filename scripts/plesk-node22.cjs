@@ -355,6 +355,50 @@ function installDependencies(runtime) {
   runRuntimeNpm(runtime, ["install", "--ignore-scripts", "--engine-strict=false", "--no-audit", "--no-fund"]);
 }
 
+function syncPublicStatic(root = APP_ROOT) {
+  const source = path.join(root, ".next", "static");
+  const publicNext = path.join(root, "public", "_next");
+  const target = path.join(publicNext, "static");
+  if (!fs.existsSync(path.join(root, ".next", "BUILD_ID")) || !fs.existsSync(source) || !fs.statSync(source).isDirectory() || !fs.readdirSync(source).length) {
+    throw new Error("The completed Next.js static assets were not found; public assets were not changed.");
+  }
+
+  fs.mkdirSync(publicNext, { recursive: true });
+  const suffix = `${process.pid}-${Date.now()}`;
+  const staging = path.join(publicNext, `.static-staging-${suffix}`);
+  const backup = path.join(publicNext, `.static-backup-${suffix}`);
+  for (const candidate of [staging, backup, target]) {
+    if (!inside(publicNext, candidate) || candidate === publicNext) throw new Error("Refusing to manage a static-asset path outside Nomreh's public/_next directory.");
+  }
+
+  let backupCreated = false;
+  try {
+    fs.cpSync(source, staging, { recursive: true, force: false, errorOnExist: true });
+    if (!fs.readdirSync(staging).length) throw new Error("The staged Next.js public assets were empty.");
+    if (fs.existsSync(target)) {
+      fs.renameSync(target, backup);
+      backupCreated = true;
+    }
+    try {
+      fs.renameSync(staging, target);
+    } catch (error) {
+      if (backupCreated && fs.existsSync(backup) && !fs.existsSync(target)) {
+        fs.renameSync(backup, target);
+        backupCreated = false;
+      }
+      throw error;
+    }
+    if (backupCreated) {
+      fs.rmSync(backup, { recursive: true, force: true });
+      backupCreated = false;
+    }
+  } finally {
+    if (fs.existsSync(staging)) fs.rmSync(staging, { recursive: true, force: true });
+  }
+  console.log("Nomreh public static assets are ready for nginx in public/_next/static.");
+  return target;
+}
+
 function compactProduction(runtime) {
   execute(runtime.nodeBinary, [path.join(APP_ROOT, "scripts", "compact-production.cjs")], {
     cwd: APP_ROOT,
@@ -397,6 +441,8 @@ async function build() {
     // attempting incompatible native binaries during the same build.
     runRuntimeNpm(runtime, ["run", "build"], { NEXT_TEST_WASM: "1" });
     if (!fs.existsSync(path.join(APP_ROOT, ".next", "BUILD_ID"))) throw new Error("The production build did not create .next/BUILD_ID; nothing was compacted.");
+    progress("Publishing Next.js static assets for nginx");
+    syncPublicStatic();
     progress("Removing development-only packages and regenerable build caches");
     compactProduction(runtime);
     progress("Testing SQLite and canvas with the production runtime");
@@ -490,4 +536,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { build, ensureRuntime, launchServer, passengerLaunchArguments, probeNode, readActiveRuntime, smokeRuntime };
+module.exports = { build, ensureRuntime, launchServer, passengerLaunchArguments, probeNode, readActiveRuntime, smokeRuntime, syncPublicStatic };
