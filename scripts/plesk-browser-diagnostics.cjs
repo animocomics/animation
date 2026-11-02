@@ -63,7 +63,7 @@ function labelValues(text, labels) {
 }
 
 async function main() {
-  if (!["diagnose", "upload", "extract", "build", "status", "disk", "fix-node-version", "update-package"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
+  if (!["diagnose", "upload", "extract", "build", "status", "disk", "fix-node-version", "update-package", "retire-obsolete"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
   const panel = normalizePanelUrl(process.env.PLESK_PANEL_URL || "");
   const readOnly = ACTION === "diagnose" || ACTION === "status";
   const actionDescription = ACTION === "upload"
@@ -76,7 +76,9 @@ async function main() {
           ? "Controlled action: preserve Nomreh's Node override backups and pin its untracked .node-version file only to a verified installed nodenv version. No application source, persistent data, build, restart, or other domain is touched."
           : ACTION === "update-package"
             ? "Controlled action: preserve Nomreh's current package.json as package.json.pre-npm-node-fix and upload only the hash-validated replacement. No other application file, persistent data, build, restart, or other domain is touched."
-            : "Controlled action: run the validated Nomreh production build with its domain-local Node 22 runtime. Node.js enablement and restart remain pending.";
+            : ACTION === "retire-obsolete"
+              ? "Controlled action: rename only three verified obsolete Cloudflare/better-sqlite3 host artifacts to non-TypeScript backup names. No current source, persistent data, build, restart, or other domain is touched."
+              : "Controlled action: run the validated Nomreh production build with its domain-local Node 22 runtime. Node.js enablement and restart remain pending.";
   const lines = ["# Plesk browser diagnostics", "", readOnly
     ? "Read-only browser inspection. No settings, deployments or files were changed."
     : actionDescription, ""];
@@ -478,6 +480,101 @@ async function main() {
                 if (!progressLines.length) lines.push("- Previous progress content was not exposed by the File Manager view.");
               }
               lines.push("- Persistent-data inspection only; no file was saved or changed.", "");
+              actionCompleted = true;
+            }
+            if (ACTION === "retire-obsolete") {
+              const obsoleteTargets = [
+                { directories: [], file: "open-next.config.ts", backup: "open-next.config.ts.nomreh-obsolete-backup", marker: "package.json" },
+                { directories: ["lib", "server"], file: "cloudflare.ts", backup: "cloudflare.ts.nomreh-obsolete-backup", marker: "sqlite.ts" },
+                { directories: ["tests"], file: "cloudflare-seed.test.ts", backup: "cloudflare-seed.test.ts.nomreh-obsolete-backup", marker: "plesk-runtime.test.ts" },
+              ];
+              lines.push("## Controlled retirement of obsolete Nomreh host artifacts", "");
+              if (!fileBody.includes("package.json") || !fileBody.includes("server.js") || !fileBody.includes(ARCHIVE_NAME)) {
+                throw new Error("The File Manager is not verified at Nomreh's application root. No obsolete artifact was changed.");
+              }
+              const navigateToTarget = async (target) => {
+                await page.goto(`${panel}${nomrehFilesPath}`, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => null);
+                await page.waitForTimeout(1400);
+                const appFolder = page.locator("a.tree-item-content:visible").filter({ hasText: DOMAIN }).first();
+                if (!await appFolder.count()) throw new Error("The Nomreh application folder was not available in the File Manager tree. No artifact was changed.");
+                await appFolder.evaluate((element) => element.click());
+                await page.waitForTimeout(1600);
+                for (const directory of target.directories) {
+                  const directoryPattern = new RegExp(`^${directory}$`);
+                  let directoryLink = page.locator("a.tree-item-content:visible").filter({ hasText: directoryPattern }).first();
+                  if (!await directoryLink.count()) directoryLink = page.locator("a:visible").filter({ hasText: directoryPattern }).last();
+                  if (!await directoryLink.count()) throw new Error(`The Nomreh ${directory} directory was not found while locating ${target.file}. No artifact was changed.`);
+                  await directoryLink.evaluate((element) => element.click());
+                  await page.waitForTimeout(1500);
+                }
+                const targetBody = await page.locator("body").innerText().catch(() => "");
+                if (!targetBody.includes(target.marker)) throw new Error(`The containing directory for ${target.file} could not be verified. No artifact was changed.`);
+                return targetBody;
+              };
+              const retireTarget = async (target) => {
+                await navigateToTarget(target);
+                const originalLink = page.getByText(target.file, { exact: true }).first();
+                const backupLink = page.getByText(target.backup, { exact: true }).first();
+                const originalCount = await originalLink.count();
+                const backupCount = await backupLink.count();
+                if (!originalCount && backupCount) {
+                  lines.push(`- Already preserved: ${target.backup}`);
+                  return;
+                }
+                if (!originalCount) throw new Error(`The expected obsolete artifact ${target.file} was not found. No artifact was changed in its directory.`);
+                if (backupCount) throw new Error(`Both ${target.file} and its backup are present. Rename stopped to avoid overwriting the backup.`);
+                const originalRow = originalLink.locator("xpath=ancestor::*[.//input[@type='checkbox']][1]");
+                const checkbox = originalRow.locator("input[type='checkbox']").first();
+                if (!await checkbox.count()) throw new Error(`The ${target.file} row could not be selected. No artifact was changed.`);
+                await checkbox.check({ force: true, timeout: 5000 }).catch(async () => checkbox.click({ force: true, timeout: 5000 }));
+                if (!await checkbox.isChecked().catch(() => false)) throw new Error(`The ${target.file} row was not selected. No artifact was changed.`);
+                let renameChoice = null;
+                const rowActions = originalRow.locator("button[title='Actions'], button[aria-label='Actions']").first();
+                if (await rowActions.count()) {
+                  await rowActions.evaluate((element) => element.click());
+                  await page.waitForTimeout(400);
+                  renameChoice = page.locator("a:visible, button:visible").filter({ hasText: /^Rename$/i }).first();
+                }
+                if (!renameChoice || !await renameChoice.count()) {
+                  const moreButton = page.getByRole("button", { name: /^More/i }).first();
+                  if (await moreButton.count()) {
+                    await moreButton.evaluate((element) => element.click());
+                    await page.waitForTimeout(400);
+                    renameChoice = page.locator("a:visible, button:visible").filter({ hasText: /^Rename$/i }).first();
+                  }
+                }
+                if (!renameChoice || !await renameChoice.count()) throw new Error(`The Rename command was not available for ${target.file}. No artifact was changed.`);
+                await renameChoice.evaluate((element) => element.click());
+                await page.waitForTimeout(700);
+                let renameInput = null;
+                const candidates = page.locator("input:not([type='checkbox']):not([type='hidden']):visible");
+                for (let index = 0; index < Math.min(await candidates.count(), 30); index += 1) {
+                  const candidate = candidates.nth(index);
+                  if (await candidate.inputValue().catch(() => "") === target.file) {
+                    renameInput = candidate;
+                    break;
+                  }
+                }
+                if (!renameInput) throw new Error(`The Rename input for ${target.file} was not found. Rename was not confirmed.`);
+                await renameInput.fill(target.backup);
+                if (await renameInput.inputValue() !== target.backup) throw new Error(`The backup name for ${target.file} was not retained. Rename was not confirmed.`);
+                const dialog = page.locator("[role='dialog']:visible, .pul-modal:visible, .modal:visible").last();
+                const scope = await dialog.count() ? dialog : page;
+                const confirmRename = scope.getByRole("button", { name: /^(OK|Rename|Confirm)$/i }).last();
+                if (!await confirmRename.count()) throw new Error(`The Rename confirmation for ${target.file} was not found. Rename was not confirmed.`);
+                await confirmRename.evaluate((element) => element.click());
+                await page.waitForTimeout(2500);
+                lines.push(`- Preserved obsolete ${target.file} as ${target.backup}.`);
+              };
+              for (const target of obsoleteTargets) await retireTarget(target);
+              for (const target of obsoleteTargets) {
+                await navigateToTarget(target);
+                if (await page.getByText(target.file, { exact: true }).count() || !await page.getByText(target.backup, { exact: true }).count()) {
+                  throw new Error(`The backup state for ${target.file} could not be verified. No build or further host change was attempted.`);
+                }
+                lines.push(`- Verified non-TypeScript backup only: ${target.backup}`);
+              }
+              lines.push("- All three obsolete Cloudflare/better-sqlite3 artifacts are preserved outside TypeScript compilation. No current source, persistent data, build, restart, or other domain was changed.", "");
               actionCompleted = true;
             }
             if (ACTION === "update-package") {
@@ -968,7 +1065,7 @@ async function main() {
         }
       }
     }
-    if (["upload", "extract", "build", "status", "disk", "fix-node-version", "update-package"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Node.js was not enabled or restarted.`);
+    if (["upload", "extract", "build", "status", "disk", "fix-node-version", "update-package", "retire-obsolete"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Node.js was not enabled or restarted.`);
     lines.push("## Result", "", ACTION === "upload"
       ? "The validated application archive was uploaded to Nomreh. Extraction, dependency installation, build, and Node.js enablement remain pending."
       : ACTION === "extract"
@@ -983,7 +1080,9 @@ async function main() {
                 ? "Nomreh's Node override fix completed with the original contents preserved. No build or restart was attempted; read-only command verification remains pending."
                 : ACTION === "update-package"
                   ? "Nomreh's validated package.json npm launcher fix was uploaded and verified. No build or restart was attempted; disk verification remains pending."
-                  : domainFound
+                  : ACTION === "retire-obsolete"
+                    ? "All three obsolete Nomreh Cloudflare/better-sqlite3 artifacts were preserved as non-TypeScript backups and verified. No build or restart was attempted."
+                    : domainFound
         ? "Plesk web login succeeded and the Nomreh domain was found. No remediation was attempted."
         : "Plesk web login completed, but the Nomreh domain was not visible on the inspected pages. No remediation was attempted.", "");
   } catch (error) {
