@@ -501,15 +501,18 @@ async function main() {
                 await page.waitForTimeout(2500);
                 for (const directory of target.directories) {
                   const directoryPattern = new RegExp(`^${directory}$`);
-                  const directoryLink = page.locator("a.tree-item-content:visible").filter({ hasText: directoryPattern }).last();
+                  const directoryText = page.getByText(directory, { exact: true }).last();
+                  const directoryRow = directoryText.locator("xpath=ancestor::*[.//input[@type='checkbox']][1]");
+                  const directoryLink = directoryRow.locator("a.tree-item-content:visible").first();
                   await directoryLink.waitFor({ state: "visible", timeout: 15000 }).catch(() => undefined);
                   if (!await directoryLink.count()) {
                     const visibleEntries = await page.locator("a:visible").evaluateAll((anchors) => [...new Set(anchors.map((anchor) => (anchor.textContent || "").trim()).filter((text) => /^(?:lib|server|tests|app|components|scripts|public|[a-z0-9_.@-]+\.(?:ts|tsx|json|cjs))$/i.test(text)))].slice(0, 60));
                     for (const entry of visibleEntries) lines.push(`- Directory inspection: ${sanitize(entry)}`);
                     throw new Error(`The Nomreh ${directory} directory was not found in the file list while locating ${target.file}. No artifact was changed.`);
                   }
-                  await directoryLink.evaluate((element) => element.click());
-                  await page.waitForTimeout(2000);
+                  lines.push(`- Opening Nomreh directory from its file row: ${directory}`);
+                  await directoryLink.click({ timeout: 10000 });
+                  await page.waitForTimeout(2500);
                 }
                 const targetBody = await page.locator("body").innerText().catch(() => "");
                 if (!targetBody.includes(target.marker)) throw new Error(`The containing directory for ${target.file} could not be verified. No artifact was changed.`);
