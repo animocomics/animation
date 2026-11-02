@@ -691,6 +691,16 @@ async function main() {
   if (invalidKeyResponse.ok() || typeof invalidKeyPayload.error !== "string" || !invalidKeyPayload.error) throw new Error("The deliberately invalid provider key did not produce a structured error.");
   lines.push("- Invalid provider-key failures are structured JSON; no provider configuration was saved.");
 
+  const malformedTestResponse = await context.request.post(`${ORIGIN}/api/provider/test`, {
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    data: "<!DOCTYPE html><html>readiness malformed JSON</html>",
+  });
+  const malformedTestBody = await malformedTestResponse.text();
+  let malformedTestPayload;
+  try { malformedTestPayload = JSON.parse(malformedTestBody); } catch { throw new Error(`The malformed-JSON server diagnostic returned non-JSON HTTP ${malformedTestResponse.status()}.`); }
+  lines.push(`- Deliberately malformed server JSON diagnostic: HTTP ${malformedTestResponse.status()}; content type ${clean(malformedTestResponse.headers()["content-type"] || "none")}.`);
+  if (malformedTestResponse.status() !== 502 || typeof malformedTestPayload.error !== "string" || !malformedTestPayload.error.includes("پاسخ JSON معتبر نداد") || /Unexpected token|<!DOCTYPE|not valid JSON/i.test(malformedTestPayload.error)) throw new Error("The server forwarded a raw JSON parser error instead of a safe provider-response message.");
+
   const providerStatusBeforeInvalidSave = JSON.stringify(providerPayload.status);
   const invalidSaveResponse = await context.request.post(`${ORIGIN}/api/provider`, {
     headers: { Accept: "application/json" },
