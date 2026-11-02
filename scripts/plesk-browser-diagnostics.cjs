@@ -4,6 +4,7 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const crypto = require("node:crypto");
 const { chromium } = require("playwright");
 const { normalizePanelUrl, redact } = require("./plesk-api-diagnostics.cjs");
 
@@ -62,7 +63,7 @@ function labelValues(text, labels) {
 }
 
 async function main() {
-  if (!["diagnose", "upload", "extract", "build", "status", "disk", "fix-node-version"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
+  if (!["diagnose", "upload", "extract", "build", "status", "disk", "fix-node-version", "update-package"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
   const panel = normalizePanelUrl(process.env.PLESK_PANEL_URL || "");
   const readOnly = ACTION === "diagnose" || ACTION === "status";
   const actionDescription = ACTION === "upload"
@@ -73,7 +74,9 @@ async function main() {
         ? "Controlled read-only action: run Nomreh's disk report only. No build, deletion, restart, or settings change is attempted."
         : ACTION === "fix-node-version"
           ? "Controlled action: preserve Nomreh's Node override backups and pin its untracked .node-version file only to a verified installed nodenv version. No application source, persistent data, build, restart, or other domain is touched."
-          : "Controlled action: run the validated Nomreh production build with its domain-local Node 22 runtime. Node.js enablement and restart remain pending.";
+          : ACTION === "update-package"
+            ? "Controlled action: replace only Nomreh's package.json with the hash-validated npm launcher fix. No other application file, persistent data, build, restart, or other domain is touched."
+            : "Controlled action: run the validated Nomreh production build with its domain-local Node 22 runtime. Node.js enablement and restart remain pending.";
   const lines = ["# Plesk browser diagnostics", "", readOnly
     ? "Read-only browser inspection. No settings, deployments or files were changed."
     : actionDescription, ""];
@@ -455,6 +458,67 @@ async function main() {
               lines.push("- Persistent-data inspection only; no file was saved or changed.", "");
               actionCompleted = true;
             }
+            if (ACTION === "update-package") {
+              lines.push("## Controlled Nomreh package launcher update", "");
+              if (!fileBody.includes("package.json") || !fileBody.includes("server.js") || !fileBody.includes(ARCHIVE_NAME)) {
+                throw new Error("The File Manager is not verified at Nomreh's application root. package.json was not changed.");
+              }
+              const localPackage = path.resolve(__dirname, "..", "package.json");
+              const expectedPackageSha256 = process.env.PLESK_PACKAGE_SHA256 || "";
+              if (!/^[a-f0-9]{64}$/.test(expectedPackageSha256)) throw new Error("The validated package.json SHA-256 was not provided. No file was uploaded.");
+              const packageBytes = fs.readFileSync(localPackage);
+              const actualPackageSha256 = crypto.createHash("sha256").update(packageBytes).digest("hex");
+              if (actualPackageSha256 !== expectedPackageSha256) throw new Error("The local package.json does not match the validated legacy-build commit. No file was uploaded.");
+              if (!await page.getByText("package.json", { exact: true }).count()) throw new Error("The existing Nomreh package.json was not found. No file was uploaded.");
+              lines.push(`- Validated package.json bytes: ${packageBytes.length}`, `- Validated package.json SHA-256: ${actualPackageSha256}`, "");
+              const addNewButton = page.getByRole("button", { name: "Add New", exact: true }).first();
+              if (!await addNewButton.count()) throw new Error("The Add New control was not found. package.json was not uploaded.");
+              await addNewButton.click({ timeout: 5000 });
+              await page.waitForTimeout(500);
+              const packageUpload = page.locator("input[type='file']").first();
+              if (!await packageUpload.count()) throw new Error("The File Manager upload input was not found. package.json was not uploaded.");
+              await packageUpload.setInputFiles(localPackage);
+              await page.waitForTimeout(1500);
+              const confirmUpload = page.locator("button:visible").filter({ hasText: /^Upload/i }).first();
+              if (await confirmUpload.count()) await confirmUpload.click({ timeout: 5000 }).catch(() => undefined);
+              await page.waitForTimeout(1800);
+              const overwriteBody = await page.locator("body").innerText().catch(() => "");
+              const overwriteLines = overwriteBody.split(/\r?\n/).map((line) => line.trim()).filter((line) => /package\.json|overwrite|replace existing|already exists/i.test(line) && !/secret|token|password|credential/i.test(line)).slice(0, 20);
+              for (const line of overwriteLines) lines.push(`- Upload form: ${sanitize(line.slice(0, 300))}`);
+              if (/overwrite|replace existing|already exists/i.test(overwriteBody)) {
+                if (!/package\.json/i.test(overwriteBody)) throw new Error("The overwrite prompt did not explicitly identify package.json. Overwrite was not confirmed.");
+                const overwriteControl = page.getByLabel(/overwrite existing files|replace existing files/i).first();
+                if (await overwriteControl.count()) await overwriteControl.check({ force: true, timeout: 5000 }).catch(() => undefined);
+                const dialog = page.locator("[role='dialog']:visible, .pul-modal:visible, .modal:visible").last();
+                const scope = await dialog.count() ? dialog : page;
+                const confirmOverwrite = scope.getByRole("button", { name: /^(Overwrite|Replace|Yes|OK|Confirm)$/i }).last();
+                if (!await confirmOverwrite.count()) throw new Error("The package.json overwrite confirmation control was not found. Overwrite was not confirmed.");
+                await confirmOverwrite.click({ timeout: 8000 });
+                await page.waitForTimeout(2500);
+              }
+              const uploadedPackageLink = page.getByText("package.json", { exact: true }).first();
+              if (!await uploadedPackageLink.count()) throw new Error("package.json was not visible after upload. No build or further host change was attempted.");
+              const downloadPromise = page.waitForEvent("download", { timeout: 6000 }).catch(() => null);
+              await uploadedPackageLink.click({ timeout: 8000 }).catch(() => undefined);
+              const download = await downloadPromise;
+              let verified = false;
+              if (download) {
+                const downloadPath = await download.path();
+                if (downloadPath) {
+                  const hostedBytes = fs.readFileSync(downloadPath);
+                  const hostedSha256 = crypto.createHash("sha256").update(hostedBytes).digest("hex");
+                  if (hostedSha256 !== actualPackageSha256) throw new Error("The hosted package.json hash does not match the validated file. No build or restart was attempted.");
+                  verified = true;
+                }
+              } else {
+                await page.waitForTimeout(1200);
+                const editorBody = await page.locator("body").innerText().catch(() => "");
+                if (editorBody.includes("$npm_node_execpath") && editorBody.includes("build:plesk") && editorBody.includes("space:plesk")) verified = true;
+              }
+              if (!verified) throw new Error("The hosted package.json launcher fix could not be verified. No build or restart was attempted.");
+              lines.push("- Nomreh package.json was replaced only with the validated npm-node launcher fix and verified after upload.", "- No other application file, persistent data, build, restart, or other domain was changed.", "");
+              actionCompleted = true;
+            }
             if (ACTION === "fix-node-version") {
               const originalName = ".node-version";
               const backupName = process.env.PLESK_NODE_BACKUP_NAME || ".node-version.nomreh-backup";
@@ -804,7 +868,7 @@ async function main() {
         }
       }
     }
-    if (["upload", "extract", "build", "status", "disk", "fix-node-version"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Node.js was not enabled or restarted.`);
+    if (["upload", "extract", "build", "status", "disk", "fix-node-version", "update-package"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Node.js was not enabled or restarted.`);
     lines.push("## Result", "", ACTION === "upload"
       ? "The validated application archive was uploaded to Nomreh. Extraction, dependency installation, build, and Node.js enablement remain pending."
       : ACTION === "extract"
@@ -817,7 +881,9 @@ async function main() {
               ? "The read-only Nomreh disk report completed. No build, deletion, restart, or settings change was attempted."
               : ACTION === "fix-node-version"
                 ? "Nomreh's Node override fix completed with the original contents preserved. No build or restart was attempted; read-only command verification remains pending."
-                : domainFound
+                : ACTION === "update-package"
+                  ? "Nomreh's validated package.json npm launcher fix was uploaded and verified. No build or restart was attempted; disk verification remains pending."
+                  : domainFound
         ? "Plesk web login succeeded and the Nomreh domain was found. No remediation was attempted."
         : "Plesk web login completed, but the Nomreh domain was not visible on the inspected pages. No remediation was attempted.", "");
   } catch (error) {
