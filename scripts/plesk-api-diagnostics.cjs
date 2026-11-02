@@ -51,7 +51,7 @@ function request(url, options = {}) {
       method: options.method || "GET",
       headers,
       timeout: 20000,
-      rejectUnauthorized: true,
+      rejectUnauthorized: options.allowInvalidCertificate ? false : true,
     }, (res) => {
       let size = 0;
       const chunks = [];
@@ -120,7 +120,11 @@ function selectCliInfo(stdout) {
 async function main() {
   const panel = normalizePanelUrl(process.env.PLESK_PANEL_URL || "");
   const headers = authHeaders();
+  const allowInvalidCertificate = process.env.PLESK_ALLOW_INVALID_CERTIFICATE === "1";
   const lines = ["# Plesk read-only diagnostics", "", "No settings, files, repositories or services were changed.", ""];
+  if (allowInvalidCertificate) {
+    lines.push("The user explicitly allowed this Plesk API connection to bypass its certificate hostname mismatch. HTTPS remained enabled; no credentials were logged.", "");
+  }
 
   try {
     const addresses = await dns.lookup(DOMAIN, { all: true });
@@ -136,14 +140,14 @@ async function main() {
     lines.push("## Public website", "", `- Request failed: ${redact(error.message)}`, "");
   }
 
-  const server = await request(`${panel}/api/v2/server`, { headers });
+  const server = await request(`${panel}/api/v2/server`, { headers, allowInvalidCertificate });
   lines.push("## Plesk API authentication", "", `- HTTP status: ${server.status}`, "");
   if (server.status < 200 || server.status >= 300) throw new Error(`Plesk API authentication/server check failed: ${apiError(server)}`);
   lines.push("## Plesk server", "", "```json", JSON.stringify(selectedFields(server.json, ["version", "revision", "os", "os_version", "status"]), null, 2), "```", "");
 
   const domainUrl = new URL(`${panel}/api/v2/domains`);
   domainUrl.searchParams.set("name", DOMAIN);
-  const domains = await request(domainUrl, { headers });
+  const domains = await request(domainUrl, { headers, allowInvalidCertificate });
   if (domains.status < 200 || domains.status >= 300) throw new Error(`Plesk domain query failed (HTTP ${domains.status}): ${apiError(domains)}`);
   const matches = Array.isArray(domains.json)
     ? domains.json.filter((item) => item && (item.name === DOMAIN || item.ascii_name === DOMAIN))
@@ -156,6 +160,7 @@ async function main() {
   const domainInfo = await request(`${panel}/api/v2/cli/domain/call`, {
     method: "POST",
     headers,
+    allowInvalidCertificate,
     body: { params: ["--info", DOMAIN] },
   });
   lines.push("## Read-only domain information", "", `- HTTP status: ${domainInfo.status}`, "");
