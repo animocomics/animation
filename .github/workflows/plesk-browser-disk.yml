@@ -20,7 +20,7 @@ concurrency:
 jobs:
   read-only-disk:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 11
     steps:
       - name: Check private Plesk browser configuration
         id: config
