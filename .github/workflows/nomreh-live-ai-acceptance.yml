@@ -34,15 +34,6 @@ jobs:
         run: |
           npm ci --ignore-scripts --no-audit --no-fund --package-lock=false
           npm install --no-save --package-lock=false --ignore-scripts --no-audit --no-fund playwright
-      - name: Withdraw earlier diagnostic session metadata
-        if: always()
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh api --method PATCH repos/${GITHUB_REPOSITORY}/check-runs/125388541779 \
-            --raw-field 'output[title]=Nomreh live AI acceptance (redacted)' \
-            --raw-field 'output[summary]=Earlier live grading returned HTTP 504 HTML. The diagnostic output was withdrawn because the client included session metadata in a network error. No provider key was included; no handwriting success was claimed.' >/dev/null
       - name: Run authorized live provider, usage, and handwriting checks
         env:
           NOMREH_ADMIN_USERNAME: ${{ secrets.NOMREH_ADMIN_USERNAME }}
