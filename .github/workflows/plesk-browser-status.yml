@@ -6,6 +6,7 @@ on:
       - arena/f4b832aa-animation
     paths:
       - .github/workflows/plesk-browser-status.yml
+      - scripts/plesk-browser-diagnostics.cjs
   workflow_dispatch:
 
 permissions:
