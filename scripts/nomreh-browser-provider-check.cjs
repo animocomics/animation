@@ -91,6 +91,8 @@ async function run() {
 
   const malformed = await api(page, "/api/provider/test", {});
   lines.push(`- Real browser malformed local-only probe: HTTP ${malformed.status}; ${malformed.status === 400 ? "route JSON validation reached" : summarize(malformed)}.`);
+  const mismatch = await api(page, "/api/provider/test", { provider: status.provider === "gemini" ? "openai" : "gemini", model: "xx" });
+  lines.push(`- Real browser local provider-mismatch probe: HTTP ${mismatch.status}; ${mismatch.status === 400 ? "local validation reached without an external call" : summarize(mismatch)}.`);
   const malformedJson = await rawApi(page, "/api/provider/test", "{\"provider\":");
   let malformedJsonClass = "unclassified";
   try {
