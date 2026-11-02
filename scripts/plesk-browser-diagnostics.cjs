@@ -499,7 +499,7 @@ async function main() {
                   }
                 }
                 if (!renameChoice || !await renameChoice.count()) throw new Error("The Rename command was not available for package.json. No file was changed.");
-                await renameChoice.click({ timeout: 8000 });
+                await renameChoice.evaluate((element) => element.click());
                 await page.waitForTimeout(700);
                 let renameInput = page.locator('input:not([type="checkbox"]):not([type="hidden"])[value="package.json"]:visible').first();
                 if (!await renameInput.count()) {
