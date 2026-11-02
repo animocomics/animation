@@ -299,6 +299,8 @@ async function main() {
             } catch { /* A non-essential diagnostic response was unavailable. */ }
           };
           page.on("response", responseHandler);
+          let latestConsoleOutput = "";
+          let lastDiskProgressReport = 0;
           try {
             lines.push("## Controlled read-only Nomreh disk report", "", `- Command: ${command}`, "");
             await commandInput.click({ timeout: 8000 });
@@ -320,6 +322,13 @@ async function main() {
             while (Date.now() - diskStartedAt < 6 * 60 * 1000) {
               await page.waitForTimeout(2000);
               const consoleOutput = await outputElement.innerText().catch(() => "");
+              latestConsoleOutput = consoleOutput;
+              if (Date.now() - lastDiskProgressReport > 15000) {
+                const partial = `${consoleOutput}\n${responseOutput}`.split(/\r?\n/).map((line) => line.trim()).filter((line) => /Nomreh|Application|Persistent|Dependencies|Production build|Runtime|uploads|Available space|MiB|GiB|npm|space:plesk|node|du\b|df\b|failed|error/i.test(line) && !/secret|token|password|credential|api.key/i.test(line)).slice(-12);
+                if (partial.length) console.log(sanitize(partial.join("\n")));
+                if (responseSummaries.length) console.log(sanitize(responseSummaries.slice(-5).join("\n")));
+                lastDiskProgressReport = Date.now();
+              }
               const currentBody = await page.locator("body").innerText().catch(() => "");
               const combined = `${consoleOutput}\n${responseOutput}\n${currentBody}`;
               if (/Report complete\. No files were changed or deleted\./i.test(combined)) {
@@ -334,7 +343,6 @@ async function main() {
               }
             }
             if (!diskSucceeded) throw new Error("The read-only Nomreh disk report did not complete within 6 minutes. No build or settings change was attempted.");
-            for (const response of responseSummaries.slice(0, 20)) lines.push(`- Execution response: ${sanitize(response)}`);
             const diskLines = completedOutput.split(/\r?\n/).map((line) => line.trim()).filter((line) => /Nomreh read-only disk|Application total|Persistent data total|Git history|Dependencies|Production build|Regenerable|Public files|Local Node runtime|Teacher uploads|Available space|Runtime temporary|Report complete|MiB|GiB/i.test(line) && !/secret|token|password|credential|api.key/i.test(line)).slice(-80);
             for (const line of diskLines) lines.push(`- Disk report: ${sanitize(line.slice(0, 350))}`);
             lines.push("- The read-only disk command completed; no build, deletion, restart, or settings change was attempted.", "");
@@ -342,6 +350,10 @@ async function main() {
           } finally {
             capturing = false;
             page.off("response", responseHandler);
+            for (const response of responseSummaries.slice(0, 20)) lines.push(`- Execution response: ${sanitize(response)}`);
+            const partialLines = `${latestConsoleOutput}\n${responseOutput}`.split(/\r?\n/).map((line) => line.trim()).filter((line) => /Nomreh|Application|Persistent|Dependencies|Production build|Runtime|uploads|Available space|MiB|GiB|npm|space:plesk|node|du\b|df\b|failed|error/i.test(line) && !/secret|token|password|credential|api.key/i.test(line)).slice(-40);
+            for (const line of partialLines) lines.push(`- Partial disk output: ${sanitize(line.slice(0, 400))}`);
+            if (!responseSummaries.length && !partialLines.length) lines.push("- No execution response or sanitized partial output was exposed by Plesk.");
           }
         }
         if (ACTION === "build") {
