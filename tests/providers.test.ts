@@ -196,11 +196,24 @@ test("Gemini adapter sends inline PDF/image data and parses fenced JSON", async 
     assert.equal(body.generationConfig.responseSchema, undefined);
     assert.equal(body.generationConfig.responseJsonSchema.additionalProperties, false);
     assert.equal(body.generationConfig.responseJsonSchema.properties.questions.items.properties.evidence.properties.page.type[1], "null");
+    assert.deepEqual(body.generationConfig.thinkingConfig, { thinkingLevel: "low" });
     assert.equal(body.contents[0].parts.filter((part: { inline_data?: unknown }) => part.inline_data).length, 2);
     return Response.json({ candidates: [{ content: { parts: [{ text: `\`\`\`json\n${JSON.stringify(modelResult)}\n\`\`\`` }] } }], usageMetadata: { promptTokenCount: 80, candidatesTokenCount: 20 } });
   }, async () => {
     const response = await callProvider({ provider: "gemini", model: "gemini-3.8-flash", apiKey: "secret-gemini", prompt: "prompt", files });
     assert.deepEqual(response.usage, { inputTokens: 80, outputTokens: 20 });
+  });
+});
+
+test("Gemini legacy model IDs keep a compatible config without Gemini 3 thinking fields", async () => {
+  await mockFetch((url, init) => {
+    assert.match(url, /gemini-2\.5-flash:generateContent$/);
+    const body = JSON.parse(String(init.body));
+    assert.equal(body.generationConfig.thinkingConfig, undefined);
+    assert.equal(body.generationConfig.responseJsonSchema.type, "object");
+    return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify(modelResult) }] } }] });
+  }, async () => {
+    await callProvider({ provider: "gemini", model: "gemini-2.5-flash", apiKey: "secret-gemini", prompt: "prompt", files: files.slice(0, 1) });
   });
 });
 

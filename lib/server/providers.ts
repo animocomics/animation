@@ -450,6 +450,9 @@ async function callGemini(input: ProviderCallInput): Promise<ProviderCallResult>
           // additionalProperties. responseJsonSchema accepts the JSON Schema
           // used by the application, including nullable unions and bounds.
           responseJsonSchema: schemaForTask(input.task),
+          // Gemini 3/4 otherwise default to medium dynamic thinking. A low
+          // level keeps interactive grading below the shared-host proxy timeout.
+          ...(/^(?:models\/)?gemini-(?:3|4)(?:[.-]|$)/.test(input.model) ? { thinkingConfig: { thinkingLevel: "low" } } : {}),
           maxOutputTokens: 32768,
           temperature: 0.1,
         },
