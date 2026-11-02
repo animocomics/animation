@@ -501,8 +501,8 @@ async function main() {
                 await page.waitForTimeout(1600);
                 for (const directory of target.directories) {
                   const directoryPattern = new RegExp(`^${directory}$`);
-                  let directoryLink = page.locator("a.tree-item-content:visible").filter({ hasText: directoryPattern }).first();
-                  if (!await directoryLink.count()) directoryLink = page.locator("a:visible").filter({ hasText: directoryPattern }).last();
+                  let directoryLink = page.locator("a:visible:not(.tree-item-content)").filter({ hasText: directoryPattern }).last();
+                  if (!await directoryLink.count()) directoryLink = page.locator("a.tree-item-content:visible").filter({ hasText: directoryPattern }).first();
                   if (!await directoryLink.count()) throw new Error(`The Nomreh ${directory} directory was not found while locating ${target.file}. No artifact was changed.`);
                   await directoryLink.evaluate((element) => element.click());
                   await page.waitForTimeout(1500);
