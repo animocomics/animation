@@ -250,7 +250,8 @@ async function main() {
           for (const link of fileLinks) lines.push(`- File entry: ${sanitize(link.text)}${link.href.startsWith("/") ? ` (${sanitize(new URL(link.href, page.url()).pathname)})` : ""}`);
           if (fileLinks.length) lines.push("");
           if (depth === 1) {
-            if (ACTION === "upload" && fileBody.includes(ARCHIVE_NAME)) {
+            const archivePresent = fileBody.includes(ARCHIVE_NAME);
+            if (ACTION === "upload" && archivePresent) {
               throw new Error(`${ARCHIVE_NAME} already exists in the Nomreh application directory. Upload stopped without overwriting it.`);
             }
             const fileDetails = fileBody.split(/\r?\n/).map((line) => line.trim()).filter((line) => /package\.json|server\.js|next\.config|sqlite\.ts|plesk-node22|\.next\b/i.test(line) && !/secret|token|password|credential/i.test(line)).slice(0, 20);
@@ -271,8 +272,49 @@ async function main() {
             })).filter((item) => item.text || item.title).slice(0, 40));
             for (const control of toolbarButtons) lines.push(`- Toolbar button: ${sanitize(JSON.stringify(control))}`);
             if (toolbarButtons.length) lines.push("");
-            const addNewButton = page.getByRole("button", { name: "Add New", exact: true }).first();
-            if (await addNewButton.count()) {
+            if (ACTION === "diagnose" && archivePresent) {
+              lines.push("## Extract dialog inspection", "");
+              const archiveName = page.getByText(ARCHIVE_NAME, { exact: true }).first();
+              const archiveRow = archiveName.locator("xpath=ancestor::*[.//input[@type='checkbox']][1]");
+              const archiveCheckbox = archiveRow.locator("input[type='checkbox']").first();
+              if (await archiveCheckbox.count()) {
+                await archiveCheckbox.check({ force: true, timeout: 5000 }).catch(async () => {
+                  await archiveCheckbox.click({ force: true, timeout: 5000 }).catch(() => undefined);
+                });
+              }
+              lines.push(`- Archive selector found: ${await archiveCheckbox.count() ? "yes" : "no"}`);
+              const archiveButton = page.getByRole("button", { name: /^Archive/i }).first();
+              if (await archiveButton.count()) {
+                await archiveButton.click({ timeout: 5000 }).catch(() => undefined);
+                await page.waitForTimeout(400);
+                const extractChoice = page.locator("a:visible, button:visible").filter({ hasText: /Extract/i }).first();
+                lines.push(`- Extract menu item found: ${await extractChoice.count() ? "yes" : "no"}`);
+                if (await extractChoice.count()) {
+                  await extractChoice.click({ timeout: 5000 }).catch(() => undefined);
+                  await page.waitForTimeout(600);
+                }
+              }
+              const dialog = page.locator("[role='dialog']:visible, .pul-modal:visible, .modal:visible").last();
+              if (await dialog.count()) {
+                const dialogText = await dialog.innerText().catch(() => "");
+                for (const line of dialogText.split(/\r?\n/).map((item) => item.trim()).filter((line) => line && !/secret|token|password|credential/i.test(line)).slice(0, 40)) {
+                  lines.push(`- Extract dialog: ${sanitize(line.slice(0, 300))}`);
+                }
+                const dialogInputs = await dialog.locator("input").evaluateAll((elements) => elements.map((element) => ({
+                  name: element.getAttribute("name") || element.id || "",
+                  type: element.getAttribute("type") || "text",
+                  value: (element.getAttribute("value") || "").slice(0, 250),
+                  checked: element.checked,
+                })).filter((item) => !/password|secret|token|credential/i.test(item.name)));
+                for (const input of dialogInputs) lines.push(`- Extract input: ${sanitize(JSON.stringify(input))}`);
+              } else {
+                lines.push("- No extract confirmation dialog was opened; no files were extracted.");
+              }
+              lines.push("- Inspection only: the extract confirmation button was not pressed.", "");
+            }
+            if (ACTION === "upload" || !archivePresent) {
+              const addNewButton = page.getByRole("button", { name: "Add New", exact: true }).first();
+              if (await addNewButton.count()) {
               await addNewButton.click({ timeout: 5000 }).catch(() => undefined);
               await page.waitForTimeout(500);
               const menuItems = await page.locator("a:visible, button:visible").evaluateAll((elements) => elements.map((element) => ({
@@ -307,6 +349,7 @@ async function main() {
                 for (const detail of uploadedDetails) lines.push(`- Uploaded file: ${sanitize(detail.slice(0, 300))}`);
                 lines.push("- Upload completed and the archive is visible in the Nomreh application directory. No extraction or build was attempted.", "");
                 actionCompleted = true;
+              }
               }
             }
           }
