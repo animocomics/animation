@@ -14,10 +14,13 @@ let teacher;
 
 function clean(value) {
   return String(value ?? "")
+    .split(/\r?\n\s*Call log:/i)[0]
     .replace(/[\u0000-\u001f\u007f<>]/g, " ")
     .replace(/https?:\/\/\S+/gi, "[link]")
     .replace(/AIza[0-9A-Za-z_-]{8,}/g, "[کلید]")
     .replace(/Bearer\s+\S+/gi, "Bearer [حذف‌شده]")
+    .replace(/(?:nomreh_session|next-auth\.session-token)=[^\s;]+/gi, "[جلسهٔ حذف‌شده]")
+    .replace(/(?:cookie|authorization|set-cookie):\s*[^\s]+/gi, "[سرآیند محرمانه]")
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 320);
@@ -34,16 +37,26 @@ function report() {
 }
 
 async function api(context, method, pathname, body) {
-  const response = await context.fetch(`${ORIGIN}${pathname}`, {
-    method,
-    data: body,
-    headers: { Accept: "application/json" },
-    timeout: method === "POST" && pathname === "/api/grade" ? 330000 : 45000,
-  });
-  const text = await response.text();
-  let payload = null;
-  try { payload = text ? JSON.parse(text) : null; } catch { /* Keep only status and content type for HTML/non-JSON responses. */ }
-  return { response, status: response.status(), contentType: response.headers()["content-type"] || "none", payload, text };
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const response = await context.fetch(`${ORIGIN}${pathname}`, {
+        method,
+        data: body,
+        headers: { Accept: "application/json" },
+        timeout: method === "POST" && pathname === "/api/grade" ? 330000 : 45000,
+      });
+      const text = await response.text();
+      let payload = null;
+      try { payload = text ? JSON.parse(text) : null; } catch { /* Keep only status and content type for HTML/non-JSON responses. */ }
+      return { response, status: response.status(), contentType: response.headers()["content-type"] || "none", payload, text };
+    } catch (error) {
+      lastError = error;
+      if (method !== "GET" || attempt === 2) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 900));
+    }
+  }
+  throw lastError;
 }
 
 function errorText(result) {
@@ -223,11 +236,16 @@ async function run() {
     lines.push("- Handwriting test was not requested in this run.");
   }
 
-  const afterUsageResult = await api(admin, "GET", "/api/admin/usage");
-  if (!afterUsageResult.response.ok()) throw new Error(`گزارش مصرف پس از آزمون خوانده نشد: HTTP ${afterUsageResult.status}.`);
-  const afterUsage = usageSummary(afterUsageResult.payload);
-  lines.push(usageLine(afterUsage, "Recorded usage after this check"));
-  lines.push(`- Delta during this check: jobs ${afterUsage.jobs - beforeUsage.jobs}; input tokens ${afterUsage.input - beforeUsage.input}; output tokens ${afterUsage.output - beforeUsage.output}; total ${afterUsage.input + afterUsage.output - beforeUsage.input - beforeUsage.output}.`);
+  let afterUsage;
+  try {
+    const afterUsageResult = await api(admin, "GET", "/api/admin/usage");
+    if (!afterUsageResult.response.ok()) throw new Error(`HTTP ${afterUsageResult.status}: ${errorText(afterUsageResult)}`);
+    afterUsage = usageSummary(afterUsageResult.payload);
+    lines.push(usageLine(afterUsage, "Recorded usage after this check"));
+    lines.push(`- Delta during this check: jobs ${afterUsage.jobs - beforeUsage.jobs}; input tokens ${afterUsage.input - beforeUsage.input}; output tokens ${afterUsage.output - beforeUsage.output}; total ${afterUsage.input + afterUsage.output - beforeUsage.input - beforeUsage.output}.`);
+  } catch (error) {
+    lines.push(`- Recorded usage after this check: unavailable after three safe read attempts (${clean(error.message)}); the delta is unknown, not zero.`);
+  }
   lines.push("", "## Quota boundary", "", "- The application records tokens from completed/failed grading jobs, but the provider status and usage APIs do not expose the account's remaining quota, daily reset, or free-tier balance. An exact remaining allowance cannot be inferred from these numbers.");
   lines.push("- A successful provider test is not a quota guarantee. Only the provider dashboard/account can confirm the current plan and remaining/rate-limited allowance; HTTP 429 is the reliable live signal when a limit is reached.");
   lines.push("", "## Result", "", `- Handwriting attempted: ${handwritingAttempted ? "yes" : "no"}; controlled handwriting success: ${handwritingSucceeded ? "yes" : "no"}.`);
