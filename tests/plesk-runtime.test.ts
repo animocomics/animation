@@ -7,7 +7,7 @@ import { spawnSync } from "node:child_process";
 
 const root = path.resolve(__dirname, "..");
 const launcherPath = path.join(root, "scripts", "plesk-node22.cjs");
-const { probeNode } = require(launcherPath);
+const { passengerLaunchArguments, probeNode } = require(launcherPath);
 
 function fakeNode(directory: string, version: string) {
   const binary = path.join(directory, "node");
@@ -36,6 +36,8 @@ test("Plesk bootstrap pins Node 22 and delegates both build and production start
   assert.match(packageJson.engines.node, />=22/);
   assert.match(server, /major >= 22/);
   assert.match(server, /launchServer\(\)/);
+  assert.match(launcher, /passengerLaunchArguments\(serverFile\)/);
+  assert.match(launcher, /Passenger's application loader/);
   const sha256 = launcher.match(/sha256: "([a-f0-9]{64})"/)?.[1];
   const archiveSize = launcher.match(/size: ([0-9]+)/)?.[1];
   assert.ok(sha256);
@@ -48,6 +50,29 @@ test("Plesk bootstrap pins Node 22 and delegates both build and production start
   assert.match(launcher, /cdn\.npmmirror\.com/);
   assert.match(launcher, /unofficial-builds\.nodejs\.org/);
   assert.match(launcher, /nodejs-unofficial-glibc-217/);
+});
+
+test("Node 22 delegation preserves Passenger's loader and direct non-Passenger startup", () => {
+  const serverFile = path.join(root, "server.js");
+  const environment = { ...process.env };
+  delete environment.PASSENGER_SPAWN_WORK_DIR;
+  const directSource = `process.stdout.write(JSON.stringify(require(${JSON.stringify(launcherPath)}).passengerLaunchArguments(${JSON.stringify(serverFile)})))`;
+  const direct = spawnSync(process.execPath, ["-e", directSource], { encoding: "utf8", env: environment });
+  assert.equal(direct.status, 0, direct.stderr);
+  assert.deepEqual(JSON.parse(direct.stdout), [serverFile]);
+
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nomreh-passenger-loader-"));
+  try {
+    const loader = path.join(directory, "node-loader.js");
+    const loaderSource = `global.PhusionPassenger = {}; const { passengerLaunchArguments } = require(${JSON.stringify(launcherPath)}); process.stdout.write(JSON.stringify(passengerLaunchArguments(${JSON.stringify(serverFile)})));`;
+    fs.writeFileSync(loader, loaderSource);
+    const delegated = spawnSync(process.execPath, [loader], { encoding: "utf8", env: environment });
+    assert.equal(delegated.status, 0, delegated.stderr);
+    const output = delegated.stdout.trim().split(/\r?\n/).pop() || "";
+    assert.deepEqual(JSON.parse(output), [loader]);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test("Plesk disk report is read-only and separately reports Git, application and upload usage", () => {

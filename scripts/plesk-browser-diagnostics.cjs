@@ -11,7 +11,8 @@ const { normalizePanelUrl, redact } = require("./plesk-api-diagnostics.cjs");
 const DOMAIN = "nomreh.arounidea.com";
 const ACTION = process.env.PLESK_BROWSER_ACTION || "diagnose";
 const UPLOAD_ARCHIVE = process.env.PLESK_UPLOAD_ARCHIVE || "";
-const ARCHIVE_NAME = "nomreh-deploy.zip";
+const ARCHIVE_NAME = process.env.PLESK_ARCHIVE_NAME || "nomreh-deploy.zip";
+if (!/^nomreh-deploy(?:-[a-z0-9-]+)?\.zip$/.test(ARCHIVE_NAME)) throw new Error("The Nomreh deployment archive name is invalid.");
 const OUTPUT = process.env.PLESK_DIAGNOSTICS_OUTPUT || path.join(os.tmpdir(), "nomreh-plesk-browser-diagnostics.md");
 
 function sanitize(value) {

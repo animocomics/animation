@@ -385,6 +385,7 @@ async function build() {
   progressStartedAt = Date.now();
   progressEnabled = true;
   try {
+    console.log("Nomreh Passenger-aware launcher is active for this build.");
     progress("Checking or installing the private Node 22 runtime");
     const runtime = await ensureRuntime();
     progress("Installing application dependencies");
@@ -418,12 +419,31 @@ async function setup() {
   console.log(`Nomreh dependencies are ready with the domain-local Node ${NODE_VERSION} (${runtime.kind}).`);
 }
 
+function passengerLaunchArguments(serverFile) {
+  const passengerActive = Boolean(global.PhusionPassenger || process.env.PASSENGER_SPAWN_WORK_DIR);
+  if (!passengerActive) return [serverFile];
+
+  // Passenger loads server.js through its own node-loader.js. That loader
+  // patches http.Server.listen and performs the startup handshake. A directly
+  // spawned Node 22 child would bypass it and listen on the wrong port while
+  // Passenger remains in starting/idle. Re-enter the same trusted loader in
+  // the delegated runtime; its args.json still points to this server.js, which
+  // then takes the Node >= 22 branch without another delegation.
+  const mainFile = require.main && require.main.filename ? path.resolve(require.main.filename) : "";
+  if (mainFile && mainFile !== path.resolve(serverFile) && /passenger|node-loader/i.test(mainFile) && fs.existsSync(mainFile)) {
+    console.log("Delegating Nomreh's Passenger startup handshake to the Node 22 runtime.");
+    return [mainFile];
+  }
+  throw new Error("Nomreh could not identify Passenger's application loader for the Node 22 delegation. The application was not started outside Passenger's startup handshake.");
+}
+
 function launchServer() {
   const runtime = readActiveRuntime();
   if (!runtime) {
     throw new Error("Nomreh's domain-local Node 22 runtime is not ready. Run the build:plesk script once before enabling Node.js.");
   }
-  const child = spawn(runtime.nodeBinary, [path.join(APP_ROOT, "server.js")], {
+  const serverFile = path.join(APP_ROOT, "server.js");
+  const child = spawn(runtime.nodeBinary, passengerLaunchArguments(serverFile), {
     cwd: APP_ROOT,
     env: { ...process.env, NOMREH_NODE22_DELEGATED: "1" },
     stdio: "inherit",
@@ -470,4 +490,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { build, ensureRuntime, launchServer, probeNode, readActiveRuntime, smokeRuntime };
+module.exports = { build, ensureRuntime, launchServer, passengerLaunchArguments, probeNode, readActiveRuntime, smokeRuntime };
