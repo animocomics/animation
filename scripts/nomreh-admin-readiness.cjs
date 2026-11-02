@@ -8,7 +8,7 @@ const { normalizePanelUrl } = require("./plesk-api-diagnostics.cjs");
 const ORIGIN = "https://nomreh.arounidea.com";
 const DOMAIN = "nomreh.arounidea.com";
 const OUTPUT = process.env.NOMREH_E2E_OUTPUT || "";
-const lines = ["# Nomreh admin login and configuration readiness", "", "This check uses the publicly offered initial account or the existing configured admin credentials in memory only. It never prints credentials or session cookies, and it does not save API settings or change Shecan.", ""];
+const lines = ["# Nomreh admin login and configuration readiness", "", "This check uses existing configured admin credentials in memory, the publicly offered initial account, or one documented initial-admin attempt only after the verified scoped configuration shows no admin override. It never prints credentials or session cookies, and it does not save API settings or change Shecan.", ""];
 let browser;
 let context;
 let authenticated = false;
@@ -219,9 +219,11 @@ async function readConfiguredAdminFromPlesk() {
     for (const captured of scopedPayloads) for (const name of nestedAccountVariableNames(captured)) accountVariableNames.add(name);
     lines.push(`- Scoped Node.js JSON responses inspected in memory: ${scopedPayloads.length}.`);
     lines.push(`- Account variable names present in scoped configuration: ${accountVariableNames.size ? [...accountVariableNames].sort().join(", ") : "none"}.`);
+    let adminOverrideDetected = [...accountVariableNames].some((name) => name.startsWith("NOMREH_ADMIN_"));
     if (!configuredUsername || !configuredPassword) {
       lines.push(`- Scoped application API admin fields available: ${configuredUsername || configuredPassword ? "partially" : "no"}.`);
       const dom = await readAdminFromNodeDom(page);
+      if (dom.visibleKeys.some((name) => name.startsWith("NOMREH_ADMIN_"))) adminOverrideDetected = true;
       lines.push(`- Relevant environment variable names visible in scoped Node.js view: ${dom.visibleKeys.length ? dom.visibleKeys.join(", ") : "none"}.`);
       lines.push(`- Admin credential values readable in scoped environment view: username=${dom.values.NOMREH_ADMIN_USERNAME ? "yes" : "no"}; password=${dom.values.NOMREH_ADMIN_PASSWORD ? "yes" : "no"}.`);
       lines.push(`- Relevant environment view controls: ${dom.controls.length ? dom.controls.join(", ") : "none identified"}.`);
@@ -237,6 +239,7 @@ async function readConfiguredAdminFromPlesk() {
           await Promise.allSettled([...scopedResponseReads]);
           applyCapturedAdmin();
           const editDom = await readAdminFromNodeDom(page);
+          if (editDom.visibleKeys.some((name) => name.startsWith("NOMREH_ADMIN_"))) adminOverrideDetected = true;
           lines.push(`- Scoped Node.js JSON responses inspected after opening Edit: ${scopedPayloads.length}.`);
           lines.push(`- Relevant environment variable names visible after opening Edit: ${editDom.visibleKeys.length ? editDom.visibleKeys.join(", ") : "none"}.`);
           lines.push(`- Admin credential values readable after opening Edit: username=${editDom.values.NOMREH_ADMIN_USERNAME ? "yes" : "no"}; password=${editDom.values.NOMREH_ADMIN_PASSWORD ? "yes" : "no"}.`);
@@ -285,6 +288,7 @@ async function readConfiguredAdminFromPlesk() {
           try { return element.CodeMirror && typeof element.CodeMirror.getValue === "function" ? element.CodeMirror.getValue() : element.innerText || ""; } catch { return ""; }
         }).filter((value) => /NOMREH_[A-Z0-9_]+/.test(value))).catch(() => []);
         const environmentText = [bodyText, ...textAreas, ...codeEditors].join("\n");
+        if (/NOMREH_ADMIN_(?:USERNAME|PASSWORD)/.test(environmentText)) adminOverrideDetected = true;
         configuredUsername = configuredUsername || dotenvValue(environmentText, "NOMREH_ADMIN_USERNAME");
         configuredPassword = configuredPassword || dotenvValue(environmentText, "NOMREH_ADMIN_PASSWORD");
         lines.push(`- Environment editor sources containing Nomreh variable names: body=${/NOMREH_[A-Z0-9_]+/.test(bodyText) ? "yes" : "no"}; textareas=${textAreas.length}; code-editors=${codeEditors.length}.`);
@@ -343,6 +347,7 @@ async function readConfiguredAdminFromPlesk() {
             }
           }, target.toString());
           for (const text of result.texts) {
+            if (/NOMREH_ADMIN_(?:USERNAME|PASSWORD)/.test(text)) adminOverrideDetected = true;
             configuredUsername = configuredUsername || dotenvValue(text, "NOMREH_ADMIN_USERNAME");
             configuredPassword = configuredPassword || dotenvValue(text, "NOMREH_ADMIN_PASSWORD");
           }
@@ -350,7 +355,11 @@ async function readConfiguredAdminFromPlesk() {
         }
       }
     }
-    if (!configuredUsername || !configuredPassword) return null;
+    if (!configuredUsername || !configuredPassword) {
+      if (adminOverrideDetected || configuredUsername || configuredPassword) return null;
+      lines.push("- No admin credential override was found in the verified scoped configuration. Exactly one documented initial-admin login will be attempted; no custom password will be guessed or retried.");
+      return { username: "admin", password: "Admin@1405" };
+    }
     lines.push("- Existing custom admin settings were located in Nomreh's scoped configuration; values remained in memory and no file or setting was saved.");
     return { username: configuredUsername, password: configuredPassword };
   } finally {
