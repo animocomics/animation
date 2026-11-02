@@ -112,6 +112,17 @@ function validateUpdateUrl(value: string): string {
   return url.toString();
 }
 
+function safeNetworkCode(error: unknown): string {
+  let current = error;
+  for (let depth = 0; depth < 3 && current; depth += 1) {
+    if (current instanceof Error && current.name === "TimeoutError") return "TIMEOUT";
+    const code = typeof current === "object" && "code" in current ? (current as { code?: unknown }).code : undefined;
+    if (typeof code === "string" && /^[A-Z][A-Z0-9_]{2,30}$/.test(code)) return code;
+    current = typeof current === "object" && "cause" in current ? (current as { cause?: unknown }).cause : undefined;
+  }
+  return "";
+}
+
 async function activateUpdateUrl(updateUrl: string): Promise<string> {
   let response: Response;
   try {
@@ -122,7 +133,8 @@ async function activateUpdateUrl(updateUrl: string): Promise<string> {
       headers: { "User-Agent": "Nomreh-Shecan-IP-Activation/1.0" },
     });
   } catch (error) {
-    throw new ApiNetworkError("فراخوانی لینک به‌روزرسان شکن ناموفق بود؛ لینک و دسترسی خروجی سرور به shecan.ir را بررسی کنید.", 502, { cause: error });
+    const code = safeNetworkCode(error);
+    throw new ApiNetworkError(`فراخوانی لینک به‌روزرسان شکن ناموفق بود؛ لینک و دسترسی خروجی سرور به shecan.ir را بررسی کنید.${code ? ` کد فنی: ${code}.` : ""}`, 502, { cause: error });
   }
   await response.arrayBuffer();
   const finalUrl = new URL(response.url || updateUrl);

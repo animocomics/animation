@@ -35,7 +35,12 @@ async function saveApiNetwork(request: Request) {
     if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.status });
     if (error instanceof ApiNetworkError || error instanceof ProviderNetworkError) {
       const status = await getApiNetworkStatus().catch(() => undefined);
-      return NextResponse.json({ error: error.message, status }, { status: error instanceof ApiNetworkError ? error.status : 502 });
+      // This is an admin connection-test result, not an authorization failure.
+      // Keep gateway/upstream failures JSON-shaped so Passenger cannot replace
+      // the actionable Shecan message with its HTML 403 error document.
+      const statusCode = error instanceof ApiNetworkError ? error.status : 502;
+      const upstreamFailure = statusCode >= 500 || statusCode === 401 || statusCode === 403;
+      return NextResponse.json({ error: error.message, status }, { status: upstreamFailure ? 400 : statusCode });
     }
     return NextResponse.json({ error: "ذخیره یا آزمایش اتصال انجام نشد؛ دوباره تلاش کنید." }, { status: 500 });
   }
