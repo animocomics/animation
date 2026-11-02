@@ -519,8 +519,6 @@ input[type="number"] { font-variant-numeric: tabular-nums; }
 .settings-summary-card h3 { color: var(--muted); font-size: 10px; font-weight: 500; }
 .settings-summary-card > strong { display: block; font-size: 12px; margin-top: 4px; }
 .settings-summary-card > p { color: var(--muted); font-size: 9px; line-height: 1.9; margin-top: 8px; }
-.exam-settings-notice { grid-column: 1 / -1; align-items: center; }
-.exam-settings-notice > div { flex: 1; }
 
 /* Grading wizard and connection */
 .wizard-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; margin-bottom: 19px; }

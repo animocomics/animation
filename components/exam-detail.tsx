@@ -13,7 +13,6 @@ import {
   Download,
   FileQuestion,
   FileUp,
-  KeyRound,
   ListChecks,
   LockKeyhole,
   Settings2,
@@ -28,7 +27,7 @@ import { faDate, faNumber, getInitials, rubricScore, totalExamScore } from "../l
 import { ConfidenceBar, ExamStatusBadge, SubmissionStatusBadge } from "./ui/primitives";
 
 export function ExamDetail({ examId }: { examId: string }) {
-  const { exams, notify, user } = useApp();
+  const { exams, notify } = useApp();
   const [tab, setTab] = useState<"submissions" | "questions" | "settings">("submissions");
   const [openQuestion, setOpenQuestion] = useState<string | null>(null);
   const exam = exams.find((item) => item.id === examId);
@@ -115,7 +114,6 @@ export function ExamDetail({ examId }: { examId: string }) {
           <article className="card settings-summary-card"><div className="settings-summary-icon"><Sparkles size={22} /></div><h3>حالت تصحیح</h3><strong>{{ fast: "سریع · یک مرحله", balanced: "متعادل · ممیزی موارد بحرانی", precise: "دقیق · ممیزی همهٔ موارد پرچم‌دار" }[exam.settings.gradingMode]}</strong><p>در ممیزی دوم، مدل نتیجهٔ اول را با مراجعهٔ دوباره به تصویر بررسی و در صورت نیاز اصلاح می‌کند.</p></article>
           <article className="card settings-summary-card"><div className="settings-summary-icon blue"><ShieldCheck size={22} /></div><h3>آستانهٔ بازبینی</h3><strong>{faNumber(exam.settings.reviewThreshold * 100, 0)}٪ اعتماد مدل</strong><p>اعتماد کمتر از این مقدار و نمرهٔ نزدیک مرز قبولی به‌صورت خودکار برای معلم پرچم می‌شود.</p></article>
           <article className="card settings-summary-card"><div className="settings-summary-icon violet"><LockKeyhole size={22} /></div><h3>حریم خصوصی و انتشار</h3><strong>{exam.settings.anonymize ? "بدون راهنمای فهرست هویت" : "تطبیق با راهنمای فهرست"} · {exam.settings.requireApproval ? "تأیید معلم الزامی" : "تأیید اختیاری"}</strong><p>{exam.settings.instructions || "دستور تکمیلی برای این آزمون ثبت نشده است."}</p></article>
-          <div className="notice notice-info exam-settings-notice"><KeyRound size={19} /><div><strong>اتصال متمرکز و محفوظ نزد مدیر</strong><p>کلید فقط روی سرور و هنگام اجرا خوانده می‌شود؛ در آزمون، نتایج یا دسترس معلم ذخیره نمی‌شود.</p></div>{user.role === "admin" && <Link href="/admin" className="card-link">مدیریت اتصال</Link>}</div>
         </section>
       )}
     </div>

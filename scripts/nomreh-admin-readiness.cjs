@@ -474,8 +474,14 @@ async function testTeacherAccess() {
     await editableScore.press("Tab");
     if (await editableScore.inputValue() !== originalScore) throw new Error("Clearing and leaving a review score changed it unexpectedly.");
     if (teacherClientErrors.length) throw new Error(`The new teacher controls caused a browser error: ${teacherClientErrors[0]}`);
+    await teacherPage.goto(`${ORIGIN}/exams/exam-biology-midterm`, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await teacherPage.locator(".workspace-loading").waitFor({ state: "hidden", timeout: 20000 }).catch(() => undefined);
+    await teacherPage.getByRole("tab", { name: "سیاست تصحیح", exact: true }).click();
+    await teacherPage.getByRole("heading", { name: "حریم خصوصی و انتشار", exact: true }).waitFor({ state: "visible" });
+    if (await teacherPage.getByText("اتصال متمرکز و محفوظ نزد مدیر", { exact: true }).count()) throw new Error("The removed administrator connection notice is still visible in teacher exam settings.");
+    if (await teacherPage.getByText("کلید فقط روی سرور و هنگام اجرا خوانده می‌شود", { exact: false }).count()) throw new Error("The removed administrator connection explanation is still visible in teacher exam settings.");
     await teacherPage.unroute("**/api/workspace");
-    lines.push("- Review score clearing/restoration passed without a forced blank-to-zero mutation or browser JavaScript error.");
+    lines.push("- Review score clearing/restoration passed without a forced blank-to-zero mutation or browser JavaScript error.", "- Teacher exam settings no longer show the centralized administrator connection notice or its explanation.");
 
     const logoutResponse = await teacherContext.request.post(`${ORIGIN}/api/auth/logout`);
     if (!logoutResponse.ok()) throw new Error("The teacher test session could not be closed cleanly.");
