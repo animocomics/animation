@@ -64,7 +64,7 @@ async function main() {
   let browser;
   try {
     browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
-    const context = await browser.newContext({ ignoreHTTPSErrors: true });
+    const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1680, height: 1050 } });
     const page = await context.newPage();
     page.setDefaultTimeout(15000);
     await page.goto(`${panel}/login_up.php`, { waitUntil: "domcontentloaded", timeout: 30000 });
@@ -253,6 +253,13 @@ async function main() {
             })).filter((item) => /upload|extract|archive/i.test(`${item.text} ${item.title} ${item.name}`) || item.type === "file").slice(0, 30));
             for (const control of managerControls) lines.push(`- File control: ${sanitize(JSON.stringify(control))}`);
             if (managerControls.length) lines.push("");
+            const toolbarButtons = await page.locator("button").evaluateAll((elements) => elements.map((element) => ({
+              text: (element.textContent || "").trim().replace(/\s+/g, " ").slice(0, 100),
+              title: element.getAttribute("title") || element.getAttribute("aria-label") || "",
+              className: String(element.getAttribute("class") || "").slice(0, 120),
+            })).filter((item) => item.text || item.title).slice(0, 40));
+            for (const control of toolbarButtons) lines.push(`- Toolbar button: ${sanitize(JSON.stringify(control))}`);
+            if (toolbarButtons.length) lines.push("");
             const packageLink = page.getByText("package.json", { exact: true }).first();
             if (await packageLink.count()) {
               await packageLink.click({ timeout: 8000 }).catch(() => undefined);
