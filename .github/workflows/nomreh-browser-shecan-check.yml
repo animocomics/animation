@@ -1,5 +1,7 @@
 name: Nomreh real-browser Shecan and provider check
 
+# Application source under test: f957291289a54695fc8d158bca9597f25446c2b6
+
 on:
   push:
     branches: [arena/f4b832aa-animation]
