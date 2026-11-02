@@ -12,6 +12,7 @@ import { buildGradingPrompt, callProvider, ProviderError } from "@/lib/server/pr
 import { loadWorkspace } from "@/lib/server/workspace-store";
 import type { AuthUser, GradeApiRequest, GradingResult, ProviderId } from "@/lib/types";
 import type { ProviderNetworkConfig } from "@/lib/api-network";
+import { providerErrorHttpStatus } from "@/lib/error-message";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -78,7 +79,8 @@ export async function POST(request: Request) {
     config = await getProviderConfig();
     input = { ...parsed, files: await resolveGradeFiles(user.id, parsed.files) } as GradeApiRequest;
   } catch (error) {
-    if (error instanceof AuthError || error instanceof ProviderError) return NextResponse.json({ error: error.message }, { status: error.status });
+    if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.status });
+    if (error instanceof ProviderError) return NextResponse.json({ error: error.message }, { status: providerErrorHttpStatus(error.status) });
     const message = error instanceof Error && !("issues" in error) ? error.message : "اطلاعات آزمون یا فایل‌ها کامل و معتبر نیست. نوع فایل، حجم و بارم سؤال‌ها را بررسی کنید.";
     return NextResponse.json({ error: message }, { status: 400 });
   }
@@ -135,7 +137,7 @@ export async function POST(request: Request) {
   } catch (error) {
     const message = error instanceof Error ? error.message : "تصحیح برگه کامل نشد.";
     await recordJob("failed", usage, message);
-    if (error instanceof ProviderError) return NextResponse.json({ error: error.message }, { status: error.status });
+    if (error instanceof ProviderError) return NextResponse.json({ error: error.message }, { status: providerErrorHttpStatus(error.status) });
     return NextResponse.json({ error: "تصحیح این برگه کامل نشد. اطلاعات شما ذخیره شده است؛ لطفاً دوباره تلاش کنید." }, { status: 500 });
   }
 }

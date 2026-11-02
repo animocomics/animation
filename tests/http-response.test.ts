@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { readJsonResponse } from "../lib/http-response";
-import { invalidProviderJsonMessage, isJsonParserErrorMessage } from "../lib/error-message";
+import { invalidProviderJsonMessage, isJsonParserErrorMessage, providerErrorHttpStatus } from "../lib/error-message";
 
 test("valid JSON errors remain available to the caller", async () => {
   const response = new Response(JSON.stringify({ error: "کلید API معتبر نیست." }), {
@@ -28,6 +28,13 @@ test("server-side JSON parser failures have a stable safe provider message", () 
   assert.equal(isJsonParserErrorMessage(new SyntaxError('Unexpected token \'<\', "<!DOCTYPE "... is not valid JSON')), true);
   assert.equal(isJsonParserErrorMessage("کلید API معتبر نیست."), false);
   assert.doesNotMatch(invalidProviderJsonMessage(), /Unexpected token|<!DOCTYPE/);
+});
+
+test("provider authorization failures stay JSON instead of becoming host HTML error pages", () => {
+  assert.equal(providerErrorHttpStatus(401), 400);
+  assert.equal(providerErrorHttpStatus(403), 400);
+  assert.equal(providerErrorHttpStatus(429), 429);
+  assert.equal(providerErrorHttpStatus(502), 502);
 });
 
 test("HTML gateway errors become a safe message with the HTTP status", async () => {

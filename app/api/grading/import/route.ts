@@ -14,6 +14,7 @@ import {
   QuestionImportValidationError,
 } from "@/lib/server/question-import-schema";
 import { loadWorkspace } from "@/lib/server/workspace-store";
+import { providerErrorHttpStatus } from "@/lib/error-message";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -97,9 +98,9 @@ export async function POST(request: Request) {
     const draft = normalizeImportedQuestions(response.result);
     return NextResponse.json({ questions: draft.questions, warnings: draft.warnings, usage: response.usage });
   } catch (error) {
-    if (error instanceof AuthError || error instanceof ProviderError || error instanceof QuestionImportValidationError) {
-      return NextResponse.json({ error: error.message, ...(error instanceof QuestionImportValidationError ? { issues: error.issues } : {}) }, { status: error.status });
-    }
+    if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.status });
+    if (error instanceof ProviderError) return NextResponse.json({ error: error.message }, { status: providerErrorHttpStatus(error.status) });
+    if (error instanceof QuestionImportValidationError) return NextResponse.json({ error: error.message, issues: error.issues }, { status: error.status });
     if (error instanceof z.ZodError) return NextResponse.json({ error: "شناسهٔ آزمون یا فایل‌های سؤال و کلید معتبر نیست." }, { status: 400 });
     const message = error instanceof Error ? error.message : "خواندن سؤال و کلید کامل نشد.";
     const status = error instanceof Error && error.message.includes("پیکربندی نشده") ? 400 : 500;

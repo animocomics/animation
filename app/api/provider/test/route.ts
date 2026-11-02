@@ -5,7 +5,7 @@ import { getProviderConfig, getProviderNetworkConfig } from "@/lib/server/provid
 import { providerFetch, ProviderNetworkError } from "@/lib/server/provider-network";
 import { providerResponseError } from "@/lib/server/provider-models";
 import { ProviderError } from "@/lib/server/providers";
-import { invalidProviderJsonMessage, isJsonParserErrorMessage } from "@/lib/error-message";
+import { invalidProviderJsonMessage, isJsonParserErrorMessage, providerErrorHttpStatus } from "@/lib/error-message";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -103,7 +103,7 @@ export async function POST(request: Request) {
     if (error instanceof z.ZodError) return NextResponse.json({ error: "Provider و مدل را کامل وارد کنید." }, { status: 400 });
     if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.status });
     if (isJsonParserErrorMessage(error)) return NextResponse.json({ error: invalidProviderJsonMessage() }, { status: 502 });
-    if (error instanceof ProviderError) return NextResponse.json({ error: error.message }, { status: error.status });
+    if (error instanceof ProviderError) return NextResponse.json({ error: error.message }, { status: providerErrorHttpStatus(error.status) });
     if (error instanceof ProviderNetworkError) return NextResponse.json({ error: error.message }, { status: 502 });
     const message = error instanceof Error && error.name === "TimeoutError"
       ? "بررسی اتصال بیش از حد طول کشید."

@@ -5,7 +5,7 @@ import { getProviderConfig, getProviderNetworkConfig } from "@/lib/server/provid
 import { discoverProviderModels } from "@/lib/server/provider-models";
 import { ProviderError } from "@/lib/server/providers";
 import { ProviderNetworkError } from "@/lib/server/provider-network";
-import { invalidProviderJsonMessage, isJsonParserErrorMessage } from "@/lib/error-message";
+import { invalidProviderJsonMessage, isJsonParserErrorMessage, providerErrorHttpStatus } from "@/lib/error-message";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -36,7 +36,7 @@ export async function POST(request: Request) {
     if (error instanceof z.ZodError) return NextResponse.json({ error: "سرویس‌دهنده و کلید را بررسی کنید." }, { status: 400 });
     if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.status });
     if (isJsonParserErrorMessage(error)) return NextResponse.json({ error: invalidProviderJsonMessage() }, { status: 502 });
-    if (error instanceof ProviderError || error instanceof ProviderNetworkError) return NextResponse.json({ error: error.message }, { status: error instanceof ProviderError ? error.status : 502 });
+    if (error instanceof ProviderError || error instanceof ProviderNetworkError) return NextResponse.json({ error: error.message }, { status: error instanceof ProviderError ? providerErrorHttpStatus(error.status) : 502 });
     const message = error instanceof Error && !error.message.includes("fetch") ? error.message : "خواندن مدل‌های حساب ناموفق بود؛ اتصال سرور را بررسی کنید.";
     return NextResponse.json({ error: message }, { status: 502 });
   }
