@@ -5,6 +5,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const { execFileSync } = require("node:child_process");
 const { chromium } = require("playwright");
 const { normalizePanelUrl, redact } = require("./plesk-api-diagnostics.cjs");
 
@@ -14,6 +15,20 @@ const UPLOAD_ARCHIVE = process.env.PLESK_UPLOAD_ARCHIVE || "";
 const ARCHIVE_NAME = process.env.PLESK_ARCHIVE_NAME || "nomreh-deploy.zip";
 if (!/^nomreh-deploy(?:-[a-z0-9-]+)?\.zip$/.test(ARCHIVE_NAME)) throw new Error("The Nomreh deployment archive name is invalid.");
 const OUTPUT = process.env.PLESK_DIAGNOSTICS_OUTPUT || path.join(os.tmpdir(), "nomreh-plesk-browser-diagnostics.md");
+const DELTA_SOURCE = process.env.PLESK_DELTA_SOURCE || "";
+const DELTA_FILES = (process.env.PLESK_DELTA_FILES || "").split(",").map((item) => item.trim()).filter(Boolean);
+if (ACTION === "extract" && (DELTA_SOURCE || DELTA_FILES.length)) {
+  if (!/^[a-f0-9]{40}$/.test(DELTA_SOURCE) || !DELTA_FILES.length || DELTA_FILES.length > 20) throw new Error("The validated runtime delta manifest is incomplete.");
+  for (const file of DELTA_FILES) {
+    if (!/^[a-z0-9_./-]+$/i.test(file) || file.startsWith("/") || file.split("/").includes("..")) throw new Error("The validated runtime delta contains an unsafe path.");
+  }
+}
+const EXPECTED_DELTA = ACTION === "extract" && DELTA_SOURCE
+  ? DELTA_FILES.map((file) => ({
+      file,
+      sha256: crypto.createHash("sha256").update(execFileSync("git", ["show", `${DELTA_SOURCE}:${file}`], { maxBuffer: 2 * 1024 * 1024 })).digest("hex"),
+    }))
+  : [];
 
 function sanitize(value) {
   return redact(value)
@@ -1203,6 +1218,12 @@ async function main() {
               const namedOverwrite = page.locator("input[name*='overwrite' i], input[id*='overwrite' i]").first();
               if (await namedOverwrite.count()) await namedOverwrite.check({ force: true, timeout: 5000 }).catch(() => undefined);
               const hasConfirmationForm = /overwrite existing files|replace existing files|destination directory|extract files to the following directory|extract to|target directory/i.test(extractBody);
+              if (hasConfirmationForm && (await overwriteControl.count() || await namedOverwrite.count())) {
+                const overwriteChecked = (await overwriteControl.count() && await overwriteControl.isChecked().catch(() => false))
+                  || (await namedOverwrite.count() && await namedOverwrite.isChecked().catch(() => false));
+                if (!overwriteChecked) throw new Error("Replace existing files was not confirmed. No unchecked extraction was allowed.");
+                lines.push("- Extraction overwrite confirmation: Replace existing files is checked.");
+              }
               if (hasConfirmationForm) {
                 const confirmExtract = page.getByRole("button", { name: /^(OK|Confirm|Extract|Extract Files|Overwrite)/i }).last();
                 if (!await confirmExtract.count()) throw new Error("The extraction confirmation control was not found; extraction was not confirmed.");
@@ -1223,6 +1244,46 @@ async function main() {
               if (packageLine) lines.push(`- Extracted package.json: ${sanitize(packageLine)}`);
               if (!serverLine || !/\b593\s*B\b/i.test(serverLine)) {
                 throw new Error("Extraction could not be verified: the hosted server.js is not the validated 593-byte launcher. No build or restart was attempted.");
+              }
+              for (const expected of EXPECTED_DELTA) {
+                const segments = expected.file.split("/");
+                const fileName = segments.pop();
+                await page.goto(`${panel}${nomrehFilesPath}`, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => null);
+                await page.waitForTimeout(1500);
+                const exactDomain = new RegExp(`^${DOMAIN.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`);
+                const rootFolder = page.locator("a.tree-item-content:visible").filter({ hasText: exactDomain }).first();
+                await rootFolder.waitFor({ state: "visible", timeout: 15000 }).catch(() => undefined);
+                if (!await rootFolder.count()) throw new Error(`The Nomreh application folder was not available while verifying ${expected.file}.`);
+                await rootFolder.click({ timeout: 8000 });
+                await page.waitForTimeout(1800);
+                for (const directory of segments) {
+                  const directoryText = page.getByText(directory, { exact: true }).last();
+                  const directoryRow = directoryText.locator("xpath=ancestor::*[.//input[@type='checkbox']][1]");
+                  const directoryLink = directoryRow.locator("a.tree-item-content:visible").first();
+                  await directoryLink.waitFor({ state: "visible", timeout: 15000 }).catch(() => undefined);
+                  if (!await directoryLink.count()) throw new Error(`The ${directory} directory was not available while verifying ${expected.file}.`);
+                  await directoryLink.click({ timeout: 8000 });
+                  await page.waitForTimeout(1500);
+                }
+                const extractedFile = page.getByText(fileName, { exact: true }).first();
+                await extractedFile.waitFor({ state: "visible", timeout: 15000 }).catch(() => undefined);
+                if (!await extractedFile.count()) throw new Error(`The extracted ${expected.file} was not visible for hash verification.`);
+                const extractedRow = extractedFile.locator("xpath=ancestor::*[.//input[@type='checkbox']][1]");
+                const extractedActions = extractedRow.locator("button[title='Actions'], button[aria-label='Actions']").first();
+                if (!await extractedActions.count()) throw new Error(`The Actions menu was not available for ${expected.file} hash verification.`);
+                await extractedActions.click({ timeout: 5000 });
+                await page.waitForTimeout(400);
+                const downloadChoice = page.locator("a:visible, button:visible").filter({ hasText: /^Download$/i }).first();
+                if (!await downloadChoice.count()) throw new Error(`Download was not available for ${expected.file} hash verification.`);
+                const downloadPromise = page.waitForEvent("download", { timeout: 10000 }).catch(() => null);
+                await downloadChoice.click({ timeout: 8000 });
+                const downloaded = await downloadPromise;
+                if (!downloaded) throw new Error(`The extracted ${expected.file} could not be downloaded for hash verification.`);
+                const downloadedPath = await downloaded.path();
+                if (!downloadedPath) throw new Error(`The extracted ${expected.file} download was not materialized for hash verification.`);
+                const actualHash = crypto.createHash("sha256").update(fs.readFileSync(downloadedPath)).digest("hex");
+                if (actualHash !== expected.sha256) throw new Error(`The hosted ${expected.file} SHA-256 does not match the validated source. No build or restart was attempted.`);
+                lines.push(`- Verified hosted runtime file: ${expected.file}; SHA-256 ${actualHash}`);
               }
               lines.push("- Extraction verified: the validated server.js is present in the Nomreh application root. No build or restart was attempted.", "");
               actionCompleted = true;

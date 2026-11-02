@@ -72,6 +72,8 @@ jobs:
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
           PLESK_BROWSER_ACTION: extract
           PLESK_ARCHIVE_NAME: nomreh-deploy-shecan-doh-v18-delta.zip
+          PLESK_DELTA_SOURCE: 582b6847b859784a08311cebd90345688da5dc05
+          PLESK_DELTA_FILES: lib/server/api-network.ts,lib/server/provider-network.ts,lib/server/shecan-doh.ts
           PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-plesk-extract.md
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
         run: node scripts/plesk-browser-diagnostics.cjs
