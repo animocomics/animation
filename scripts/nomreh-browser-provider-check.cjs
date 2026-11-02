@@ -85,6 +85,8 @@ async function run() {
   const test = await api(page, "/api/provider/test", { provider: status.provider, model: status.model });
   lines.push(`- Real browser stored-key provider test: HTTP ${test.status}; ${test.status === 200 ? "success" : summarize(test)}.`);
   lines.push(`- Provider test non-sensitive response headers: server ${clean(test.server)}; x-powered-by ${clean(test.poweredBy)}; via ${clean(test.via)}.`);
+  const invalid = await api(page, "/api/provider/test", { provider: status.provider, model: status.model, apiKey: "nomreh-invalid-diagnostic-key" });
+  lines.push(`- Real browser unsaved invalid-key comparison: HTTP ${invalid.status}; ${invalid.status === 400 ? "expected rejection" : summarize(invalid)}.`);
   const models = await api(page, "/api/provider/models", { provider: status.provider });
   let modelCount = 0;
   let selectedPresent = false;
