@@ -500,9 +500,9 @@ async function main() {
                 const renameBody = await page.locator("body").innerText().catch(() => "");
                 const renameLines = renameBody.split(/\r?\n/).map((line) => line.trim()).filter((line) => /rename|new name|file name/i.test(line) && !/secret|token|password|credential/i.test(line)).slice(0, 15);
                 for (const line of renameLines) lines.push(`- Rename form: ${sanitize(line.slice(0, 250))}`);
-                let renameInput = page.locator(`input[value="${originalName}"]:visible`).first();
+                let renameInput = page.locator(`input:not([type="checkbox"]):not([type="hidden"])[value="${originalName}"]:visible`).first();
                 if (!await renameInput.count()) {
-                  const candidates = page.locator("input:visible");
+                  const candidates = page.locator("input:not([type='checkbox']):not([type='hidden']):visible");
                   for (let index = 0; index < Math.min(await candidates.count(), 30); index += 1) {
                     const candidate = candidates.nth(index);
                     if (await candidate.inputValue().catch(() => "") === originalName) {
