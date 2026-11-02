@@ -1,5 +1,7 @@
 name: Nomreh live AI acceptance
 
+# The redacted report is available both in the job summary and Check Run output.
+
 on:
   push:
     branches: [arena/f4b832aa-animation]
