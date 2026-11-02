@@ -38,6 +38,15 @@ jobs:
         if: steps.config.outputs.configured == 'true'
         uses: actions/checkout@v4
 
+      - name: Verify the successful nginx-static production build
+        if: steps.config.outputs.configured == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          build_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41441540739" --jq '.status + " " + .conclusion')"
+          test "$build_state" = "completed success"
+
       - name: Prepare an isolated temporary browser
         if: steps.config.outputs.configured == 'true'
         run: |
