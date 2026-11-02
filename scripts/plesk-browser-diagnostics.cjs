@@ -151,6 +151,7 @@ async function main() {
     let nomrehNodeLink = null;
     let nomrehFileManagerLink = null;
     let nomrehConsoleLink = null;
+    let nomrehLogsPath = "";
     for (const inspectPath of pagesToInspect) {
       const response = await page.goto(`${panel}${inspectPath}`, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => null);
       await page.waitForTimeout(1500);
@@ -181,8 +182,12 @@ async function main() {
           const tools = await toolScope.locator("a").evaluateAll((anchors) => anchors.map((anchor) => ({
             text: (anchor.textContent || "").trim().replace(/\s+/g, " "),
             href: anchor.getAttribute("href") || "",
-          })).filter((item) => /^(Git|Node\.js|Files|File Manager|Hosting Settings|Dashboard)/i.test(item.text) || /\/modules\/nodejs\/|\/smb\/file-manager\//.test(item.href)).slice(0, 20));
+          })).filter((item) => /^(Git|Node\.js|Files|File Manager|Logs|Hosting Settings|Dashboard)/i.test(item.text) || /\/modules\/nodejs\/|\/smb\/file-manager\/|\/smb\/logs\//.test(item.href)).slice(0, 25));
           for (const tool of tools) {
+            if (!nomrehLogsPath && /\/smb\/logs\/.*domainId\/145(?:\D|$)/.test(tool.href)) {
+              const logsUrl = new URL(tool.href, page.url());
+              nomrehLogsPath = `${logsUrl.pathname}${logsUrl.search}`;
+            }
             if (!nomrehFilesPath && /\/smb\/file-manager\/.*domainId\/\d+/.test(tool.href)) {
               const fileUrl = new URL(tool.href, page.url());
               nomrehFilesPath = `${fileUrl.pathname}${fileUrl.search}`;
@@ -1377,6 +1382,21 @@ async function main() {
             }
           }
         }
+      }
+      if (ACTION === "status" && nomrehLogsPath) {
+        lines.push("## Read-only Nomreh domain logs", "");
+        const logsResponse = await page.goto(`${panel}${nomrehLogsPath}`, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => null);
+        await page.waitForTimeout(2200);
+        const logsBody = await page.locator("body").innerText().catch(() => "");
+        lines.push(`- Logs page: ${sanitize(new URL(page.url()).pathname)}`, `- HTTP status: ${logsResponse ? logsResponse.status() : "unavailable"}`);
+        const logLines = logsBody.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && /Nomreh|Passenger|Node(?:\.js)?|SQLite|canvas|GLIBC|ENOENT|EACCES|MODULE_NOT_FOUND|Cannot find|failed to start|startup|exception|segmentation|timed? out|listening|server\.js|next-server|exited|fatal|uncaught/i.test(line) && !/secret|token|password|credential|api\.key|authorization|cookie|webhook/i.test(line)).slice(-100);
+        for (const line of logLines) lines.push(`- Relevant log: ${sanitize(line.slice(0, 500))}`);
+        if (!logLines.length) lines.push("- No startup-related log lines were exposed on the initial logs screen.");
+        const logChoices = await page.locator("select option, a:visible, button:visible").evaluateAll((elements) => elements.map((element) => (element.textContent || "").trim().replace(/\s+/g, " ")).filter((text) => /^(Error Log|Access Log|Apache|Nginx|Node\.js|Passenger|Logs|Log Browser)/i.test(text)).slice(0, 30));
+        for (const choice of [...new Set(logChoices)]) lines.push(`- Log control: ${sanitize(choice)}`);
+        lines.push("- Read-only log inspection; no log was cleared and no command, restart, or setting change was attempted.", "");
+      } else if (ACTION === "status") {
+        lines.push("## Read-only Nomreh domain logs", "", "- Nomreh's scoped Logs tool was not exposed on the domain card; no alternate domain or log path was accessed.", "");
       }
     }
     if (["upload", "extract", "build", "status", "disk", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "enable-runtime", "restart-runtime"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Review the reported host state before further action; no live-success claim was made.`);
