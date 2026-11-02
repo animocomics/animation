@@ -623,7 +623,7 @@ async function main() {
 
   const invalidKeyResponse = await context.request.post(`${ORIGIN}/api/provider/test`, {
     headers: { Accept: "application/json" },
-    data: { provider: "gemini", model: "gemini-3.8-flash", apiKey: "readiness-invalid-key-not-a-secret" },
+    data: { provider: "gemini", model: "gemini-3.8-flash", apiKey: "AIzaSyNomrehReadinessInvalid0000000000000000" },
   });
   const invalidKeyBody = await invalidKeyResponse.text();
   const invalidKeyContentType = invalidKeyResponse.headers()["content-type"] || "none";
@@ -633,6 +633,18 @@ async function main() {
   try { invalidKeyPayload = JSON.parse(invalidKeyBody); } catch { throw new Error("The provider test returned an invalid JSON error body."); }
   if (invalidKeyResponse.ok() || typeof invalidKeyPayload.error !== "string" || !invalidKeyPayload.error) throw new Error("The deliberately invalid provider key did not produce a structured error.");
   lines.push("- Invalid provider-key failures are structured JSON; no provider configuration was saved.");
+
+  const invalidModelsResponse = await context.request.post(`${ORIGIN}/api/provider/models`, {
+    headers: { Accept: "application/json" },
+    data: { provider: "gemini", apiKey: "AIzaSyNomrehReadinessInvalid0000000000000000" },
+  });
+  const invalidModelsBody = await invalidModelsResponse.text();
+  const invalidModelsContentType = invalidModelsResponse.headers()["content-type"] || "none";
+  lines.push(`- Deliberately invalid model-discovery response: HTTP ${invalidModelsResponse.status()}; content type ${clean(invalidModelsContentType)}.`);
+  if (!/application\/json/i.test(invalidModelsContentType)) throw new Error(`Model discovery returned HTML instead of JSON (HTTP ${invalidModelsResponse.status()}).`);
+  let invalidModelsPayload;
+  try { invalidModelsPayload = JSON.parse(invalidModelsBody); } catch { throw new Error("Model discovery returned an invalid JSON error body."); }
+  if (invalidModelsResponse.ok() || typeof invalidModelsPayload.error !== "string" || !invalidModelsPayload.error) throw new Error("Invalid model-discovery credentials did not produce a structured error.");
 
   await page.getByRole("radio", { name: /Z\.AI GLM/ }).click();
   const modelOptions = await readModelOptions();
