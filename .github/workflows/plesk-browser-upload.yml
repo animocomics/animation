@@ -43,7 +43,7 @@ jobs:
         if: steps.config.outputs.configured == 'true'
         run: |
           set -euo pipefail
-          source_sha=b419fd72fbc077f4292e7494dd34b282827a1aee
+          source_sha=cc9087696690bc5e4e02797164ac5e19c64f0b8f
           archive="$RUNNER_TEMP/nomreh-deploy-passenger.zip"
           git archive --format=zip --output="$archive" "$source_sha"
           for required in package.json package-lock.json server.js lib/server/sqlite.ts scripts/plesk-node22.cjs scripts/plesk-runtime/node-v22.22.3-linux-x64-glibc-217.tar.xz; do
@@ -51,6 +51,7 @@ jobs:
           done
           git show "$source_sha:scripts/plesk-node22.cjs" | grep -F 'Nomreh Passenger-aware launcher is active for this build.' > /dev/null
           git show "$source_sha:scripts/plesk-node22.cjs" | grep -F 'return [mainFile];' > /dev/null
+          git show "$source_sha:scripts/plesk-node22.cjs" | grep -F 'syncPublicStatic();' > /dev/null
           if unzip -Z1 "$archive" | grep -E '(^|/)(nomreh-data|node_modules|\.next|uploads?)(/|$)|(^|/)\.env$|(^|/)\.env\.(local|production|development|test)$'; then
             echo 'Sensitive, persistent, uploaded, or generated content was included in the archive.' >&2
             exit 1
