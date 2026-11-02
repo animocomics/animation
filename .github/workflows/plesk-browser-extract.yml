@@ -47,7 +47,7 @@ jobs:
           npm install --ignore-scripts --no-audit --no-fund playwright@1.64.1
           npx playwright install --with-deps chromium
 
-      - name: Extract the validated archive inside Nomreh only
+      - name: Extract and verify the validated archive inside Nomreh only
         id: extract
         if: steps.config.outputs.configured == 'true'
         env:

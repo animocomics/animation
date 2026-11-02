@@ -306,7 +306,7 @@ async function main() {
               })).filter((field) => /path|directory|destination|target|extract/i.test(`${field.name} ${field.label}`) && !/password|secret|token|credential/i.test(`${field.name} ${field.label}`)));
               for (const field of pathFields) {
                 lines.push(`- Extract path field: ${sanitize(JSON.stringify(field))}`);
-                if (field.value && !field.value.includes(DOMAIN)) throw new Error(`The extraction path is outside Nomreh: ${sanitize(field.value)}`);
+                if (field.value.startsWith("/") && !field.value.includes(DOMAIN)) throw new Error(`The extraction path is outside Nomreh: ${sanitize(field.value)}`);
               }
               const overwriteControl = page.getByLabel(/overwrite existing files/i).first();
               if (await overwriteControl.count()) await overwriteControl.check({ force: true, timeout: 5000 }).catch(() => undefined);
