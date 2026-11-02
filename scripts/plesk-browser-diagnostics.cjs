@@ -458,6 +458,10 @@ async function main() {
         : domainFound
         ? "Plesk web login succeeded and the Nomreh domain was found. No remediation was attempted."
         : "Plesk web login completed, but the Nomreh domain was not visible on the inspected pages. No remediation was attempted.", "");
+  } catch (error) {
+    lines.push("## Stopped", "", sanitize(error.message), "");
+    error.nomrehReport = sanitize(lines.join("\n"));
+    throw error;
   } finally {
     if (browser) await browser.close();
   }
@@ -468,7 +472,7 @@ async function main() {
 
 if (require.main === module) {
   main().catch((error) => {
-    const output = sanitize(`# Plesk browser diagnostics\n\nBrowser action stopped: ${error.message}\n\n${ACTION === "diagnose" ? "No settings, deployments or files were changed." : "No subsequent extraction, build, restart, or settings change was attempted. Review the step result before retrying."}\n`);
+    const output = error.nomrehReport || sanitize(`# Plesk browser diagnostics\n\nBrowser action stopped: ${error.message}\n\n${ACTION === "diagnose" ? "No settings, deployments or files were changed." : "No subsequent build, restart, or settings change was attempted. Review the step result before retrying."}\n`);
     fs.writeFileSync(OUTPUT, output, { mode: 0o600 });
     console.error(output);
     process.exitCode = 1;
