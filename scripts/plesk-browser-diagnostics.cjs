@@ -134,10 +134,11 @@ async function main() {
           lines.push("## Nomreh overview", "", `- Current page: ${sanitize(new URL(page.url()).pathname)}`, `- Page title: ${sanitize(await page.title())}`, "");
           const overviewLines = relevantLines(overview);
           if (overviewLines.length) lines.push(...overviewLines.map((line) => `- ${line}`), "");
-          const domainCard = domainElement.locator("xpath=ancestor::*[.//a[contains(@href, '/modules/nodejs/')]][1]");
+          const domainCard = domainElement.locator("xpath=ancestor::*[.//a[contains(@href, '/modules/nodejs/')] and .//a[contains(@href, '/smb/file-manager/')]][1]");
           const hasDomainCard = await domainCard.count() > 0;
           const toolScope = hasDomainCard ? domainCard : page.locator("body");
-          nomrehNodeLink = hasDomainCard ? domainCard.locator("a[href*='/modules/nodejs/']").first() : null;
+          const nodeScope = hasDomainCard ? domainCard : domainElement.locator("xpath=ancestor::*[.//a[contains(@href, '/modules/nodejs/')]][1]");
+          nomrehNodeLink = await nodeScope.count() ? nodeScope.locator("a[href*='/modules/nodejs/']").first() : null;
           const tools = await toolScope.locator("a").evaluateAll((anchors) => anchors.map((anchor) => ({
             text: (anchor.textContent || "").trim().replace(/\s+/g, " "),
             href: anchor.getAttribute("href") || "",
@@ -160,15 +161,21 @@ async function main() {
       for (const [label, toolPath] of toolPages) {
         let response = null;
         if (label === "Node.js" && nomrehNodeLink && await nomrehNodeLink.count()) {
+          const responsePromise = page.waitForResponse((item) => item.url().includes("/modules/nodejs/") && item.request().isNavigationRequest(), { timeout: 15000 }).catch(() => null);
           await nomrehNodeLink.click({ timeout: 10000 }).catch(() => undefined);
+          response = await responsePromise;
         } else {
           response = await page.goto(`${panel}${toolPath}`, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => null);
         }
         await page.waitForTimeout(1800);
         const body = await page.locator("body").innerText().catch(() => "");
-        lines.push(`## ${label} page`, "", `- HTTP status: ${response ? response.status() : "unavailable"}`, `- Current page: ${sanitize(new URL(page.url()).pathname)}`, "");
+        lines.push(`## ${label} page`, "", `- HTTP status: ${response ? response.status() : "unavailable"}`, `- Current page: ${sanitize(new URL(page.url()).pathname)}`, `- Body characters: ${body.length}`, "");
         const selected = toolLines(body);
         if (selected.length) lines.push(...selected.map((line) => `- ${line}`), "");
+        if (selected.length < 4) {
+          const excerpt = body.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !/webhook|secret|token|password|credential|api.key|environment/i.test(line) && (!line.includes("arounidea.com") || line.includes(DOMAIN))).slice(0, 30);
+          if (excerpt.length) lines.push(...excerpt.map((line) => `- Page text: ${sanitize(line.slice(0, 250))}`), "");
+        }
         const controls = await page.locator("a, button, input[type='submit']").evaluateAll((elements) => elements.map((element) => ({
           text: (element.textContent || element.getAttribute("value") || "").trim().replace(/\s+/g, " "),
           href: element.getAttribute("href") || "",
