@@ -1,0 +1,76 @@
+name: Plesk read-only diagnostics
+
+on:
+  push:
+    branches:
+      - arena/f4b832aa-animation
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check private Plesk API configuration
+        id: config
+        env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+          PLESK_API_KEY: ${{ secrets.PLESK_API_KEY }}
+        run: |
+          set -u
+          configured=false
+          if [ -n "$PLESK_PANEL_URL" ] && { [ -n "$PLESK_API_KEY" ] || { [ -n "$PLESK_API_USERNAME" ] && [ -n "$PLESK_API_PASSWORD" ]; }; }; then
+            configured=true
+          fi
+          echo "configured=$configured" >> "$GITHUB_OUTPUT"
+          if [ "$configured" = false ]; then
+            echo "Plesk API diagnostics are not configured; no host will be contacted."
+          fi
+
+      - name: Check out the diagnostics script
+        if: steps.config.outputs.configured == 'true'
+        uses: actions/checkout@v4
+
+      - name: Inspect only Nomreh and Plesk status without making changes
+        id: diagnose
+        if: steps.config.outputs.configured == 'true'
+        env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+          PLESK_API_KEY: ${{ secrets.PLESK_API_KEY }}
+          PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-plesk-diagnostics.md
+        run: node scripts/plesk-api-diagnostics.cjs
+
+      - name: Publish the sanitized diagnostic result
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CONFIGURED: ${{ steps.config.outputs.configured }}
+          DIAGNOSTIC_OUTCOME: ${{ steps.diagnose.outcome }}
+        run: |
+          set -euo pipefail
+          conclusion=neutral
+          summary='Plesk diagnostics are not configured; no host was contacted.'
+          if [ "$CONFIGURED" = true ]; then
+            conclusion=success
+            if [ "$DIAGNOSTIC_OUTCOME" != success ]; then conclusion=failure; fi
+            if [ -f "$RUNNER_TEMP/nomreh-plesk-diagnostics.md" ]; then
+              summary="$(cat "$RUNNER_TEMP/nomreh-plesk-diagnostics.md")"
+            else
+              summary='Plesk diagnostics did not produce a report; no remediation was attempted.'
+            fi
+          fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name="Plesk host diagnostics" \
+            -f head_sha="${GITHUB_SHA}" \
+            -f status=completed \
+            -f conclusion="$conclusion" \
+            -f 'output[title]=Plesk read-only diagnostics' \
+            --raw-field "output[summary]=${summary}" > /dev/null
