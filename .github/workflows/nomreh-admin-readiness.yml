@@ -1,0 +1,70 @@
+name: Nomreh admin login and configuration readiness
+
+on:
+  push:
+    branches:
+      - arena/f4b832aa-animation
+    paths:
+      - .github/workflows/nomreh-admin-readiness.yml
+      - scripts/nomreh-admin-readiness.cjs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+  actions: read
+
+concurrency:
+  group: nomreh-admin-readiness
+  cancel-in-progress: false
+
+jobs:
+  admin-readiness:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Check out the scoped admin readiness check
+        uses: actions/checkout@v4
+
+      - name: Verify the independent live-site check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          live_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41433856338" --jq '.status + " " + .conclusion')"
+          test "$live_state" = "completed success"
+
+      - name: Prepare an isolated temporary browser
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/nomreh-e2e"
+          cd "$RUNNER_TEMP/nomreh-e2e"
+          npm init -y > /dev/null
+          npm install --ignore-scripts --no-audit --no-fund playwright@1.64.1
+          npx playwright install --with-deps chromium
+
+      - name: Test real admin login and inspect configuration controls
+        id: readiness
+        env:
+          NOMREH_E2E_OUTPUT: ${{ runner.temp }}/nomreh-admin-readiness.md
+          NODE_PATH: ${{ runner.temp }}/nomreh-e2e/node_modules
+        run: node scripts/nomreh-admin-readiness.cjs
+
+      - name: Publish the sanitized readiness evidence
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          READINESS_OUTCOME: ${{ steps.readiness.outcome }}
+        run: |
+          set -euo pipefail
+          conclusion=failure
+          summary='The admin readiness check did not produce a report; no configuration success was claimed.'
+          if [ "$READINESS_OUTCOME" = success ]; then conclusion=success; fi
+          if [ -f "$RUNNER_TEMP/nomreh-admin-readiness.md" ]; then summary="$(cat "$RUNNER_TEMP/nomreh-admin-readiness.md")"; fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name="Nomreh admin login and configuration readiness" \
+            -f head_sha="${GITHUB_SHA}" \
+            -f status=completed \
+            -f conclusion="$conclusion" \
+            -f 'output[title]=Real admin login and read-only configuration inspection' \
+            --raw-field "output[summary]=${summary}" > /dev/null
