@@ -6,7 +6,7 @@ const { chromium } = require("playwright");
 const ORIGIN = "https://nomreh.arounidea.com";
 const OUTPUT = process.env.NOMREH_BROWSER_SHECAN_OUTPUT || "";
 const UPDATE_URL = process.env.SHECAN_UPDATE_URL || "";
-// This check is intentionally repeatable after a scoped Passenger restart.
+// Repeat the real form check after safe JSON error handling is deployed.
 const lines = [
   "# Nomreh real-browser Shecan and provider check",
   "",
