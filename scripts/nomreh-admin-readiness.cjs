@@ -8,7 +8,7 @@ const { normalizePanelUrl } = require("./plesk-api-diagnostics.cjs");
 const ORIGIN = "https://nomreh.arounidea.com";
 const DOMAIN = "nomreh.arounidea.com";
 const OUTPUT = process.env.NOMREH_E2E_OUTPUT || "";
-const lines = ["# Nomreh admin login and configuration readiness", "", "This check uses the publicly offered initial account or the existing configured admin credentials in memory only. It never prints credentials or session cookies, and it does not save API settings or change Shecan.", ""];
+const lines = ["# Nomreh admin login and configuration readiness", "", "This check uses the authorized demo account, the publicly offered initial account, or existing configured admin credentials in memory. It never prints credentials or session cookies, and it does not save API settings or change Shecan.", ""];
 let browser;
 let context;
 let authenticated = false;
@@ -382,29 +382,44 @@ async function main() {
   lines.push(`- Publicly offered initial installation accounts: ${initialAccess ? "yes" : "no"}.`);
   const secretUsername = process.env.NOMREH_ADMIN_USERNAME || "";
   const secretPassword = process.env.NOMREH_ADMIN_PASSWORD || "";
-  let credentials = initialAccess
-    ? { username: "admin", password: "Admin@1405" }
-    : (secretUsername || secretPassword
-      ? { username: secretUsername, password: secretPassword }
+  const demoAccountsAllowed = process.env.NOMREH_ALLOW_DEMO_ACCOUNTS === "1";
+  const credentials = secretUsername || secretPassword
+    ? { username: secretUsername, password: secretPassword }
+    : (initialAccess || demoAccountsAllowed
+      ? { username: "admin", password: "Admin@1405" }
       : await readConfiguredAdminFromPlesk());
+  lines.push(`- Authorized demo admin login requested: ${demoAccountsAllowed && !secretUsername && !secretPassword ? "yes" : "no"}.`);
   if (!credentials) throw new Error("Initial accounts are hidden and no configured admin credential fields were available in existing Secrets or Nomreh's scoped settings. No password was attempted.");
   if (!credentials.username || !credentials.password) throw new Error("The configured admin login was incomplete. No password was attempted.");
 
   await page.locator("#login-username").fill(credentials.username);
   await page.locator("#login-password").fill(credentials.password);
-  const navigation = page.waitForURL((url) => url.origin === ORIGIN && url.pathname === "/", { timeout: 30000 }).then(() => true).catch(() => false);
+  const navigation = page.waitForURL((url) => url.origin === ORIGIN && url.pathname === "/", { timeout: 45000 }).then(() => true).catch(() => false);
+  const loginApiPromise = page.waitForResponse((response) => response.url() === `${ORIGIN}/api/auth/login` && response.request().method() === "POST", { timeout: 60000 }).catch(() => null);
   await page.getByRole("button", { name: "ورود به فضای کاری", exact: true }).click();
+  const loginApiResponse = await loginApiPromise;
+  const loginApiStatus = loginApiResponse ? loginApiResponse.status() : "unavailable";
+  lines.push(`- Login API HTTP status: ${loginApiStatus}.`);
+  if (!loginApiResponse) {
+    const alert = await page.getByRole("alert").innerText().catch(() => "");
+    throw new Error(`The login API response was not observed.${alert ? ` ${clean(alert)}` : ""}`);
+  }
+  const loginPayload = await loginApiResponse.json().catch(() => ({}));
+  if (!loginApiResponse.ok()) throw new Error(`Admin login was rejected: HTTP ${loginApiResponse.status()}.${loginPayload.error ? ` ${clean(loginPayload.error)}` : ""}`);
+  authenticated = true;
+
+  const meResponse = await context.request.get(`${ORIGIN}/api/auth/me`);
+  const me = await meResponse.json().catch(() => ({}));
+  lines.push(`- Authenticated-session verification HTTP status: ${meResponse.status()}.`);
+  if (!meResponse.ok() || me.user?.role !== "admin" || String(me.user?.username || "").toLowerCase() !== credentials.username.toLowerCase()) throw new Error("The authenticated session was not verified as the expected admin account.");
+
   const reachedWorkspace = await navigation;
   if (!reachedWorkspace) {
-    const alert = await page.getByRole("alert").innerText().catch(() => "");
-    throw new Error(`The admin login did not reach the workspace.${alert ? ` ${clean(alert)}` : ""}`);
+    await page.goto(`${ORIGIN}/`, { waitUntil: "domcontentloaded", timeout: 30000 });
+    lines.push("- The authenticated workspace required explicit navigation after login.");
   }
-  authenticated = true;
   await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => undefined);
   await page.getByText("فضای کاری شما", { exact: true }).waitFor({ state: "visible" });
-  const meResponse = await context.request.get(`${ORIGIN}/api/auth/me`);
-  const me = await meResponse.json();
-  if (!meResponse.ok() || me.user?.role !== "admin" || String(me.user?.username || "").toLowerCase() !== credentials.username.toLowerCase()) throw new Error("The authenticated session was not verified as the expected admin account.");
   lines.push("- Admin login succeeded and the real workspace loaded.", `- Authenticated username: ${clean(me.user.username)}.`, "- Authenticated role verified by /api/auth/me: admin.", "");
 
   lines.push("## Admin API and Shecan readiness", "");

@@ -51,6 +51,7 @@ jobs:
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
           NOMREH_ADMIN_USERNAME: ${{ secrets.NOMREH_ADMIN_USERNAME }}
           NOMREH_ADMIN_PASSWORD: ${{ secrets.NOMREH_ADMIN_PASSWORD }}
+          NOMREH_ALLOW_DEMO_ACCOUNTS: "1"
           NOMREH_E2E_OUTPUT: ${{ runner.temp }}/nomreh-admin-readiness.md
           NODE_PATH: ${{ runner.temp }}/nomreh-e2e/node_modules
         run: node scripts/nomreh-admin-readiness.cjs
