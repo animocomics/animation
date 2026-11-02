@@ -46,7 +46,14 @@ async function api(page, pathname, body) {
       body: requestBody === undefined ? undefined : JSON.stringify(requestBody),
       cache: "no-store",
     });
-    return { status: response.status, contentType: response.headers.get("content-type") || "none", text: await response.text() };
+    return {
+      status: response.status,
+      contentType: response.headers.get("content-type") || "none",
+      server: response.headers.get("server") || "none",
+      poweredBy: response.headers.get("x-powered-by") || "none",
+      via: response.headers.get("via") || "none",
+      text: await response.text(),
+    };
   }, { pathname, body });
 }
 
@@ -77,6 +84,7 @@ async function run() {
 
   const test = await api(page, "/api/provider/test", { provider: status.provider, model: status.model });
   lines.push(`- Real browser stored-key provider test: HTTP ${test.status}; ${test.status === 200 ? "success" : summarize(test)}.`);
+  lines.push(`- Provider test non-sensitive response headers: server ${clean(test.server)}; x-powered-by ${clean(test.poweredBy)}; via ${clean(test.via)}.`);
   const models = await api(page, "/api/provider/models", { provider: status.provider });
   let modelCount = 0;
   let selectedPresent = false;
