@@ -46,6 +46,18 @@ function toolLines(text) {
     .map(sanitize);
 }
 
+function labelValues(text, labels) {
+  const bodyLines = String(text || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const result = [];
+  for (const label of labels) {
+    const index = bodyLines.findIndex((line) => line === label);
+    if (index >= 0 && bodyLines[index + 1] && !/secret|token|password|credential|api.key/i.test(bodyLines[index + 1])) {
+      result.push(`${label}: ${sanitize(bodyLines[index + 1])}`);
+    }
+  }
+  return result;
+}
+
 async function main() {
   const panel = normalizePanelUrl(process.env.PLESK_PANEL_URL || "");
   const lines = ["# Plesk browser diagnostics", "", "Read-only browser inspection. No settings, deployments or files were changed.", ""];
@@ -98,6 +110,7 @@ async function main() {
 
     const pagesToInspect = ["/smb/web/domains", "/admin/domain/list"];
     let domainFound = false;
+    let nomrehFilesPath = "";
     for (const inspectPath of pagesToInspect) {
       const response = await page.goto(`${panel}${inspectPath}`, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => null);
       await page.waitForTimeout(1500);
@@ -125,6 +138,9 @@ async function main() {
             href: anchor.getAttribute("href") || "",
           })).filter((item) => /^(Git|Node\.js|Files|File Manager|Hosting Settings|Dashboard)/i.test(item.text)).slice(0, 20));
           for (const tool of tools) {
+            if (!nomrehFilesPath && /^Files/.test(tool.text) && /domainId\/\d+/.test(tool.href)) {
+              nomrehFilesPath = new URL(tool.href, page.url()).pathname;
+            }
             lines.push(`- Tool: ${sanitize(tool.text)}${tool.href.startsWith("/") ? ` (${sanitize(new URL(tool.href, page.url()).pathname)})` : ""}`);
           }
           if (tools.length) lines.push("");
@@ -163,15 +179,31 @@ async function main() {
             return { name, labelText, value, type: element.getAttribute("type") || element.tagName.toLowerCase() };
           }).filter((field) => /document|root|startup|version|mode|package|url|node|npm/i.test(`${field.name} ${field.labelText}`) && !/password|secret|token|credential|api.key/i.test(`${field.name} ${field.labelText}`)).slice(0, 30));
           for (const field of fields) lines.push(`- Node field: ${sanitize(field.labelText || field.name)} = ${sanitize(field.value)}`);
-          if (fields.length) lines.push("");
+          const values = labelValues(body, ["Node.js Version", "Document Root", "Application Mode", "Application URL", "Application Root", "Application Startup File"]);
+          for (const value of values) lines.push(`- Node value: ${value}`);
+          if (fields.length || values.length) lines.push("");
         }
       }
-      const fileLinks = await page.locator("a").evaluateAll((anchors) => anchors.map((anchor) => ({
-        text: (anchor.textContent || "").trim().replace(/\s+/g, " "),
-        href: anchor.getAttribute("href") || "",
-      })).filter((item) => /filemng|file-manager|file_manager|\/files/i.test(item.href)).slice(0, 10));
-      for (const link of fileLinks) lines.push(`- File tool: ${sanitize(link.text)} (${sanitize(new URL(link.href, page.url()).pathname)})`);
-      if (fileLinks.length) lines.push("");
+      if (nomrehFilesPath) {
+        let filePath = nomrehFilesPath;
+        for (let depth = 0; depth < 2; depth += 1) {
+          const response = await page.goto(`${panel}${filePath}`, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => null);
+          await page.waitForTimeout(2000);
+          lines.push("## Nomreh File Manager", "", `- HTTP status: ${response ? response.status() : "unavailable"}`, `- Current page: ${sanitize(new URL(page.url()).pathname)}`, "");
+          const fileLinks = await page.locator("a").evaluateAll((anchors) => anchors.map((anchor) => ({
+            text: (anchor.textContent || "").trim().replace(/\s+/g, " "),
+            href: anchor.getAttribute("href") || "",
+          })).filter((item) => /^(nomreh\.|nomreh-data|public|package(-lock)?\.json|server\.js|next\.config|scripts|node_modules|\.next|git)$/i.test(item.text)).slice(0, 30));
+          for (const link of fileLinks) lines.push(`- File entry: ${sanitize(link.text)}${link.href.startsWith("/") ? ` (${sanitize(new URL(link.href, page.url()).pathname)})` : ""}`);
+          if (fileLinks.length) lines.push("");
+          const appLink = fileLinks.find((link) => link.text.toLowerCase() === DOMAIN);
+          if (depth === 0 && appLink && appLink.href.startsWith("/")) {
+            filePath = new URL(appLink.href, page.url()).pathname;
+            continue;
+          }
+          break;
+        }
+      }
     }
     lines.push("## Result", "", domainFound
       ? "Plesk web login succeeded and the Nomreh domain was found. No remediation was attempted."
