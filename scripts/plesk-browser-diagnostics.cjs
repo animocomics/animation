@@ -1253,7 +1253,7 @@ async function main() {
                 const navigateToEntry = async (name) => {
                   await page.waitForFunction((expectedName) => Array.from(document.querySelectorAll("a")).some((anchor) => (anchor.textContent || "").trim() === expectedName), name, { timeout: 15000 }).catch(() => undefined);
                   const href = await page.locator("a").evaluateAll((anchors, expectedName) => {
-                    const match = anchors.find((anchor) => (anchor.textContent || "").trim() === expectedName && (anchor.getAttribute("href") || "").includes("/smb/file-manager/"));
+                    const match = [...anchors].reverse().find((anchor) => (anchor.textContent || "").trim() === expectedName && (anchor.getAttribute("href") || "").includes("/smb/file-manager/"));
                     return match ? match.getAttribute("href") || "" : "";
                   }, name);
                   if (href) {
@@ -1263,7 +1263,11 @@ async function main() {
                   } else {
                     const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
                     const entry = page.locator("a").filter({ hasText: new RegExp(`^${escapedName}$`) }).last();
-                    if (!await entry.count()) throw new Error(`The ${name} File Manager entry was not available while verifying ${expected.file}.`);
+                    if (!await entry.count()) {
+                      const visibleEntries = await page.locator("a:visible").evaluateAll((anchors) => [...new Set(anchors.map((anchor) => (anchor.textContent || "").trim()).filter((text) => /^[a-z0-9_.@-]+$/i.test(text) && text.length <= 100))].slice(0, 80));
+                      lines.push(`- Verification directory: ${sanitize(new URL(page.url()).pathname)}`, `- Verification entries: ${sanitize(visibleEntries.join(", "))}`);
+                      throw new Error(`The ${name} File Manager entry was not available while verifying ${expected.file}.`);
+                    }
                     await entry.click({ timeout: 8000 });
                   }
                   await page.waitForTimeout(2500);

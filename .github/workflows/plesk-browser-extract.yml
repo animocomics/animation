@@ -1,7 +1,7 @@
 name: Plesk Nomreh archive extraction
 
 # Validated application source: 582b6847b859784a08311cebd90345688da5dc05
-# Hosted delta files are downloaded through the loaded File Manager tree and SHA-256 verified before build.
+# Hosted delta files are selected from the current File Manager row and SHA-256 verified before build.
 
 on:
   push:
