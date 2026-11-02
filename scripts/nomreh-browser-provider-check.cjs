@@ -55,10 +55,13 @@ async function run() {
   context = await browser.newContext({ locale: "fa-IR" });
   const page = await context.newPage();
   await page.goto(`${ORIGIN}/login`, { waitUntil: "domcontentloaded", timeout: 30000 });
+  await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => undefined);
   await page.locator("#login-username").fill(process.env.NOMREH_ADMIN_USERNAME || "admin");
   await page.locator("#login-password").fill(process.env.NOMREH_ADMIN_PASSWORD || "Admin@1405");
+  const loginResponsePromise = page.waitForResponse((response) => response.url() === `${ORIGIN}/api/auth/login` && response.request().method() === "POST", { timeout: 30000 });
   await page.getByRole("button", { name: "ورود به فضای کاری", exact: true }).click();
-  await page.waitForURL((url) => url.pathname !== "/login", { timeout: 30000 });
+  const loginResponse = await loginResponsePromise;
+  if (!loginResponse.ok()) throw new Error(`Browser login was rejected with HTTP ${loginResponse.status()}.`);
   await page.goto(`${ORIGIN}/admin`, { waitUntil: "domcontentloaded", timeout: 30000 });
   await page.getByRole("heading", { name: "مدیریت سامانهٔ نمره", exact: true }).waitFor({ state: "visible", timeout: 20000 });
 
