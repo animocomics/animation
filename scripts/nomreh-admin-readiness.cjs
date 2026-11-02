@@ -64,6 +64,45 @@ function dotenvValue(text, key) {
   return typeof value === "string" ? value : "";
 }
 
+async function readAdminFromNodeDom(page) {
+  return page.evaluate(() => {
+    const keys = ["NOMREH_ADMIN_USERNAME", "NOMREH_ADMIN_PASSWORD"];
+    const result = { values: {}, visibleKeys: [], controls: [] };
+    const controls = Array.from(document.querySelectorAll("a, button"));
+    result.controls = [...new Set(controls.map((element) => (element.textContent || "").trim().replace(/\s+/g, " ")).filter((text) => /^(Add Variable|Edit|Show|Hide|Environment Variables|Save)$/i.test(text)))].slice(0, 20);
+    const usable = (value, key) => Boolean(value && value !== key && !/^[•*.\s]+$/.test(value) && !/^(Show|Hide|Save|Edit)$/i.test(value));
+    const companionValue = (element, key) => {
+      let current = element;
+      for (let depth = 0; current && depth < 7; depth += 1, current = current.parentElement) {
+        const candidates = Array.from(current.querySelectorAll("input, textarea"));
+        for (const candidate of candidates) {
+          if (candidate === element || /^(checkbox|radio|submit|button|hidden)$/i.test(candidate.type || "")) continue;
+          if (usable(candidate.value, key)) return candidate.value;
+        }
+        const dataValues = Array.from(current.querySelectorAll("[data-value]"));
+        for (const candidate of dataValues) {
+          const value = candidate.getAttribute("data-value") || "";
+          if (usable(value, key)) return value;
+        }
+      }
+      return "";
+    };
+    for (const key of keys) {
+      const inputs = Array.from(document.querySelectorAll("input, textarea"));
+      let marker = inputs.find((input) => String(input.value || "").trim() === key);
+      if (!marker) {
+        marker = Array.from(document.querySelectorAll("label, td, th, span, div")).find((element) => element.children.length === 0 && (element.textContent || "").trim() === key);
+      }
+      if (marker) {
+        result.visibleKeys.push(key);
+        const value = companionValue(marker, key);
+        if (value) result.values[key] = value;
+      }
+    }
+    return result;
+  });
+}
+
 async function readConfiguredAdminFromPlesk() {
   if (!process.env.PLESK_PANEL_URL || !process.env.PLESK_API_USERNAME || !process.env.PLESK_API_PASSWORD) return null;
   const panel = normalizePanelUrl(process.env.PLESK_PANEL_URL);
@@ -121,6 +160,15 @@ async function readConfiguredAdminFromPlesk() {
     let configuredUsername = nestedValue(payload, "NOMREH_ADMIN_USERNAME") || "";
     let configuredPassword = nestedValue(payload, "NOMREH_ADMIN_PASSWORD") || "";
     if (!configuredUsername || !configuredPassword) {
+      lines.push(`- Scoped application API admin fields available: ${configuredUsername || configuredPassword ? "partially" : "no"}.`);
+      const dom = await readAdminFromNodeDom(page);
+      lines.push(`- Relevant environment variable names visible in scoped Node.js view: ${dom.visibleKeys.length ? dom.visibleKeys.join(", ") : "none"}.`);
+      lines.push(`- Admin credential values readable in scoped environment view: username=${dom.values.NOMREH_ADMIN_USERNAME ? "yes" : "no"}; password=${dom.values.NOMREH_ADMIN_PASSWORD ? "yes" : "no"}.`);
+      lines.push(`- Relevant environment view controls: ${dom.controls.length ? dom.controls.join(", ") : "none identified"}.`);
+      configuredUsername = configuredUsername || dom.values.NOMREH_ADMIN_USERNAME || "";
+      configuredPassword = configuredPassword || dom.values.NOMREH_ADMIN_PASSWORD || "";
+    }
+    if (!configuredUsername || !configuredPassword) {
       await page.goto(`${panel}/smb/file-manager/list/domainId/145`, { waitUntil: "domcontentloaded", timeout: 30000 });
       await page.waitForTimeout(1800);
       const appFolder = page.locator("a.tree-item-content").filter({ hasText: DOMAIN }).first();
@@ -129,7 +177,9 @@ async function readConfiguredAdminFromPlesk() {
         await page.waitForTimeout(2000);
       }
       const envLink = page.getByText(".env", { exact: true }).first();
-      if (await envLink.count()) {
+      const envVisible = await envLink.count();
+      lines.push(`- Nomreh .env entry visible in the scoped File Manager: ${envVisible ? "yes" : "no"}.`);
+      if (envVisible) {
         const cancelDownload = (download) => { void download.cancel(); };
         page.on("download", cancelDownload);
         await envLink.click({ timeout: 8000 }).catch(() => undefined);
@@ -143,14 +193,13 @@ async function readConfiguredAdminFromPlesk() {
         const environmentText = [bodyText, ...textAreas, ...codeEditors].join("\n");
         configuredUsername = configuredUsername || dotenvValue(environmentText, "NOMREH_ADMIN_USERNAME");
         configuredPassword = configuredPassword || dotenvValue(environmentText, "NOMREH_ADMIN_PASSWORD");
+        lines.push(`- Environment editor sources containing Nomreh variable names: body=${/NOMREH_[A-Z0-9_]+/.test(bodyText) ? "yes" : "no"}; textareas=${textAreas.length}; code-editors=${codeEditors.length}.`);
+        lines.push(`- Admin fields parsed from the in-memory environment view: username=${configuredUsername ? "yes" : "no"}; password=${configuredPassword ? "yes" : "no"}.`);
       }
     }
-    if (!configuredUsername && !configuredPassword) return null;
+    if (!configuredUsername || !configuredPassword) return null;
     lines.push("- Existing custom admin settings were located in Nomreh's scoped configuration; values remained in memory and no file or setting was saved.");
-    return {
-      username: configuredUsername || "admin",
-      password: configuredPassword || "Admin@1405",
-    };
+    return { username: configuredUsername, password: configuredPassword };
   } finally {
     await pleskContext.close();
   }
