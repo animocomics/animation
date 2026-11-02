@@ -153,6 +153,7 @@ function makeResult(
     percentage,
     overallConfidence: flags.length ? 0.72 : 0.94,
     detectedStudentName: "",
+    detectedStudentCode: "",
     detectedClassName: "",
     identityConfidence: 0.96,
     summary: flags.length
@@ -181,6 +182,7 @@ function makeSubmission(
   const total = scores.reduce((sum, score) => sum + score, 0);
   const result = makeResult(biologyQuestions, scores, (total / 20) * 100, flags);
   result.detectedStudentName = studentName;
+  result.detectedStudentCode = studentCode;
   result.detectedClassName = "یازدهم تجربی · گروه الف";
   if (status === "approved") {
     result.approvedAt = "2026-10-26T11:20:00.000Z";

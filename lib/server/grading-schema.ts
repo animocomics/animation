@@ -94,6 +94,7 @@ const modelFlagSchema = z.object({
 
 export const modelResultSchema = z.object({
   detectedStudentName: z.string(),
+  detectedStudentCode: z.string().default(""),
   detectedClassName: z.string(),
   identityConfidence: z.number().min(0).max(1),
   summary: z.string(),
@@ -109,9 +110,10 @@ export type ModelResult = z.infer<typeof modelResultSchema>;
 export const gradingJsonSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["detectedStudentName", "detectedClassName", "identityConfidence", "summary", "strengths", "improvements", "overallConfidence", "questions", "flags"],
+  required: ["detectedStudentName", "detectedStudentCode", "detectedClassName", "identityConfidence", "summary", "strengths", "improvements", "overallConfidence", "questions", "flags"],
   properties: {
     detectedStudentName: { type: "string", description: "Student name only when visible on the paper; otherwise an empty string." },
+    detectedStudentCode: { type: "string", description: "Student code only when visibly written on the paper; otherwise an empty string. Never infer it." },
     detectedClassName: { type: "string", description: "Class/group label only when visible; otherwise an empty string." },
     identityConfidence: { type: "number", minimum: 0, maximum: 1 },
     summary: { type: "string" },

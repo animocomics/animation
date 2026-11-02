@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { QUESTION_TYPE_LABELS, type Question, type QuestionType } from "../../lib/types";
 import { faNumber, rubricScore, uid } from "../../lib/utils";
+import { NumberInput } from "../ui/number-input";
 
 function renumber(questions: Question[]): Question[] {
   return questions.map((question, index) => ({ ...question, number: index + 1 }));
@@ -34,7 +35,7 @@ export function makeQuestion(type: QuestionType = "short_answer", number = 1): Q
     acceptedAnswers: [],
     partialCredit: !["multiple_choice", "true_false", "fill_blank"].includes(type),
     errorCarriedForward: type === "math",
-    rubric: [{ id: uid("rubric"), label: "پاسخ صحیح", description: "شرح معیار و نکات لازم برای کسب نمره", points: type === "essay" || type === "math" ? 4 : 2 }],
+    rubric: [{ id: uid("rubric"), label: "", description: "", points: type === "essay" || type === "math" ? 4 : 2 }],
   };
 }
 
@@ -119,7 +120,7 @@ export function QuestionEditor({ questions, onChange }: { questions: Question[];
   const autoBalanceRubric = () => {
     if (!active) return;
     if (!active.rubric.length) {
-      update({ rubric: [{ id: uid("rubric"), label: "پاسخ کامل", description: "طبق پاسخ مرجع", points: active.maxScore }] });
+      update({ rubric: [{ id: uid("rubric"), label: "", description: "", points: active.maxScore }] });
       return;
     }
     const current = rubricScore(active);
@@ -165,7 +166,7 @@ export function QuestionEditor({ questions, onChange }: { questions: Question[];
         <div className="question-editor-fields">
           <div className="form-grid question-basic-grid">
             <div className="form-field"><label htmlFor={`question-type-${active.id}`}>نوع سؤال</label><select id={`question-type-${active.id}`} className="select" value={active.type} onChange={(event) => changeType(event.target.value as QuestionType)}>{Object.entries(QUESTION_TYPE_LABELS).map(([value, label]) => <option value={value} key={value}>{label}</option>)}</select></div>
-            <div className="form-field"><label htmlFor={`question-score-${active.id}`}>نمرهٔ سؤال <span>*</span></label><input id={`question-score-${active.id}`} className="input" type="number" min="0.25" step="0.25" value={active.maxScore} onChange={(event) => update({ maxScore: Math.max(0, Number(event.target.value)) })} /></div>
+            <div className="form-field"><label htmlFor={`question-score-${active.id}`}>نمرهٔ سؤال <span>*</span></label><NumberInput id={`question-score-${active.id}`} className="input" min={0.25} step={0.25} value={active.maxScore} onValueChange={(maxScore) => update({ maxScore })} /><span className="form-hint">نمرهٔ کامل این سؤال؛ برای بخش‌بندی، معیارهای مستقل در پایین تعریف کنید.</span></div>
           </div>
           <div className="form-field"><label htmlFor={`question-prompt-${active.id}`}>صورت سؤال <span>*</span></label><textarea id={`question-prompt-${active.id}`} className="textarea question-prompt-input" value={active.prompt} onChange={(event) => update({ prompt: event.target.value })} placeholder="صورت کامل سؤال را همان‌طور که در برگه آمده بنویسید…" /></div>
 
@@ -185,16 +186,16 @@ export function QuestionEditor({ questions, onChange }: { questions: Question[];
           </div>}
 
           {active.type === "true_false" ? <div className="form-field"><label htmlFor={`question-answer-${active.id}`}>پاسخ صحیح</label><select id={`question-answer-${active.id}`} className="select" value={active.answer} onChange={(event) => update({ answer: event.target.value })}><option value="">انتخاب کنید</option><option value="درست">درست</option><option value="غلط">غلط</option></select></div>
-            : !hasOptions && <div className="form-field"><label htmlFor={`question-answer-${active.id}`}>پاسخ مرجع / کلید <span>*</span></label><textarea id={`question-answer-${active.id}`} className="textarea answer-input" value={active.answer} onChange={(event) => update({ answer: event.target.value })} placeholder={active.type === "essay" || active.type === "math" ? "پاسخ کامل، گام‌ها و نکات علمی مورد انتظار…" : "پاسخ صحیح را بنویسید…"} /></div>}
+            : !hasOptions && <div className="form-field"><label htmlFor={`question-answer-${active.id}`}>پاسخ مرجع / کلید <span>*</span></label><span className="form-hint">پاسخ صحیح، گام‌ها و نکات علمی مورد انتظار را اینجا بنویسید؛ این متن مبنای مقایسه با برگه است.</span><textarea id={`question-answer-${active.id}`} className="textarea answer-input" value={active.answer} onChange={(event) => update({ answer: event.target.value })} /></div>}
 
           {!hasOptions && active.type !== "true_false" && <div className="form-field"><label htmlFor={`question-alternatives-${active.id}`}>پاسخ‌های جایگزین مجاز <span className="optional-label">اختیاری</span></label><input id={`question-alternatives-${active.id}`} className="input" value={active.acceptedAnswers.join("، ")} onChange={(event) => update({ acceptedAnswers: event.target.value.split(/[،\n]+/).map((item) => item.trim()).filter(Boolean) })} placeholder="هر پاسخ مجاز را با «،» جدا کنید" /><span className="form-hint">برای تشریحی می‌توانید روش‌ها یا مثال‌های صحیح دیگر را توضیح دهید.</span></div>}
 
           <div className="rubric-editor">
-            <div className="rubric-editor-head"><div><span className="field-label">معیارهای نمره‌دهی</span><small>هر معیار مستقل ارزیابی می‌شود و شاهد جداگانه می‌گیرد.</small></div><button className="btn btn-ghost btn-sm" onClick={() => update({ rubric: [...active.rubric, { id: uid("rubric"), label: "معیار جدید", description: "", points: 0 }] })}><Plus size={15} />افزودن معیار</button></div>
+            <div className="rubric-editor-head"><div><span className="field-label">معیارهای نمره‌دهی</span><small>هر بخش مستقل نمره می‌گیرد؛ مثلاً معیار «فرمول» می‌تواند ۰٫۵ نمره داشته باشد.</small></div><button className="btn btn-ghost btn-sm" onClick={() => update({ rubric: [...active.rubric, { id: uid("rubric"), label: "", description: "", points: 0 }] })}><Plus size={15} />افزودن معیار</button></div>
             <div className="rubric-rows">{active.rubric.map((criterion, index) => <div className="rubric-row" key={criterion.id}>
               <span className="rubric-row-index">{faNumber(index + 1)}</span>
-              <div className="rubric-row-fields"><input className="input" value={criterion.label} onChange={(event) => update({ rubric: active.rubric.map((item) => item.id === criterion.id ? { ...item, label: event.target.value } : item) })} placeholder="عنوان معیار" /><input className="input" value={criterion.description} onChange={(event) => update({ rubric: active.rubric.map((item) => item.id === criterion.id ? { ...item, description: event.target.value } : item) })} placeholder="شرح دقیق شرط کسب نمره" /></div>
-              <div className="rubric-points"><input className="input" type="number" min="0" step="0.25" value={criterion.points} onChange={(event) => update({ rubric: active.rubric.map((item) => item.id === criterion.id ? { ...item, points: Math.max(0, Number(event.target.value)) } : item) })} /><span>نمره</span></div>
+              <div className="rubric-row-fields"><div className="rubric-field"><label htmlFor={`rubric-label-${criterion.id}`}>عنوان معیار</label><input id={`rubric-label-${criterion.id}`} className="input" value={criterion.label} onChange={(event) => update({ rubric: active.rubric.map((item) => item.id === criterion.id ? { ...item, label: event.target.value } : item) })} /></div><div className="rubric-field"><label htmlFor={`rubric-description-${criterion.id}`}>شرح معیار و شرط کسب نمره</label><input id={`rubric-description-${criterion.id}`} className="input" value={criterion.description} onChange={(event) => update({ rubric: active.rubric.map((item) => item.id === criterion.id ? { ...item, description: event.target.value } : item) })} /></div></div>
+              <div className="rubric-points"><NumberInput aria-label={`نمرهٔ معیار ${index + 1}`} className="input" min={0} step={0.25} value={criterion.points} onValueChange={(points) => update({ rubric: active.rubric.map((item) => item.id === criterion.id ? { ...item, points } : item) })} /><span>نمرهٔ این بخش</span></div>
               <button className="icon-button btn-icon-small danger-hover" disabled={active.rubric.length === 1} onClick={() => update({ rubric: active.rubric.filter((item) => item.id !== criterion.id) })} aria-label="حذف معیار"><Trash2 size={14} /></button>
             </div>)}</div>
             <div className={`rubric-total ${rubricMismatch ? "mismatch" : ""}`}><span>{rubricMismatch ? <CircleAlert size={15} /> : <Check size={15} />}جمع معیارها: <strong>{faNumber(currentRubricScore)}</strong> از {faNumber(active.maxScore)} نمره</span>{rubricMismatch && <button onClick={autoBalanceRubric}><WandSparkles size={14} />هم‌ترازکردن خودکار</button>}</div>

@@ -171,6 +171,7 @@ export interface GradingResult {
   percentage: number;
   overallConfidence: number;
   detectedStudentName: string;
+  detectedStudentCode: string;
   detectedClassName: string;
   identityConfidence: number;
   summary: string;
@@ -206,7 +207,7 @@ export interface Submission {
   identityStatus?: "matched" | "ambiguous" | "unmatched" | "manual" | "missing";
   identityMessage?: string;
   files: FileMeta[];
-  identitySource?: "manual" | "filename" | "roster" | "ai" | "demo";
+  identitySource?: "manual" | "filename" | "pending" | "roster" | "ai" | "demo";
   detectedClassName?: string;
   status: SubmissionStatus;
   result?: GradingResult;

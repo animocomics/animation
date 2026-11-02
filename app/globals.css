@@ -211,6 +211,24 @@ input[type="number"] { font-variant-numeric: tabular-nums; }
 .form-field > label, .field-label { font-size: 11px; font-weight: 650; color: var(--ink-2); }
 .form-field label span { color: var(--red); }
 .form-hint { font-size: 9px; color: var(--muted); line-height: 1.8; }
+.persian-date-field { position: relative; min-width: 0; }
+.persian-date-trigger { display: flex; align-items: center; gap: 8px; text-align: right; cursor: pointer; }
+.persian-date-trigger > svg { color: var(--brand); flex-shrink: 0; }
+.persian-date-trigger > span:first-of-type { flex: 1; font-size: 11px; }
+.persian-date-weekday { color: var(--muted); font-size: 9px; white-space: nowrap; }
+.persian-calendar { position: absolute; z-index: 40; top: calc(100% + 8px); right: 0; width: min(310px, calc(100vw - 32px)); padding: 13px; border: 1px solid var(--line-strong); border-radius: 14px; background: var(--surface); box-shadow: 0 16px 40px rgba(24,51,47,0.16); direction: rtl; }
+.persian-calendar-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.persian-calendar-head strong { font-size: 12px; color: var(--ink); }
+.persian-calendar .icon-btn { width: 29px; height: 29px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-soft); color: var(--ink-2); cursor: pointer; }
+.persian-calendar .icon-btn:hover { color: var(--brand); border-color: var(--brand); }
+.persian-calendar-weekdays, .persian-calendar-days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; text-align: center; }
+.persian-calendar-weekdays { margin-bottom: 5px; color: var(--muted); font-size: 9px; }
+.persian-calendar-days > button { aspect-ratio: 1; min-width: 0; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--ink-2); font-size: 10px; cursor: pointer; }
+.persian-calendar-days > button:hover { background: var(--mint); color: var(--brand); }
+.persian-calendar-days > button.today { border-color: #a6d0bd; }
+.persian-calendar-days > button.selected { background: var(--brand); color: white; border-color: var(--brand); }
+.persian-calendar-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 11px; padding-top: 9px; border-top: 1px solid var(--line); }
+.persian-calendar-foot > span { color: var(--muted); font-size: 8px; }
 .input, .select, .textarea { width: 100%; border: 1px solid var(--line-strong); border-radius: 11px; background: white; transition: border 150ms, box-shadow 150ms; }
 .input, .select { height: 43px; padding: 9px 12px; }
 .textarea { min-height: 95px; padding: 11px 12px; line-height: 1.9; resize: vertical; }
@@ -648,9 +666,11 @@ input[type="number"] { font-variant-numeric: tabular-nums; }
 .rubric-row:last-child { border-bottom: 0; }
 .rubric-row-index { width: 23px; height: 23px; display: grid; place-items: center; border-radius: 7px; background: #eff3ef; color: var(--muted); font-size: 8px; flex-shrink: 0; }
 .rubric-row-fields { flex: 1; display: grid; grid-template-columns: 0.75fr 1.4fr; gap: 7px; }
+.rubric-field { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.rubric-field label { color: var(--muted); font-size: 8px; font-weight: 600; }
 .rubric-row .input { height: 36px; font-size: 9px; }
-.rubric-points { display: flex; align-items: center; gap: 5px; }
-.rubric-points .input { width: 63px; text-align: center; }
+.rubric-points { min-width: 78px; display: flex; flex-direction: column; align-items: center; gap: 3px; }
+.rubric-points .input { width: 70px; text-align: center; }
 .rubric-points span { color: var(--muted); font-size: 8px; white-space: nowrap; }
 .rubric-total { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 13px; background: #f3f9f5; color: var(--brand); font-size: 9px; }
 .rubric-total > span { display: flex; align-items: center; gap: 5px; }
@@ -680,6 +700,8 @@ input[type="number"] { font-variant-numeric: tabular-nums; }
 .submission-upload-card.missing-files { border-color: #e8d4b4; background: #fffdf9; }
 .submission-order { width: 27px; height: 27px; display: grid; place-items: center; border-radius: 8px; background: #eff3ef; color: var(--muted); font-size: 9px; }
 .submission-identity-fields { display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 6px; }
+.submission-identity-field { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.submission-identity-field label { color: var(--muted); font-size: 8px; font-weight: 600; }
 .submission-identity-fields .input { height: 36px; font-size: 9px; }
 .submission-file-area { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
 .uploaded-file-chip { display: flex; align-items: center; max-width: 210px; border: 1px solid var(--line); border-radius: 9px; background: #fafbfa; overflow: hidden; }

@@ -8,26 +8,6 @@ export interface IdentityMatch {
   message: string;
 }
 
-function similarity(left: string, right: string): number {
-  const a = normalizeAnswer(left);
-  const b = normalizeAnswer(right);
-  if (!a || !b) return 0;
-  if (a === b) return 1;
-  const aTokens = new Set(a.split(" "));
-  const bTokens = new Set(b.split(" "));
-  const shared = [...aTokens].filter((token) => bTokens.has(token)).length;
-  const tokenScore = (2 * shared) / (aTokens.size + bTokens.size);
-  const bigrams = (value: string) => {
-    const compact = value.replace(/\s/g, "");
-    return Array.from({ length: Math.max(0, compact.length - 1) }, (_, index) => compact.slice(index, index + 2));
-  };
-  const aa = bigrams(a); const bb = bigrams(b);
-  const bSet = new Set(bb);
-  const overlap = aa.filter((part) => bSet.has(part)).length;
-  const bigramScore = aa.length + bb.length ? (2 * overlap) / (aa.length + bb.length) : 0;
-  return Math.max(tokenScore, bigramScore);
-}
-
 function classMatches(detected: string, expected: string): boolean {
   const a = normalizeAnswer(detected);
   const b = normalizeAnswer(expected);
@@ -39,31 +19,51 @@ function classMatches(detected: string, expected: string): boolean {
 }
 
 export function matchStudentIdentity(
-  result: Pick<GradingResult, "detectedStudentName" | "detectedClassName" | "identityConfidence">,
+  result: Pick<GradingResult, "detectedStudentName" | "detectedStudentCode" | "detectedClassName" | "identityConfidence">,
   schoolClass: SchoolClass | undefined,
 ): IdentityMatch {
   const name = result.detectedStudentName.trim();
+  const code = normalizeAnswer(result.detectedStudentCode ?? "");
   if (!schoolClass) return { status: "unmatched", candidates: [], message: "برای این آزمون کلاس و فهرست دانش‌آموزان تعیین نشده است." };
-  if (!name) return { status: "missing", candidates: [], message: "نام دانش‌آموز روی برگه خوانده نشد؛ انتساب دستی لازم است." };
   if (result.detectedClassName && !classMatches(result.detectedClassName, schoolClass.name)) {
     return { status: "ambiguous", candidates: [], message: `کلاس روی برگه («${result.detectedClassName}») با کلاس آزمون («${schoolClass.name}») همخوانی ندارد.` };
   }
+  if (!name && !code) return { status: "missing", candidates: [], message: "نام و کد دانش‌آموز روی برگه خوانده نشد؛ انتساب دستی لازم است." };
+
   const activeStudents = schoolClass.students.filter((student) => student.active);
-  const exact = activeStudents.filter((student) => normalizeAnswer(student.name) === normalizeAnswer(name));
-  if (exact.length === 1 && result.identityConfidence >= 0.6) {
-    return { status: "matched", student: exact[0], candidates: [{ student: exact[0], score: 1 }], message: "نام برگه با فهرست کلاس تطبیق داده شد." };
+  const nameMatches = name ? activeStudents.filter((student) => normalizeAnswer(student.name) === normalizeAnswer(name)) : [];
+  const codeMatches = code ? activeStudents.filter((student) => normalizeAnswer(student.code) === code) : [];
+  const candidatesFor = (students: Student[]) => students.map((student) => ({ student, score: 1 }));
+
+  if (code) {
+    if (codeMatches.length === 1) {
+      const student = codeMatches[0];
+      if (name && normalizeAnswer(student.name) !== normalizeAnswer(name)) {
+        return { status: "ambiguous", candidates: candidatesFor([...codeMatches, ...nameMatches.filter((item) => item.id !== student.id)]), message: "نام و کد خوانده‌شده روی برگه به یک دانش‌آموز اشاره نمی‌کنند؛ انتساب خودکار انجام نشد." };
+      }
+      if (result.identityConfidence < 0.6) {
+        return { status: "ambiguous", candidates: candidatesFor(codeMatches), message: "اطمینان به هویت خوانده‌شده پایین است؛ کد و نام باید توسط معلم تأیید شود." };
+      }
+      return { status: "matched", student, candidates: candidatesFor(codeMatches), message: "کد دانش‌آموزی روی برگه با فهرست کلاس تطبیق داده شد." };
+    }
+    if (codeMatches.length > 1) {
+      return { status: "ambiguous", candidates: candidatesFor(codeMatches), message: "این کد در فهرست کلاس یکتا نیست؛ انتساب خودکار انجام نشد." };
+    }
+    return {
+      status: nameMatches.length ? "ambiguous" : "unmatched",
+      candidates: candidatesFor(nameMatches),
+      message: "کد خوانده‌شده با فهرست کلاس مطابقت ندارد؛ هویت بدون تأیید معلم ثبت نمی‌شود.",
+    };
   }
-  if (exact.length > 1) return { status: "ambiguous", candidates: exact.map((student) => ({ student, score: 1 })), message: "بیش از یک دانش‌آموز با این نام در کلاس وجود دارد؛ با کد دانش‌آموزی انتساب را تأیید کنید." };
-  const candidates = activeStudents.map((student) => ({ student, score: similarity(name, student.name) })).sort((a, b) => b.score - a.score).slice(0, 3);
-  const best = candidates[0];
-  const second = candidates[1];
-  if (best && best.score >= 0.9 && result.identityConfidence >= 0.8 && (!second || best.score - second.score >= 0.12)) {
-    return { status: "matched", student: best.student, candidates, message: "تطبیق تقریبی با اطمینان بالا انجام شد؛ نام و کد از فهرست کلاس تکمیل شد." };
+
+  if (nameMatches.length === 1 && result.identityConfidence >= 0.6) {
+    return { status: "matched", student: nameMatches[0], candidates: candidatesFor(nameMatches), message: "نام برگه با فهرست کلاس تطبیق داده شد." };
   }
+  if (nameMatches.length > 1) return { status: "ambiguous", candidates: candidatesFor(nameMatches), message: "بیش از یک دانش‌آموز با این نام در کلاس وجود دارد؛ با کد دانش‌آموزی انتساب را تأیید کنید." };
   return {
     status: result.identityConfidence < 0.6 ? "ambiguous" : "unmatched",
-    candidates,
-    message: result.identityConfidence < 0.6 ? "اطمینان به نام خوانده‌شده پایین است؛ هویت بدون تأیید معلم ثبت نمی‌شود." : "نام خوانده‌شده با هیچ دانش‌آموزی در فهرست کلاس مطابقت قطعی ندارد.",
+    candidates: [],
+    message: result.identityConfidence < 0.6 ? "اطمینان به نام خوانده‌شده پایین است؛ هویت بدون تأیید معلم ثبت نمی‌شود." : "نام خوانده‌شده با هیچ دانش‌آموزی در فهرست کلاس مطابقت قطعی ندارد؛ انتساب تقریبی انجام نمی‌شود.",
   };
 }
 
@@ -71,21 +71,27 @@ export function applyIdentityMatch(submission: Submission, result: GradingResult
   const assigned = schoolClass?.students.find((student) => student.id === submission.studentId);
   let match = matchStudentIdentity(result, schoolClass);
   if (assigned && match.student && match.student.id !== assigned.id) {
-    match = { status: "ambiguous", candidates: match.candidates, message: `نام روی برگه با انتساب قبلی («${assigned.name}») متفاوت است؛ تغییر خودکار انجام نشد.` };
+    match = { status: "ambiguous", candidates: match.candidates, message: `هویت روی برگه با انتساب قبلی («${assigned.name}») متفاوت است؛ تغییر خودکار انجام نشد.` };
   }
-  const preserveAssignment = Boolean(assigned && match.status !== "matched");
+  const preserveAssignment = Boolean(assigned && match.status !== "matched" && submission.identityStatus !== "missing" && submission.identitySource !== "pending");
   const identityNeedsReview = match.status !== "matched";
-  const hasCriticalFlags = result.flags.some((flag) => flag.severity !== "info") || result.questions.some((question) => question.needsReview);
+  const identityFlagId = `identity-${submission.id}`;
+  const flagsWithoutIdentity = result.flags.filter((flag) => flag.id !== identityFlagId);
+  const nextResult = identityNeedsReview
+    ? { ...result, flags: [...flagsWithoutIdentity, { id: identityFlagId, type: "ambiguous" as const, severity: "warning" as const, message: match.message }] }
+    : (flagsWithoutIdentity.length === result.flags.length ? result : { ...result, flags: flagsWithoutIdentity });
+  const hasCriticalFlags = nextResult.flags.some((flag) => flag.severity !== "info") || nextResult.questions.some((question) => question.needsReview);
+  const manualFallback = submission.identitySource === "manual" ? submission : { studentName: "", studentCode: "" };
   return {
     ...submission,
     studentId: preserveAssignment ? assigned?.id : match.student?.id,
-    studentName: preserveAssignment ? assigned!.name : match.student?.name || result.detectedStudentName || submission.studentName,
-    studentCode: preserveAssignment ? assigned!.code : match.student?.code || submission.studentCode,
+    studentName: preserveAssignment ? assigned!.name : match.student?.name || result.detectedStudentName || manualFallback.studentName,
+    studentCode: preserveAssignment ? assigned!.code : match.student?.code || result.detectedStudentCode || manualFallback.studentCode,
     detectedClassName: result.detectedClassName || undefined,
     identitySource: "ai",
     identityStatus: match.status,
     identityMessage: preserveAssignment ? `${match.message} انتساب قبلی حفظ شد اما باید تأیید شود.` : match.message,
-    result,
+    result: nextResult,
     status: identityNeedsReview || hasCriticalFlags ? "needs_review" : "graded",
     error: undefined,
   };

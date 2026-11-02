@@ -263,6 +263,17 @@ export function normalizeGradingResult(
     if (deterministic.score !== undefined && criteria.length === 1) {
       criteria[0].score = score;
     }
+    const criteriaTotal = round(criteria.reduce((sum, criterion) => sum + criterion.score, 0), 2);
+    if (criteria.length > 0 && Math.abs(criteriaTotal - score) > 0.001) {
+      localFlags.add("rubric_mismatch");
+      addFlag({
+        type: "rubric_mismatch",
+        severity: "warning",
+        message: `جمع نمرهٔ معیارهای سؤال ${question.number} (${criteriaTotal}) با نمرهٔ سؤال (${score}) یکسان نیست؛ نمره تا بررسی معلم قطعی نیست.`,
+        questionId: question.id,
+        page: raw.evidence.page ?? undefined,
+      });
+    }
 
     const attachedFlag = flags.some((flag) => flag.questionId === question.id && flag.severity !== "info");
     return {
@@ -298,8 +309,9 @@ export function normalizeGradingResult(
     maxScore,
     percentage: maxScore ? round((totalScore / maxScore) * 100, 1) : 0,
     overallConfidence: round(clamp(modelResult.overallConfidence, 0, 1), 2),
-    detectedStudentName: modelResult.detectedStudentName,
-    detectedClassName: modelResult.detectedClassName,
+    detectedStudentName: modelResult.detectedStudentName.trim(),
+    detectedStudentCode: modelResult.detectedStudentCode.trim(),
+    detectedClassName: modelResult.detectedClassName.trim(),
     identityConfidence: round(clamp(modelResult.identityConfidence, 0, 1), 2),
     summary: modelResult.summary,
     strengths: modelResult.strengths.filter(Boolean).slice(0, 8),
@@ -325,6 +337,7 @@ export function mergeVerifiedResult(initial: ModelResult, verified: ModelResult)
   );
   return {
     ...verified,
+    detectedStudentCode: verified.detectedStudentCode || initial.detectedStudentCode,
     questions: [...questionIds].map((id) => verifiedQuestions.get(id) ?? initial.questions.find((question) => question.questionId === id)!).filter(Boolean),
     flags,
   };

@@ -38,6 +38,7 @@ import { exportStudentJson, printStudentReport } from "../../lib/export";
 import { FLAG_LABELS, QUESTION_TYPE_LABELS, type GradingResult, type QuestionResult, type ReviewFlag, type Submission } from "../../lib/types";
 import { clamp, faDate, faNumber, getInitials, round, uid } from "../../lib/utils";
 import { ConfidenceBar, Modal, ScoreRing, SubmissionStatusBadge } from "../ui/primitives";
+import { NumberInput } from "../ui/number-input";
 import { FilePreview } from "./file-preview";
 
 type ReviewFilter = "all" | "needs_review" | "approved";
@@ -91,7 +92,9 @@ export function ReviewWorkspace() {
   const currentResult = result;
   const schoolClass = classes.find((item) => item.id === currentExam.classId) || classes.find((item) => item.name === currentExam.className);
   const identityNeedsReview = ["ambiguous", "unmatched", "missing"].includes(currentSubmission.identityStatus || "");
-  const unresolvedCount = currentResult.questions.filter((question) => question.needsReview).length + currentResult.flags.filter((flag) => !flag.questionId && flag.severity !== "info").length + (identityNeedsReview ? 1 : 0);
+  const identityFlagId = `identity-${currentSubmission.id}`;
+  const visibleReviewFlags = currentResult.flags.filter((flag) => flag.id !== identityFlagId);
+  const unresolvedCount = currentResult.questions.filter((question) => question.needsReview).length + currentResult.flags.filter((flag) => !flag.questionId && flag.severity !== "info" && flag.id !== identityFlagId).length + (identityNeedsReview ? 1 : 0);
 
   const updateResult = (nextResult: GradingResult, status: Submission["status"] = currentSubmission.status, audit?: { action: string; details: string }) => {
     updateSubmission(currentExam.id, currentSubmission.id, {
@@ -153,8 +156,10 @@ export function ReviewWorkspace() {
       notify({ title: "این دانش‌آموز قبلاً برگه دارد", description: "برگهٔ تکراری را حذف یا با برگهٔ اصلی ادغام کنید؛ نمره دوم جایگزین خودکار نمی‌شود.", variant: "error" });
       return;
     }
-    const otherReview = currentResult.questions.some((question) => question.needsReview) || currentResult.flags.some((flag) => flag.severity !== "info");
+    const resultWithoutIdentityFlag = { ...currentResult, flags: currentResult.flags.filter((flag) => flag.id !== identityFlagId) };
+    const otherReview = resultWithoutIdentityFlag.questions.some((question) => question.needsReview) || resultWithoutIdentityFlag.flags.some((flag) => flag.severity !== "info");
     updateSubmission(currentExam.id, currentSubmission.id, {
+      result: resultWithoutIdentityFlag,
       studentId: student.id,
       studentName: student.name,
       studentCode: student.code,
@@ -220,7 +225,7 @@ export function ReviewWorkspace() {
           <div className="review-filter-tabs">{(["all", "needs_review", "approved"] as ReviewFilter[]).map((value) => <button key={value} className={filter === value ? "active" : ""} onClick={() => setFilter(value)}>{{ all: "همه", needs_review: "بازبینی", approved: "تأییدشده" }[value]}<span>{faNumber(statusCounts[value])}</span></button>)}</div>
           <div className="review-student-list">{filteredSubmissions.map((submission) => <button key={submission.id} className={`review-student-item ${selectedSubmission.id === submission.id ? "active" : ""}`} onClick={() => setSubmissionId(submission.id)}>
             <span className="student-avatar">{getInitials(submission.studentName)}</span>
-            <span className="review-student-copy"><strong>{submission.studentName}</strong><small>{submission.status === "needs_review" ? `${faNumber(submission.result?.flags.length ?? 0)} هشدار بازبینی` : submission.status === "approved" ? "تأیید نهایی" : "پیش‌نویس تصحیح"}</small></span>
+            <span className="review-student-copy"><strong>{submission.studentName || "هویت خوانده نشد"}</strong><small>{submission.status === "needs_review" ? `${faNumber(submission.result?.flags.length ?? 0)} هشدار بازبینی` : submission.status === "approved" ? "تأیید نهایی" : "پیش‌نویس تصحیح"}</small></span>
             <span className={`review-student-score ${submission.status === "needs_review" ? "warning" : ""}`}>{faNumber(submission.result?.totalScore ?? 0)}<small>/{faNumber(submission.result?.maxScore ?? 0)}</small></span>
           </button>)}</div>
           {!filteredSubmissions.length && <div className="review-filter-empty"><Search size={20} /><p>در این فیلتر برگه‌ای نیست.</p><button onClick={() => { setFilter("all"); setQuery(""); }}>نمایش همه</button></div>}
@@ -231,7 +236,7 @@ export function ReviewWorkspace() {
 
         <aside className="card grading-review-panel">
           <div className="grading-student-header">
-            <div className="grading-student-name"><span className="student-avatar">{getInitials(currentSubmission.studentName)}</span><div><h3>{currentSubmission.studentName}</h3><p>{currentSubmission.studentCode || "بدون کد"} · {faDate(currentResult.gradedAt, { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}</p></div></div>
+            <div className="grading-student-name"><span className="student-avatar">{getInitials(currentSubmission.studentName)}</span><div><h3>{currentSubmission.studentName || "هویت خوانده نشد"}</h3><p>{currentSubmission.studentCode || "بدون کد"} · {faDate(currentResult.gradedAt, { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}</p></div></div>
             <SubmissionStatusBadge status={currentSubmission.status} />
             <div className="grading-score-summary"><ScoreRing value={currentResult.percentage} size={78} stroke={7} tone={currentResult.percentage < 50 ? "red" : currentResult.percentage < 75 ? "amber" : "brand"} /><div><span>نمرهٔ فعلی</span><strong>{faNumber(currentResult.totalScore)} <small>از {faNumber(currentResult.maxScore)}</small></strong><small>{currentSubmission.status === "approved" ? "تأیید نهایی معلم" : "پیش‌نویس قابل ویرایش"}</small></div><div className="grading-model-info"><Bot size={13} /><span>{currentResult.model}</span>{currentResult.verification === "verified" || currentResult.verification === "corrected" ? <span className="badge badge-success">ممیزی دوم</span> : null}</div></div>
           </div>
@@ -241,10 +246,10 @@ export function ReviewWorkspace() {
           {panelTab === "scores" && <div className="grading-scores-panel">
             <div className={`identity-match-card ${identityNeedsReview ? "needs-attention" : ""}`}>
               <div className="identity-match-heading"><span>{identityNeedsReview ? <AlertTriangle size={17} /> : <UserCheck size={17} />}</span><div><strong>{identityNeedsReview ? "انتساب هویت نیازمند تأیید است" : "هویت و ردیف کارنامه"}</strong><small>{currentSubmission.identityMessage || "هویت این برگه برای ثبت در کارنامه بررسی شده است."}</small></div><span className={`badge ${identityNeedsReview ? "badge-warning" : "badge-success"}`}>{identityNeedsReview ? "توقف انتساب" : "تطبیق‌شده"}</span></div>
-              <div className="identity-detection-meta"><span>روی برگه: <strong>{currentResult.detectedStudentName || "نام خوانده نشد"}</strong></span><span>کلاس: <strong>{currentResult.detectedClassName || currentSubmission.detectedClassName || "خوانده نشد"}</strong></span><span>اطمینان هویت: <strong>{faNumber((currentResult.identityConfidence ?? 0) * 100, 0)}٪</strong></span></div>
+              <div className="identity-detection-meta"><span>روی برگه: <strong>{currentResult.detectedStudentName || "نام خوانده نشد"}</strong></span><span>کد دانش‌آموزی روی برگه: <strong>{currentResult.detectedStudentCode || "کد خوانده نشد"}</strong></span><span>کلاس: <strong>{currentResult.detectedClassName || currentSubmission.detectedClassName || "خوانده نشد"}</strong></span><span>اطمینان هویت: <strong>{faNumber((currentResult.identityConfidence ?? 0) * 100, 0)}٪</strong></span></div>
               {schoolClass ? <div className="identity-assign-row"><select className="select" aria-label="انتساب به دانش‌آموز کلاس" value={currentSubmission.studentId || ""} onChange={(event) => assignIdentity(event.target.value)}><option value="">انتخاب دانش‌آموز از {schoolClass.name}…</option>{schoolClass.students.filter((student) => student.active).map((student) => <option key={student.id} value={student.id}>{student.name} · {student.code || "بدون کد"}</option>)}</select>{identityNeedsReview && currentSubmission.studentId && <button className="btn btn-secondary btn-sm" onClick={() => assignIdentity()}><Check size={14} /> تأیید انتساب فعلی</button>}</div> : <Link href="/classes" className="btn btn-secondary btn-sm">ساخت و اتصال فهرست کلاس <ChevronLeft size={14} /></Link>}
             </div>
-            {currentResult.flags.length > 0 && <div className="review-flags-box"><div className="review-flags-title"><TriangleAlert size={16} /><strong>{faNumber(currentResult.flags.length)} نکته برای توجه شما</strong></div>{currentResult.flags.slice(0, 4).map((flag) => <button key={flag.id} onClick={() => goToEvidence(flag)}><span className={`flag-severity ${flag.severity}`} /><span><strong>{FLAG_LABELS[flag.type]}</strong><small>{flag.message}</small></span><ChevronLeft size={14} /></button>)}</div>}
+            {visibleReviewFlags.length > 0 && <div className="review-flags-box"><div className="review-flags-title"><TriangleAlert size={16} /><strong>{faNumber(visibleReviewFlags.length)} نکته برای توجه شما</strong></div>{visibleReviewFlags.slice(0, 4).map((flag) => <button key={flag.id} onClick={() => goToEvidence(flag)}><span className={`flag-severity ${flag.severity}`} /><span><strong>{FLAG_LABELS[flag.type]}</strong><small>{flag.message}</small></span><ChevronLeft size={14} /></button>)}</div>}
             <div className="review-score-guide"><UserCheck size={16} /><span>نمرهٔ هر سؤال را وارد کنید و «ثبت نمره» را بزنید؛ جمع کل و تاریخچهٔ تغییرات به‌روز می‌شود.</span></div>
             <div className="question-result-list">{currentExam.questions.map((question) => {
               const questionResult = currentResult.questions.find((item) => item.questionId === question.id);
@@ -254,13 +259,13 @@ export function ReviewWorkspace() {
               return <article id={`result-${question.id}`} className={`question-result-card ${open ? "open" : ""} ${questionResult.needsReview ? "flagged" : ""}`} key={question.id}>
                 <div className="question-result-summary">
                   <button onClick={() => setActiveQuestionId(open ? "" : question.id)} aria-expanded={open}><span className="question-result-number">{faNumber(question.number)}</span><span><strong>{question.prompt}</strong><small>{QUESTION_TYPE_LABELS[question.type]} · اعتماد {faNumber(questionResult.confidence * 100, 0)}٪</small></span><ChevronDown size={15} className={open ? "rotate-180" : ""} /></button>
-                  <div className={`question-score-input ${questionResult.teacherEdited ? "edited" : ""}`}><input aria-label={`نمرهٔ سؤال ${question.number}`} type="number" min="0" max={question.maxScore} step="0.25" value={scoreDrafts[question.id] ?? questionResult.score} onChange={(event) => setScoreDrafts((current) => ({ ...current, [question.id]: Number(event.target.value) }))} onBlur={() => commitScore(questionResult)} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} /><span>/ {faNumber(question.maxScore)}</span></div>
+                  <div className={`question-score-input ${questionResult.teacherEdited ? "edited" : ""}`}><NumberInput aria-label={`نمرهٔ سؤال ${question.number}`} min={0} max={question.maxScore} step={0.25} value={scoreDrafts[question.id] ?? questionResult.score} onValueChange={(score) => setScoreDrafts((current) => ({ ...current, [question.id]: score }))} onBlur={() => commitScore(questionResult)} /><span>/ {faNumber(question.maxScore)}</span></div>
                 </div>
                 {questionResult.needsReview && <div className="question-flag-line"><Flag size={12} />نیازمند بازبینی{questionResult.teacherEdited && <span>· نمره توسط معلم اصلاح شده</span>}</div>}
                 {open && <div className="question-result-body">
                   <div className="transcript-box"><div><span>رونوشت پاسخ دانش‌آموز</span><ConfidenceBar value={questionResult.confidence} /></div><p>{questionResult.transcript || "رونوشتی ثبت نشده است."}</p></div>
                   {questionResult.evidence.excerpt && <button className="evidence-box" onClick={() => setPreviewPage(questionResult.evidence.page ?? 1)}><FileSearch size={16} /><span><strong>شاهد در برگه {questionResult.evidence.page ? `· صفحهٔ ${faNumber(questionResult.evidence.page)}` : ""}</strong><small>{questionResult.evidence.excerpt}</small></span><ExternalLink size={13} /></button>}
-                  {questionResult.criteria.length > 0 && <div className="criterion-result-table"><div className="criterion-result-head"><span>معیار بارم</span><span>نمره</span></div>{questionResult.criteria.map((criterion) => { const definition = question.rubric.find((item) => item.id === criterion.criterionId); return <div className="criterion-result-row" key={criterion.criterionId}><span><strong>{definition?.label ?? "معیار"}</strong><small>{criterion.note}</small></span><b>{faNumber(criterion.score)} / {faNumber(criterion.maxScore)}</b></div>; })}</div>}
+                  {questionResult.criteria.length > 0 && <div className="criterion-result-table"><div className="criterion-result-head"><span>نمرهٔ هر معیار / بخش</span><span>کسب‌شده از سهم معیار</span></div>{questionResult.criteria.map((criterion) => { const definition = question.rubric.find((item) => item.id === criterion.criterionId); return <div className="criterion-result-row" key={criterion.criterionId}><span><strong>{definition?.label ?? "معیار"}</strong><small>{criterion.note}</small></span><b>{faNumber(criterion.score)} / {faNumber(criterion.maxScore)}</b></div>; })}</div>}
                   <div className="ai-rationale"><Sparkles size={15} /><div><strong>دلیل ارزیابی مدل</strong><p>{questionResult.rationale}</p></div></div>
                   {questionResult.teacherEdited && <div className="teacher-edit-note"><UserRound size={14} /><span>نمرهٔ اولیهٔ AI: {faNumber(questionResult.originalAiScore ?? questionResult.score)} · مقدار فعلی توسط معلم اصلاح شده است.</span></div>}
                   <div className="question-result-footer"><span>{questionResult.needsReview ? "پس از مقایسه با برگهٔ اصلی، نمره را ثبت و وضعیت را مشخص کنید." : "این سؤال بررسی شده است."}</span><div className="question-score-actions"><button type="button" className="btn btn-secondary btn-sm" disabled={!scoreChanged} onClick={() => commitScore(questionResult)}><Check size={14} />{scoreChanged ? "ثبت نمره" : "نمره ذخیره شده"}</button>{questionResult.needsReview ? <button type="button" className="btn btn-soft btn-sm" onClick={() => resolveQuestion(question.id)}><Check size={14} />بررسی شد</button> : <span className="badge badge-success"><CheckCircle2 size={12} />بررسی‌شده</span>}</div></div>

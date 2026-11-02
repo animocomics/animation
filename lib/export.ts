@@ -46,7 +46,7 @@ export function exportStudentJson(exam: Exam, submission: Submission): void {
       date: exam.date,
       questions: exam.questions,
     },
-    student: { id: submission.studentId, name: submission.studentName, code: submission.studentCode, identityStatus: submission.identityStatus, identityMessage: submission.identityMessage, detectedClassName: submission.detectedClassName },
+    student: { id: submission.studentId, name: submission.studentName, code: submission.studentCode, identityStatus: submission.identityStatus, identityMessage: submission.identityMessage, detectedName: submission.result?.detectedStudentName ?? "", detectedCode: submission.result?.detectedStudentCode ?? "", detectedClassName: submission.detectedClassName },
     status: getSubmissionStatusLabel(submission.status),
     result: submission.result,
     audit: submission.audit,

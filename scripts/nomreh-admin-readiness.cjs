@@ -427,6 +427,55 @@ async function testTeacherAccess() {
     if (await scoreInputs.count() < 1) throw new Error("The teacher review page exposed no question score inputs.");
     if (await teacherPage.locator(".question-score-actions").count() < 1) throw new Error("The teacher review page exposed no explicit score-saving action.");
     lines.push(`- Teacher review loaded with ${await scoreInputs.count()} question score input(s) and explicit save controls.`);
+    const identityMeta = await teacherPage.locator(".identity-detection-meta").innerText();
+    if (!identityMeta.includes("کد دانش‌آموزی روی برگه")) throw new Error("The review identity card does not expose the student code read from the paper.");
+    if (await teacherPage.locator(".criterion-result-table").count() < 1) throw new Error("The review page does not expose per-criterion score rows.");
+    lines.push("- Review shows the paper student-code field and explicit per-criterion scoring rows.");
+
+    // Exercise the new controls without allowing this read-only readiness session
+    // to persist a draft or a score change to the teacher workspace.
+    await teacherPage.route("**/api/workspace", async (route) => {
+      if (route.request().method() !== "GET") return route.abort();
+      return route.continue();
+    });
+    const teacherClientErrors = [];
+    teacherPage.on("pageerror", (error) => teacherClientErrors.push(error.message));
+    await teacherPage.goto(`${ORIGIN}/grading`, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await teacherPage.locator(".workspace-loading").waitFor({ state: "hidden", timeout: 20000 }).catch(() => undefined);
+    await teacherPage.locator("#exam-pass-score").waitFor({ state: "visible" });
+    if (await teacherPage.locator('input[type="date"]').count()) throw new Error("A native Gregorian date input is still exposed in the exam wizard.");
+    if (await teacherPage.locator("#exam-date").evaluate((element) => element.tagName) !== "BUTTON") throw new Error("The exam date is not the Persian calendar trigger.");
+    const passHint = await teacherPage.locator(".form-field:has(#exam-pass-score) .form-hint").innerText();
+    if (!passHint.includes("نمرهٔ قبولی") || passHint.includes("نمره فعلی")) throw new Error("The pass-score explanation is unclear or still contains the rejected wording.");
+    const passInput = teacherPage.locator("#exam-pass-score");
+    const originalPass = await passInput.inputValue();
+    await passInput.fill("");
+    if (await passInput.inputValue() !== "") throw new Error("Clearing the pass-score field did not preserve an empty editing state.");
+    await passInput.press("Tab");
+    if (await passInput.inputValue() !== originalPass) throw new Error("Clearing and leaving the pass-score field unexpectedly changed its value.");
+    await passInput.fill("۰٫۵");
+    if (await passInput.inputValue() !== "۰٫۵") throw new Error("Persian fractional digits were not preserved in the numeric field.");
+    await passInput.fill(originalPass);
+    await passInput.press("Tab");
+    await teacherPage.locator("#exam-date").click();
+    const calendar = teacherPage.getByRole("dialog", { name: "تقویم شمسی", exact: true });
+    await calendar.waitFor({ state: "visible" });
+    if (await calendar.locator(".persian-calendar-weekdays span").count() !== 7) throw new Error("The Persian calendar does not contain a seven-day week.");
+    if (await calendar.locator(".persian-calendar-days button").count() < 28) throw new Error("The Persian calendar did not render its month days.");
+    await teacherPage.locator("#exam-date").click();
+    lines.push("- Exam wizard uses a Persian calendar, clearable numeric editing, Persian fractional digits, and a meaningful pass-score explanation; workspace writes were blocked during these checks.");
+
+    await teacherPage.goto(`${ORIGIN}/review`, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await teacherPage.locator(".workspace-loading").waitFor({ state: "hidden", timeout: 20000 }).catch(() => undefined);
+    const editableScore = teacherPage.locator('input[aria-label^="نمرهٔ سؤال"]').first();
+    const originalScore = await editableScore.inputValue();
+    await editableScore.fill("");
+    if (await editableScore.inputValue() !== "") throw new Error("Clearing a review score did not preserve an empty editing state.");
+    await editableScore.press("Tab");
+    if (await editableScore.inputValue() !== originalScore) throw new Error("Clearing and leaving a review score changed it unexpectedly.");
+    if (teacherClientErrors.length) throw new Error(`The new teacher controls caused a browser error: ${teacherClientErrors[0]}`);
+    await teacherPage.unroute("**/api/workspace");
+    lines.push("- Review score clearing/restoration passed without a forced blank-to-zero mutation or browser JavaScript error.");
 
     const logoutResponse = await teacherContext.request.post(`${ORIGIN}/api/auth/logout`);
     if (!logoutResponse.ok()) throw new Error("The teacher test session could not be closed cleanly.");

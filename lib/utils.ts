@@ -22,13 +22,31 @@ export function faNumber(value: number | string, maximumFractionDigits = 1): str
   return new Intl.NumberFormat("fa-IR", { maximumFractionDigits }).format(numeric);
 }
 
+export function normalizeNumericInput(value: string): string {
+  return value
+    .replace(/[۰-۹]/g, (digit) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit)))
+    .replace(/[٠-٩]/g, (digit) => String("٠١٢٣٤٥٦٧٨٩".indexOf(digit)))
+    .replace(/[٫،,]/g, ".")
+    .replace(/\s/g, "");
+}
+
+export function formatNumericInput(value: number): string {
+  return Number.isFinite(value)
+    ? new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 2, useGrouping: false }).format(value)
+    : "";
+}
+
 export function faDate(value: string | Date, options?: Intl.DateTimeFormatOptions): string {
   const date = typeof value === "string" ? new Date(value) : value;
   if (Number.isNaN(date.getTime())) return "—";
-  return new Intl.DateTimeFormat("fa-IR", options ?? {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
+  return new Intl.DateTimeFormat("fa-IR-u-ca-persian-nu-arabext", {
+    calendar: "persian",
+    numberingSystem: "arabext",
+    ...(options ?? {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    }),
   }).format(date);
 }
 

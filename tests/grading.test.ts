@@ -50,6 +50,7 @@ const request: GradeApiRequest = {
 function rawModelResult() {
   return modelResultSchema.parse({
     detectedStudentName: "سارا محمدی",
+    detectedStudentCode: " ۹۸۱۲۴ ",
     detectedClassName: "یازدهم الف",
     identityConfidence: 0.91,
     summary: "خلاصه",
@@ -126,11 +127,43 @@ test("server normalizes scores, recomputes totals, keeps identity separate and f
   assert.equal(result.maxScore, 5);
   assert.equal(result.percentage, 100);
   assert.equal(result.detectedStudentName, "سارا محمدی");
+  assert.equal(result.detectedStudentCode, "۹۸۱۲۴");
   assert.equal(result.detectedClassName, "یازدهم الف");
   assert.equal(result.identityConfidence, 0.91);
   assert.ok(result.questions[1].needsReview);
   assert.ok(result.flags.some((flag) => flag.type === "low_confidence" && flag.questionId === "q2"));
   assert.equal(result.usage.inputTokens, 10);
+});
+
+test("fractional criterion allocations remain explicit and inconsistent totals require review", () => {
+  const fractionalQuestion: Question = {
+    ...essay,
+    maxScore: 1,
+    rubric: [
+      { id: "formula", label: "فرمول", description: "نوشتن فرمول صحیح", points: 0.5 },
+      { id: "calculation", label: "محاسبه", description: "انجام محاسبه", points: 0.5 },
+    ],
+  };
+  const raw = rawModelResult();
+  raw.questions = [{
+    ...raw.questions[1],
+    score: 0.5,
+    maxScore: 1,
+    confidence: 0.95,
+    criteria: [
+      { criterionId: "formula", score: 0.5, maxScore: 0.5, note: "فرمول درست است" },
+      { criterionId: "calculation", score: 0, maxScore: 0.5, note: "محاسبه کامل نیست" },
+    ],
+  }];
+  const fractionalRequest = { ...request, exam: { ...request.exam, questions: [fractionalQuestion] } };
+  const result = normalizeGradingResult(raw, fractionalRequest, "openai", "gpt-4.1", { inputTokens: 0, outputTokens: 0 });
+  assert.equal(result.questions[0].criteria[0].score, 0.5);
+  assert.equal(result.questions[0].score, 0.5);
+  assert.equal(result.questions[0].needsReview, false);
+  raw.questions[0].score = 1;
+  const mismatch = normalizeGradingResult(raw, fractionalRequest, "openai", "gpt-4.1", { inputTokens: 0, outputTokens: 0 });
+  assert.equal(mismatch.questions[0].needsReview, true);
+  assert.ok(mismatch.flags.some((flag) => flag.type === "rubric_mismatch" && flag.message.includes("جمع نمره")));
 });
 
 test("a missing model question never disappears silently", () => {

@@ -12,8 +12,8 @@ const schoolClass: SchoolClass = {
   createdAt: "2026-01-01", updatedAt: "2026-01-01",
 };
 
-function identity(name: string, className = "یازدهم تجربی", confidence = 0.95) {
-  return { detectedStudentName: name, detectedClassName: className, identityConfidence: confidence };
+function identity(name: string, className = "یازدهم تجربی", confidence = 0.95, code = "") {
+  return { detectedStudentName: name, detectedStudentCode: code, detectedClassName: className, identityConfidence: confidence };
 }
 
 function result(name: string): GradingResult {
@@ -36,6 +36,50 @@ test("exact Persian identity matching fills canonical roster name and code", () 
   assert.equal(updated.studentCode, "۹۸۱۲۴");
   assert.equal(updated.studentId, "student_1");
   assert.equal(updated.status, "graded");
+});
+
+test("a visibly written student code matches Persian and English digits conservatively", () => {
+  const match = matchStudentIdentity(identity("سارا محمدی", "یازدهم", 0.95, "98124"), schoolClass);
+  assert.equal(match.status, "matched");
+  assert.equal(match.student?.id, "student_1");
+  const updated = applyIdentityMatch(submission(), { ...result("سارا محمدی"), detectedStudentCode: "۹۸۱۲۴" }, schoolClass);
+  assert.equal(updated.studentId, "student_1");
+  assert.equal(updated.studentCode, "۹۸۱۲۴");
+});
+
+test("missing, duplicate, or contradictory identity data requires review", () => {
+  assert.equal(matchStudentIdentity(identity(""), schoolClass).status, "missing");
+  const duplicateCode = { ...schoolClass, students: [...schoolClass.students, { id: "student_3", name: "نگار احمدی", code: "98124", active: true }] };
+  assert.equal(matchStudentIdentity(identity("", "یازدهم", 0.95, "۹۸۱۲۴"), duplicateCode).status, "ambiguous");
+  const conflict = matchStudentIdentity(identity("علی رضایی", "یازدهم", 0.95, "۹۸۱۲۴"), schoolClass);
+  assert.equal(conflict.status, "ambiguous");
+  assert.equal(conflict.student, undefined);
+  const conflictUpdate = applyIdentityMatch(submission(), { ...result("علی رضایی"), detectedStudentCode: "۹۸۱۲۴" }, schoolClass);
+  assert.equal(conflictUpdate.status, "needs_review");
+  assert.equal(conflictUpdate.studentId, undefined);
+  assert.ok(conflictUpdate.result?.flags.some((flag) => flag.id === "identity-submission_1" && flag.type === "ambiguous"));
+  const unknownCode = matchStudentIdentity(identity("سارا محمدی", "یازدهم", 0.95, "00000"), schoolClass);
+  assert.equal(unknownCode.status, "ambiguous");
+  assert.equal(unknownCode.student, undefined);
+});
+
+test("a fuzzy name is not an automatic identity assignment", () => {
+  const match = matchStudentIdentity(identity("سارا محمدي نژاد"), schoolClass);
+  assert.equal(match.status, "unmatched");
+  assert.equal(match.student, undefined);
+});
+
+test("an unreadable paper does not retain a provisional roster identity", () => {
+  const updated = applyIdentityMatch(
+    submission({ studentId: "student_1", studentName: "سارا محمدی", studentCode: "۹۸۱۲۴", identityStatus: "missing", identitySource: "roster" }),
+    result(""),
+    schoolClass,
+  );
+  assert.equal(updated.identityStatus, "missing");
+  assert.equal(updated.status, "needs_review");
+  assert.equal(updated.studentId, undefined);
+  assert.equal(updated.studentName, "");
+  assert.equal(updated.studentCode, "");
 });
 
 test("a contradictory class label blocks otherwise exact automatic matching", () => {

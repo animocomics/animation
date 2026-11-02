@@ -33,16 +33,6 @@ function fileType(file: File): string {
   return file.type;
 }
 
-function nameFromFile(filename: string, index: number): string {
-  const cleaned = filename
-    .replace(/\.[^.]+$/, "")
-    .replace(/[_-]+/g, " ")
-    .replace(/\b(scan|page|answer|sheet|img|image)\b/gi, "")
-    .replace(/\s+/g, " ")
-    .trim();
-  return cleaned || `دانش‌آموز ${index + 1}`;
-}
-
 export function SubmissionUploader({ submissions, onChange }: {
   submissions: Submission[];
   onChange: (submissions: Submission[]) => void;
@@ -110,17 +100,19 @@ export function SubmissionUploader({ submissions, onChange }: {
         } : submission));
       } else {
         const newSubmissions: Submission[] = [];
-        for (const [index, { file, type }] of validFiles.entries()) {
+        for (const { file, type } of validFiles) {
           const id = uid("file");
           await storeFile(id, file, type);
           newSubmissions.push({
             id: uid("submission"),
-            studentName: nameFromFile(file.name, submissions.length + index),
+            studentName: "",
             studentCode: "",
             files: [{ id, storedId: id, name: file.name, type, size: file.size }],
             status: "uploaded",
-            identitySource: "filename",
-            audit: [{ id: uid("audit"), at: new Date().toISOString(), actor: "teacher", action: "بارگذاری برگه", details: `فایل ${file.name} بارگذاری شد.` }],
+            identitySource: "pending",
+            identityStatus: "missing",
+            identityMessage: "نام و کد هنوز خوانده نشده است؛ AI فقط از روی برگه آن‌ها را ثبت می‌کند.",
+            audit: [{ id: uid("audit"), at: new Date().toISOString(), actor: "teacher", action: "بارگذاری برگه", details: `فایل ${file.name} بارگذاری شد؛ هویت از نام فایل ساخته نشد.` }],
           });
         }
         onChange([...submissions, ...newSubmissions]);
@@ -143,7 +135,7 @@ export function SubmissionUploader({ submissions, onChange }: {
 
   const updateStudent = (id: string, patch: Partial<Submission>) => {
     const identityEdited = "studentName" in patch || "studentCode" in patch;
-    onChange(submissions.map((submission) => submission.id === id ? { ...submission, ...patch, ...(identityEdited ? { studentId: undefined, identitySource: "manual" as const, identityStatus: "manual" as const, identityMessage: "انتساب دستی؛ پس از تصحیح با نام روی برگه کنترل می‌شود." } : {}) } : submission));
+    onChange(submissions.map((submission) => submission.id === id ? { ...submission, ...patch, ...(identityEdited ? { studentId: undefined, identitySource: "manual" as const, identityStatus: "manual" as const, identityMessage: "انتساب دستی؛ پس از تصحیح با نام و کد روی برگه کنترل می‌شود." } : {}) } : submission));
   };
 
   const removeSubmission = async (submission: Submission) => {
@@ -196,13 +188,13 @@ export function SubmissionUploader({ submissions, onChange }: {
       </div>
 
       <div className="submission-list-section">
-        <div className="submission-list-heading"><div><h3>فهرست برگه‌ها</h3><p>نام فایل‌ها را بررسی کنید؛ برگهٔ هر دانش‌آموز نباید با دیگری مخلوط شود.</p></div><span className="badge badge-neutral"><UsersRound size={13} />{faNumber(submissions.length)} دانش‌آموز · {faNumber(submissions.reduce((sum, submission) => sum + submission.files.length, 0))} فایل</span></div>
+        <div className="submission-list-heading"><div><h3>فهرست برگه‌ها</h3><p>نام و کد از نام فایل ساخته نمی‌شود؛ AI فقط متن خوانش‌پذیر روی برگه را ثبت می‌کند و موارد مبهم برای تأیید شما می‌ماند.</p></div><span className="badge badge-neutral"><UsersRound size={13} />{faNumber(submissions.length)} دانش‌آموز · {faNumber(submissions.reduce((sum, submission) => sum + submission.files.length, 0))} فایل</span></div>
         {submissions.length ? <div className="submission-upload-list">{submissions.map((submission, index) => (
           <article className={`submission-upload-card ${!submission.files.length ? "missing-files" : ""}`} key={submission.id}>
             <div className="submission-order">{faNumber(index + 1)}</div>
             <div className="submission-identity-fields">
-              <input className="input" value={submission.studentName} onChange={(event) => updateStudent(submission.id, { studentName: event.target.value })} aria-label={`نام دانش‌آموز ${index + 1}`} />
-              <input className="input" value={submission.studentCode} onChange={(event) => updateStudent(submission.id, { studentCode: event.target.value })} placeholder="کد دانش‌آموزی" aria-label={`کد دانش‌آموز ${index + 1}`} />
+              <div className="submission-identity-field"><label htmlFor={`submission-name-${submission.id}`}>نام دانش‌آموز</label><input id={`submission-name-${submission.id}`} className="input" value={submission.studentName} onChange={(event) => updateStudent(submission.id, { studentName: event.target.value })} aria-label={`نام دانش‌آموز ${index + 1}`} /></div>
+              <div className="submission-identity-field"><label htmlFor={`submission-code-${submission.id}`}>کد دانش‌آموزی</label><input id={`submission-code-${submission.id}`} className="input" value={submission.studentCode} onChange={(event) => updateStudent(submission.id, { studentCode: event.target.value })} aria-label={`کد دانش‌آموز ${index + 1}`} /></div>
             </div>
             <div className="submission-file-area">
               {submission.files.map((file) => <div className="uploaded-file-chip" key={file.id}>
