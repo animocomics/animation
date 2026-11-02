@@ -6,7 +6,7 @@ const { chromium } = require("playwright");
 const ORIGIN = "https://nomreh.arounidea.com";
 const OUTPUT = process.env.NOMREH_BROWSER_SHECAN_OUTPUT || "";
 const UPDATE_URL = process.env.SHECAN_UPDATE_URL || "";
-// Repeat the real form check after safe JSON error handling is deployed.
+// Repeat the real form check after the scoped IPv4 activation update.
 const lines = [
   "# Nomreh real-browser Shecan and provider check",
   "",
