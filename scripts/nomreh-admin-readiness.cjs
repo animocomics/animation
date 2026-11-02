@@ -607,6 +607,8 @@ async function main() {
   await page.route(`${ORIGIN}/api/provider/models`, async (route) => {
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ models: ["gemini-3.8-flash", "gemini-4-argon", "gemini-future-vision"] }) });
   });
+  // A documented non-secret placeholder satisfies the client guard; the mocked route never forwards it.
+  await page.locator("#admin-api-key").fill("readiness-model-catalog-not-a-secret");
   await page.getByRole("button", { name: "دریافت مدل‌های حساب", exact: true }).click();
   await page.getByText("۳ مدل از حساب خوانده شد. هیچ کلید یا تنظیمی ذخیره نشد.", { exact: true }).waitFor({ state: "visible" });
   const discoveredGeminiOptions = await readModelOptions();
@@ -632,7 +634,7 @@ async function main() {
   await page.getByRole("radio", { name: /شکن حرفه‌ای/ }).click();
   await page.locator("#shecan-update-url").waitFor({ state: "visible" });
   await page.getByRole("button", { name: /آزمایش، ذخیره و فعال‌سازی|آزمایش مجدد اتصال/ }).waitFor({ state: "visible" });
-  lines.push("- Shecan free/pro selection, update-link entry, DNS editing, and test/save/enable controls are available in the real admin UI.", "- No API key, update link, DNS value, or enable/disable state was submitted or changed.", "");
+  lines.push("- Shecan free/pro selection, update-link entry, DNS editing, and test/save/enable controls are available in the real admin UI.", "- No real API key, update link, DNS value, or enable/disable state was submitted or changed.", "");
 
   lines.push("## Management-only routes and read APIs", "");
   const workspaceApi = await context.request.get(`${ORIGIN}/api/workspace`);
