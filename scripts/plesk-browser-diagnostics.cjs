@@ -63,7 +63,7 @@ function labelValues(text, labels) {
 }
 
 async function main() {
-  if (!["diagnose", "upload", "extract", "build", "status", "disk", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
+  if (!["diagnose", "upload", "extract", "build", "status", "disk", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "enable-runtime"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
   const panel = normalizePanelUrl(process.env.PLESK_PANEL_URL || "");
   const readOnly = ACTION === "diagnose" || ACTION === "status";
   const actionDescription = ACTION === "upload"
@@ -78,7 +78,9 @@ async function main() {
             ? "Controlled action: preserve Nomreh's current package.json as package.json.pre-npm-node-fix and upload only the hash-validated replacement. No other application file, persistent data, build, restart, or other domain is touched."
           : ACTION === "update-tsconfig"
             ? "Controlled action: preserve Nomreh's current tsconfig.json as tsconfig.json.pre-obsolete-exclusion and upload only the hash-validated replacement. No other application file, persistent data, build, restart, or other domain is touched."
-            : ACTION === "retire-obsolete"
+            : ACTION === "enable-runtime"
+              ? "Controlled action: enable Node.js only for Nomreh's verified server.js application after its successful build. Restart remains a separate step; no files, persistent data, environment settings, or other domains are touched."
+              : ACTION === "retire-obsolete"
               ? "Controlled action: rename only three verified obsolete Cloudflare/better-sqlite3 host artifacts to non-TypeScript backup names. No current source, persistent data, build, restart, or other domain is touched."
               : "Controlled action: run the validated Nomreh production build with its domain-local Node 22 runtime. Node.js enablement and restart remain pending.";
   const lines = ["# Plesk browser diagnostics", "", readOnly
@@ -255,6 +257,70 @@ async function main() {
           if (fields.length || values.length) lines.push("");
         }
       }
+      if (ACTION === "enable-runtime") {
+        lines.push("## Controlled Nomreh Passenger enablement", "");
+        const nodeBody = await page.locator("body").innerText().catch(() => "");
+        if (!nodeBody.includes(`Node.js on ${DOMAIN}`) || !nodeBody.includes("Application Root") || !nodeBody.includes("/nomreh.arounidea.com") || !nodeBody.includes("server.js")) {
+          throw new Error("The Node.js settings are not verified as Nomreh's server.js application. Enablement was not attempted.");
+        }
+        const enabledControl = page.locator("a:visible, button:visible").filter({ hasText: /^Disable Node\.js$/i }).first();
+        const restartControl = page.locator("a:visible, button:visible").filter({ hasText: /^(Restart App|Restart Application)$/i }).first();
+        if (await enabledControl.count() || await restartControl.count()) {
+          lines.push("- Nomreh Node.js was already enabled before this action; no enable or restart control was clicked.", "");
+          actionCompleted = true;
+        } else {
+          const enableControl = page.locator("a:visible, button:visible").filter({ hasText: /^Enable Node\.js$/i }).first();
+          if (!await enableControl.count()) throw new Error("The Enable Node.js control was not found on Nomreh's verified settings page. No setting was changed.");
+          const enableResponses = [];
+          const responseHandler = (response) => {
+            try {
+              const target = new URL(response.url());
+              if (target.origin === new URL(panel).origin && /\/modules\/nodejs\//.test(target.pathname)) {
+                enableResponses.push(`${response.request().method()} ${target.pathname} -> HTTP ${response.status()}`);
+              }
+            } catch { /* Ignore an unrelated response. */ }
+          };
+          page.on("response", responseHandler);
+          try {
+            lines.push("- Clicking only Enable Node.js for nomreh.arounidea.com; restart remains a separate step.");
+            await enableControl.click({ timeout: 10000 });
+            await page.waitForTimeout(1200);
+            const confirmation = page.locator("[role='dialog']:visible, .pul-modal:visible, .modal:visible").last();
+            if (await confirmation.count()) {
+              const confirmationText = await confirmation.innerText().catch(() => "");
+              if (!/enable/i.test(confirmationText) || !/Node\.js/i.test(confirmationText) || /disable/i.test(confirmationText)) {
+                throw new Error("An unexpected confirmation appeared instead of Nomreh Node.js enablement. It was not confirmed.");
+              }
+              const confirmButton = confirmation.getByRole("button", { name: /^(OK|Enable|Confirm|Yes)$/i }).last();
+              if (!await confirmButton.count()) throw new Error("The Node.js enablement confirmation button was not found. It was not confirmed.");
+              await confirmButton.click({ timeout: 8000 });
+            }
+            let enablementVerified = false;
+            let latestNodeBody = nodeBody;
+            const enableStartedAt = Date.now();
+            while (Date.now() - enableStartedAt < 60000) {
+              await page.waitForTimeout(2000);
+              latestNodeBody = await page.locator("body").innerText().catch(() => "");
+              const disableNow = page.locator("a:visible, button:visible").filter({ hasText: /^Disable Node\.js$/i }).first();
+              const restartNow = page.locator("a:visible, button:visible").filter({ hasText: /^(Restart App|Restart Application)$/i }).first();
+              if (await disableNow.count() || await restartNow.count()) {
+                enablementVerified = true;
+                break;
+              }
+            }
+            for (const response of enableResponses.slice(0, 20)) lines.push(`- Enablement response: ${sanitize(response)}`);
+            if (!enablementVerified) {
+              const stateControls = await page.locator("a:visible, button:visible").evaluateAll((elements) => elements.map((element) => (element.textContent || "").trim().replace(/\s+/g, " ")).filter((text) => /^(Enable Node\.js|Disable Node\.js|Restart App|Restart Application)$/i.test(text)));
+              for (const control of [...new Set(stateControls)]) lines.push(`- Post-enable control: ${sanitize(control)}`);
+              throw new Error("Nomreh Node.js enablement could not be verified. No restart was attempted; inspect the current state before retrying.");
+            }
+            lines.push("- Verified enabled state: Nomreh now exposes Disable Node.js or Restart App.", "- No application restart, other domain, file, persistent data, or environment setting was changed by this step.", "");
+            actionCompleted = true;
+          } finally {
+            page.off("response", responseHandler);
+          }
+        }
+      }
       if (["diagnose", "build", "status", "disk"].includes(ACTION) && nomrehConsoleLink && await nomrehConsoleLink.count()) {
         const consoleResponsePromise = page.waitForResponse((item) => item.url().includes("/modules/nodejs/index.php/domain/console") && item.request().isNavigationRequest(), { timeout: 15000 }).catch(() => null);
         await nomrehConsoleLink.click({ timeout: 8000 }).catch(() => undefined);
@@ -428,7 +494,7 @@ async function main() {
           actionCompleted = true;
         }
       }
-      if (nomrehFilesPath) {
+      if (nomrehFilesPath && ACTION !== "enable-runtime") {
         let filePath = nomrehFilesPath;
         for (let depth = 0; depth < 2; depth += 1) {
           let response = null;
@@ -1213,7 +1279,7 @@ async function main() {
         }
       }
     }
-    if (["upload", "extract", "build", "status", "disk", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Node.js was not enabled or restarted.`);
+    if (["upload", "extract", "build", "status", "disk", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "enable-runtime"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. No subsequent build or restart was attempted.`);
     lines.push("## Result", "", ACTION === "upload"
       ? "The validated application archive was uploaded to Nomreh. Extraction, dependency installation, build, and Node.js enablement remain pending."
       : ACTION === "extract"
@@ -1230,7 +1296,9 @@ async function main() {
                   ? "Nomreh's validated package.json npm launcher fix was uploaded and verified. No build or restart was attempted; disk verification remains pending."
                   : ACTION === "update-tsconfig"
                     ? "Nomreh's validated tsconfig.json obsolete-artifact exclusions were uploaded and verified. No build or restart was attempted; the controlled production build remains pending."
-                    : ACTION === "retire-obsolete"
+                    : ACTION === "enable-runtime"
+                      ? "Nomreh Node.js enablement was verified. No application restart was attempted in this step; restart and live-site validation remain pending."
+                      : ACTION === "retire-obsolete"
                     ? "All three obsolete Nomreh Cloudflare/better-sqlite3 artifacts were preserved as non-TypeScript backups and verified. No build or restart was attempted."
                     : domainFound
         ? "Plesk web login succeeded and the Nomreh domain was found. No remediation was attempted."
