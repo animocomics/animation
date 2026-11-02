@@ -82,6 +82,8 @@ async function run() {
     return;
   }
 
+  const malformed = await api(page, "/api/provider/test", {});
+  lines.push(`- Real browser malformed local-only probe: HTTP ${malformed.status}; ${malformed.status === 400 ? "route JSON validation reached" : summarize(malformed)}.`);
   const test = await api(page, "/api/provider/test", { provider: status.provider, model: status.model });
   lines.push(`- Real browser stored-key provider test: HTTP ${test.status}; ${test.status === 200 ? "success" : summarize(test)}.`);
   lines.push(`- Provider test non-sensitive response headers: server ${clean(test.server)}; x-powered-by ${clean(test.poweredBy)}; via ${clean(test.via)}.`);
