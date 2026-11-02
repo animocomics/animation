@@ -498,14 +498,18 @@ async function main() {
                 const appFolder = page.locator("a.tree-item-content:visible").filter({ hasText: DOMAIN }).first();
                 if (!await appFolder.count()) throw new Error("The Nomreh application folder was not available in the File Manager tree. No artifact was changed.");
                 await appFolder.evaluate((element) => element.click());
-                await page.waitForTimeout(1600);
+                await page.waitForTimeout(2500);
                 for (const directory of target.directories) {
                   const directoryPattern = new RegExp(`^${directory}$`);
-                  let directoryLink = page.locator("a:visible:not(.tree-item-content)").filter({ hasText: directoryPattern }).last();
-                  if (!await directoryLink.count()) directoryLink = page.locator("a.tree-item-content:visible").filter({ hasText: directoryPattern }).first();
-                  if (!await directoryLink.count()) throw new Error(`The Nomreh ${directory} directory was not found while locating ${target.file}. No artifact was changed.`);
+                  const directoryLink = page.locator("a:visible:not(.tree-item-content)").filter({ hasText: directoryPattern }).last();
+                  await directoryLink.waitFor({ state: "visible", timeout: 15000 }).catch(() => undefined);
+                  if (!await directoryLink.count()) {
+                    const visibleEntries = await page.locator("a:visible").evaluateAll((anchors) => [...new Set(anchors.map((anchor) => (anchor.textContent || "").trim()).filter((text) => /^(?:lib|server|tests|app|components|scripts|public|[a-z0-9_.@-]+\.(?:ts|tsx|json|cjs))$/i.test(text)))].slice(0, 60));
+                    for (const entry of visibleEntries) lines.push(`- Directory inspection: ${sanitize(entry)}`);
+                    throw new Error(`The Nomreh ${directory} directory was not found in the file list while locating ${target.file}. No artifact was changed.`);
+                  }
                   await directoryLink.evaluate((element) => element.click());
-                  await page.waitForTimeout(1500);
+                  await page.waitForTimeout(2000);
                 }
                 const targetBody = await page.locator("body").innerText().catch(() => "");
                 if (!targetBody.includes(target.marker)) throw new Error(`The containing directory for ${target.file} could not be verified. No artifact was changed.`);
