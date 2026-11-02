@@ -142,9 +142,9 @@ async function main() {
           const tools = await toolScope.locator("a").evaluateAll((anchors) => anchors.map((anchor) => ({
             text: (anchor.textContent || "").trim().replace(/\s+/g, " "),
             href: anchor.getAttribute("href") || "",
-          })).filter((item) => /^(Git|Node\.js|Files|File Manager|Hosting Settings|Dashboard)/i.test(item.text)).slice(0, 20));
+          })).filter((item) => /^(Git|Node\.js|Files|File Manager|Hosting Settings|Dashboard)/i.test(item.text) || /\/modules\/nodejs\/|\/smb\/file-manager\//.test(item.href)).slice(0, 20));
           for (const tool of tools) {
-            if (!nomrehFilesPath && /^Files/.test(tool.text) && /domainId\/\d+/.test(tool.href)) {
+            if (!nomrehFilesPath && /\/smb\/file-manager\/.*domainId\/\d+/.test(tool.href)) {
               nomrehFilesPath = new URL(tool.href, page.url()).pathname;
             }
             lines.push(`- Tool: ${sanitize(tool.text)}${tool.href.startsWith("/") ? ` (${sanitize(new URL(tool.href, page.url()).pathname)})` : ""}`);
@@ -172,7 +172,7 @@ async function main() {
         lines.push(`## ${label} page`, "", `- HTTP status: ${response ? response.status() : "unavailable"}`, `- Current page: ${sanitize(new URL(page.url()).pathname)}`, `- Body characters: ${body.length}`, "");
         const selected = toolLines(body);
         if (selected.length) lines.push(...selected.map((line) => `- ${line}`), "");
-        if (selected.length < 4) {
+        if (body.length < 2000) {
           const excerpt = body.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !/webhook|secret|token|password|credential|api.key|environment/i.test(line) && (!line.includes("arounidea.com") || line.includes(DOMAIN))).slice(0, 30);
           if (excerpt.length) lines.push(...excerpt.map((line) => `- Page text: ${sanitize(line.slice(0, 250))}`), "");
         }
