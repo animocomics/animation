@@ -70,7 +70,7 @@ async function request(pathname) {
 
 function validateLogin(result, label) {
   const { response, body } = result;
-  const finalUrl = new URL(response.url());
+  const finalUrl = new URL(response.url);
   const title = clean(body.match(/<title[^>]*>([^<]*)<\/title>/i)?.[1] || "not exposed");
   lines.push(`- ${label} HTTP status: ${response.status}`);
   lines.push(`- ${label} final URL: ${finalUrl.origin}${finalUrl.pathname}`);
