@@ -1245,10 +1245,11 @@ async function main() {
               if (!serverLine || !/\b593\s*B\b/i.test(serverLine)) {
                 throw new Error("Extraction could not be verified: the hosted server.js is not the validated 593-byte launcher. No build or restart was attempted.");
               }
+              const extractedRootUrl = page.url();
               for (const expected of EXPECTED_DELTA) {
                 const segments = expected.file.split("/");
                 const fileName = segments.pop();
-                await page.goto(`${panel}${nomrehFilesPath}`, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => null);
+                await page.goto(extractedRootUrl, { waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => null);
                 await page.waitForTimeout(1500);
                 const navigateToEntry = async (name) => {
                   await page.waitForFunction((expectedName) => Array.from(document.querySelectorAll("a")).some((anchor) => (anchor.textContent || "").trim() === expectedName), name, { timeout: 15000 }).catch(() => undefined);
@@ -1272,7 +1273,6 @@ async function main() {
                   }
                   await page.waitForTimeout(2500);
                 };
-                await navigateToEntry(DOMAIN);
                 for (const directory of segments) await navigateToEntry(directory);
                 const extractedFile = page.getByText(fileName, { exact: true }).first();
                 await extractedFile.waitFor({ state: "visible", timeout: 15000 }).catch(() => undefined);
