@@ -247,9 +247,13 @@ async function main() {
             filePath = `${appUrl.pathname}${appUrl.search}`;
             continue;
           }
-          const domainFolder = page.getByText(DOMAIN, { exact: false }).first();
-          if (depth === 0 && await domainFolder.count()) {
-            await domainFolder.click({ timeout: 8000 }).catch(() => undefined);
+          const domainRows = page.locator("tr, [role='row']").filter({ hasText: DOMAIN });
+          if (depth === 0 && await domainRows.count()) {
+            const domainRow = domainRows.first();
+            const domainFolder = domainRow.getByText(DOMAIN, { exact: true }).first();
+            lines.push(`- Opening the Nomreh file row: ${await domainFolder.count() ? "yes" : "row only"}`, "");
+            if (await domainFolder.count()) await domainFolder.click({ timeout: 8000 }).catch(() => undefined);
+            else await domainRow.click({ timeout: 8000 }).catch(() => undefined);
             await page.waitForTimeout(1500);
             filePath = "";
             continue;
