@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: read
+  checks: write
 
 concurrency:
   group: nomreh-live-ai-acceptance
@@ -57,3 +58,18 @@ jobs:
               summary.write(text)
           print(text)
           PY
+      - name: Store redacted report in the check run
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          test -s /tmp/nomreh-live-ai-acceptance.md
+          check_id=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs" --jq '.check_runs[] | select(.name == "live-ai") | .id' | head -n 1)
+          test -n "$check_id"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          text = Path('/tmp/nomreh-live-ai-acceptance.md').read_text()
+          Path('/tmp/nomreh-check-payload.json').write_text(json.dumps({'output': {'title': 'Nomreh live AI acceptance', 'summary': text}}))
+          PY
+          gh api --method PATCH "repos/${GITHUB_REPOSITORY}/check-runs/${check_id}" --input /tmp/nomreh-check-payload.json >/dev/null
