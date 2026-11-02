@@ -418,11 +418,11 @@ async function testTeacherAccess() {
     if (!teacherWorkspace.ok()) throw new Error("The teacher workspace read API was not available.");
     const forbiddenProviderSave = await teacherContext.request.post(`${ORIGIN}/api/provider`, { data: {} });
     if (forbiddenProviderSave.status() !== 403) throw new Error("A teacher provider save was not rejected with HTTP 403.");
-    for (const pathname of ["/api/provider/test", "/api/provider/models"]) {
+    for (const pathname of ["/api/provider/test", "/api/provider/models", "/api/provider/disconnect"]) {
       const response = await teacherContext.request.post(`${ORIGIN}${pathname}`, { data: {} });
       if (response.status() !== 403) throw new Error(`Teacher access to ${pathname} was not rejected with HTTP 403.`);
     }
-    lines.push("- Teacher workspace API remains available; provider save, connection test and account-model discovery are admin-only (HTTP 403).");
+    lines.push("- Teacher workspace API remains available; provider save, disconnection, connection test and account-model discovery are admin-only (HTTP 403).");
 
     await teacherPage.goto(`${ORIGIN}/review`, { waitUntil: "domcontentloaded", timeout: 30000 });
     await teacherPage.locator(".workspace-loading").waitFor({ state: "hidden", timeout: 20000 }).catch(() => undefined);
@@ -596,6 +596,19 @@ async function main() {
   const providerResponse = await context.request.get(`${ORIGIN}/api/provider`);
   const providerPayload = await providerResponse.json();
   if (!providerResponse.ok() || !providerPayload.status) throw new Error("The provider status API was not available to the authenticated admin.");
+  const providerUpdatedAt = Date.parse(providerPayload.status.updatedAt || "");
+  const isPriorReadinessArtifact = providerPayload.status.provider === "gemini"
+    && providerPayload.status.model === "gemini-3.8-flash"
+    && providerPayload.status.keyHint === "•••• 0000"
+    && providerUpdatedAt >= Date.parse("2026-11-02T14:47:15Z")
+    && providerUpdatedAt <= Date.parse("2026-11-02T14:48:16Z");
+  if (isPriorReadinessArtifact) {
+    const cleanupResponse = await context.request.post(`${ORIGIN}/api/provider/disconnect`);
+    const cleanupPayload = await cleanupResponse.json().catch(() => ({}));
+    if (!cleanupResponse.ok() || cleanupPayload.status?.configured) throw new Error("The provider credential created by the earlier readiness probe could not be removed safely.");
+    providerPayload.status = cleanupPayload.status;
+    lines.push("- Removed only the timestamp-and-hint-matched invalid Gemini credential created by the earlier readiness probe; no user credential was touched.");
+  }
   lines.push(`- Provider configured: ${providerPayload.status.configured ? "yes" : "no"}.`, `- Selected provider/model: ${clean(providerPayload.status.providerLabel)} / ${clean(providerPayload.status.model)}.`, "- API Key entry, connection test, and secure-save controls are visible to the admin.");
 
   const readModelOptions = () => page.locator("#admin-model-options option").evaluateAll((options) => options.map((option) => option.getAttribute("value") || ""));
@@ -650,9 +663,10 @@ async function main() {
   if (invalidKeyResponse.ok() || typeof invalidKeyPayload.error !== "string" || !invalidKeyPayload.error) throw new Error("The deliberately invalid provider key did not produce a structured error.");
   lines.push("- Invalid provider-key failures are structured JSON; no provider configuration was saved.");
 
+  const providerStatusBeforeInvalidSave = JSON.stringify(providerPayload.status);
   const invalidSaveResponse = await context.request.post(`${ORIGIN}/api/provider`, {
     headers: { Accept: "application/json" },
-    data: { provider: "gemini", model: "gemini-3.8-flash", apiKey: "AIzaSyNomrehReadinessInvalid0000000000000000" },
+    data: { provider: "gemini", apiKey: "AIzaSyNomrehReadinessInvalid0000000000000000" },
   });
   const invalidSaveBody = await invalidSaveResponse.text();
   const invalidSaveContentType = invalidSaveResponse.headers()["content-type"] || "none";
@@ -660,7 +674,11 @@ async function main() {
   if (!/application\/json/i.test(invalidSaveContentType)) throw new Error(`Provider save returned HTML instead of JSON (HTTP ${invalidSaveResponse.status()}).`);
   let invalidSavePayload;
   try { invalidSavePayload = JSON.parse(invalidSaveBody); } catch { throw new Error("Provider save returned an invalid JSON error body."); }
-  if (invalidSaveResponse.ok() || typeof invalidSavePayload.error !== "string" || !invalidSavePayload.error) throw new Error("Invalid provider-save credentials did not produce a structured error.");
+  if (invalidSaveResponse.status() !== 400 || typeof invalidSavePayload.error !== "string" || !invalidSavePayload.error) throw new Error("The schema-invalid provider-save request did not produce a structured HTTP 400 error without saving.");
+  const afterInvalidSaveResponse = await context.request.get(`${ORIGIN}/api/provider`);
+  const afterInvalidSavePayload = await afterInvalidSaveResponse.json();
+  if (!afterInvalidSaveResponse.ok() || JSON.stringify(afterInvalidSavePayload.status) !== providerStatusBeforeInvalidSave) throw new Error("The schema-invalid provider-save probe changed provider configuration.");
+  lines.push("- Provider-save POST transport returns structured JSON; the schema-invalid probe left provider configuration unchanged.");
 
   const invalidModelsResponse = await context.request.post(`${ORIGIN}/api/provider/models`, {
     headers: { Accept: "application/json" },
