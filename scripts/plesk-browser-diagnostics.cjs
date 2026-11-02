@@ -260,15 +260,23 @@ async function main() {
             })).filter((item) => item.text || item.title).slice(0, 40));
             for (const control of toolbarButtons) lines.push(`- Toolbar button: ${sanitize(JSON.stringify(control))}`);
             if (toolbarButtons.length) lines.push("");
-            const packageLink = page.getByText("package.json", { exact: true }).first();
-            if (await packageLink.count()) {
-              await packageLink.click({ timeout: 8000 }).catch(() => undefined);
-              await page.waitForTimeout(1800);
-              const packageBody = await page.locator("body").innerText().catch(() => "");
-              const packageLines = packageBody.split(/\r?\n/).map((line) => line.trim()).filter((line) => /build:plesk|better-sqlite3|plesk-node22|next\s*--webpack|"build"\s*:|"next"\s*:/i.test(line)).slice(0, 20);
-              lines.push("## Hosted package.json inspection", "");
-              if (packageLines.length) lines.push(...packageLines.map((line) => `- ${sanitize(line.slice(0, 300))}`), "");
-              else lines.push("- The package file did not expose readable script/dependency lines in the viewer.", "");
+            const addNewButton = page.locator("button[title='Add New']").first();
+            if (await addNewButton.count()) {
+              await addNewButton.click({ timeout: 5000 }).catch(() => undefined);
+              await page.waitForTimeout(500);
+              const menuItems = await page.locator("a:visible, button:visible").evaluateAll((elements) => elements.map((element) => ({
+                text: (element.textContent || "").trim().replace(/\s+/g, " ").slice(0, 120),
+                title: element.getAttribute("title") || element.getAttribute("aria-label") || "",
+              })).filter((item) => /upload|file|directory|create/i.test(`${item.text} ${item.title}`)).slice(0, 25));
+              for (const item of menuItems) lines.push(`- Add New menu: ${sanitize(JSON.stringify(item))}`);
+              const fileInputs = await page.locator("input[type='file']").evaluateAll((elements) => elements.map((element) => ({
+                name: element.getAttribute("name") || element.id || "",
+                accept: element.getAttribute("accept") || "",
+                multiple: element.hasAttribute("multiple"),
+              })));
+              lines.push(`- File inputs after opening Add New: ${fileInputs.length}`, "");
+              for (const input of fileInputs) lines.push(`- File input: ${sanitize(JSON.stringify(input))}`);
+              if (fileInputs.length) lines.push("");
             }
           }
           const appLink = fileLinks.find((link) => link.text.toLowerCase() === DOMAIN);
