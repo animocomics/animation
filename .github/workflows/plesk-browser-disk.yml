@@ -12,6 +12,7 @@ on:
 permissions:
   contents: read
   checks: write
+  actions: read
 
 concurrency:
   group: plesk-nomreh-browser-disk
@@ -44,7 +45,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          build_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41441540739" --jq '.status + " " + .conclusion')"
+          build_state=""
+          for attempt in 1 2 3 4 5; do
+            build_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41441540739" --jq '.status + " " + .conclusion')"
+            if [ "$build_state" = "completed success" ]; then break; fi
+            sleep 3
+          done
           test "$build_state" = "completed success"
 
       - name: Prepare an isolated temporary browser
