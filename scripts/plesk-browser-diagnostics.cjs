@@ -283,16 +283,22 @@ async function main() {
                 });
               }
               lines.push(`- Archive selector found: ${await archiveCheckbox.count() ? "yes" : "no"}`);
-              const archiveButton = page.getByRole("button", { name: /^Archive/i }).first();
-              if (await archiveButton.count()) {
-                await archiveButton.click({ timeout: 5000 }).catch(() => undefined);
+              if (await archiveCheckbox.count()) lines.push(`- Archive selected: ${await archiveCheckbox.isChecked().catch(() => false) ? "yes" : "no"}`);
+              let extractChoice = null;
+              for (const menuName of ["Archive", "More"]) {
+                const menuButton = page.getByRole("button", { name: new RegExp(`^${menuName}`, "i") }).first();
+                if (!await menuButton.count()) continue;
+                await menuButton.click({ timeout: 5000 }).catch(() => undefined);
                 await page.waitForTimeout(400);
-                const extractChoice = page.locator("a:visible, button:visible").filter({ hasText: /Extract/i }).first();
-                lines.push(`- Extract menu item found: ${await extractChoice.count() ? "yes" : "no"}`);
-                if (await extractChoice.count()) {
-                  await extractChoice.click({ timeout: 5000 }).catch(() => undefined);
-                  await page.waitForTimeout(600);
-                }
+                const menuItems = await page.locator("a:visible, button:visible").evaluateAll((elements) => elements.map((element) => (element.textContent || "").trim().replace(/\s+/g, " ")).filter((text) => /extract|archive|compress|decompress/i.test(text)).slice(0, 15));
+                for (const item of menuItems) lines.push(`- ${menuName} menu: ${sanitize(item)}`);
+                extractChoice = page.locator("a:visible, button:visible").filter({ hasText: /Extract/i }).first();
+                if (await extractChoice.count()) break;
+              }
+              lines.push(`- Extract menu item found: ${extractChoice && await extractChoice.count() ? "yes" : "no"}`);
+              if (extractChoice && await extractChoice.count()) {
+                await extractChoice.click({ timeout: 5000 }).catch(() => undefined);
+                await page.waitForTimeout(600);
               }
               const dialog = page.locator("[role='dialog']:visible, .pul-modal:visible, .modal:visible").last();
               if (await dialog.count()) {
