@@ -1,8 +1,16 @@
 import https from "node:https";
 import { isIPv4 } from "node:net";
+import type { LookupOptions } from "node:dns";
+import type { TcpSocketConnectOpts } from "node:net";
 
 const SHECAN_DOH_ENDPOINT = "https://pro.shecan.ir/dns-query";
+const SHECAN_DOH_IPV4 = "185.51.200.1";
 const MAX_DNS_MESSAGE_BYTES = 65_535;
+
+const officialDohLookup: NonNullable<TcpSocketConnectOpts["lookup"]> = (_hostname, options: LookupOptions, callback) => {
+  if (options.all) callback(null, [{ address: SHECAN_DOH_IPV4, family: 4 }]);
+  else callback(null, SHECAN_DOH_IPV4, 4);
+};
 
 export interface ShecanDohRecord {
   address: string;
@@ -89,13 +97,14 @@ export function parseShecanDohMessage(packet: Buffer, expectedId = 0): ShecanDoh
   return records;
 }
 
-export async function resolveShecanDoh(hostname: string): Promise<ShecanDohRecord[]> {
+async function requestShecanDoh(hostname: string, pinnedOfficialAddress: boolean): Promise<ShecanDohRecord[]> {
   const endpoint = new URL(SHECAN_DOH_ENDPOINT);
   endpoint.searchParams.set("dns", encodeShecanDnsQuery(hostname).toString("base64url"));
   return new Promise<ShecanDohRecord[]>((resolve, reject) => {
     const request = https.request(endpoint, {
       method: "GET",
       agent: false,
+      lookup: pinnedOfficialAddress ? officialDohLookup : undefined,
       servername: endpoint.hostname,
       timeout: 8_000,
       signal: AbortSignal.timeout(10_000),
@@ -129,4 +138,22 @@ export async function resolveShecanDoh(hostname: string): Promise<ShecanDohRecor
     request.on("error", reject);
     request.end();
   });
+}
+
+export async function resolveShecanDoh(hostname: string): Promise<ShecanDohRecord[]> {
+  try {
+    // Avoid depending on the host resolver for the DoH endpoint itself. The
+    // official Pro address is pinned only for TLS transport; SNI and certificate
+    // validation still use pro.shecan.ir.
+    return await requestShecanDoh(hostname, true);
+  } catch (pinnedError) {
+    try { return await requestShecanDoh(hostname, false); }
+    catch (systemError) {
+      const timedOut = [pinnedError, systemError].every((error) => error instanceof Error && error.name === "TimeoutError");
+      throw Object.assign(new Error("Shecan DoH failed through both pinned and system resolution"), {
+        code: timedOut ? "DOH_DUAL_TIMEOUT" : "DOH_DUAL_FAILED",
+        cause: systemError,
+      });
+    }
+  }
 }

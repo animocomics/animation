@@ -8,6 +8,7 @@ const crypto = require("node:crypto");
 const { execFileSync } = require("node:child_process");
 const { chromium } = require("playwright");
 const { normalizePanelUrl, redact } = require("./plesk-api-diagnostics.cjs");
+const { cleanupCandidates } = require("./plesk-deploy-archives.cjs");
 
 const DOMAIN = "nomreh.arounidea.com";
 const ACTION = process.env.PLESK_BROWSER_ACTION || "diagnose";
@@ -79,7 +80,7 @@ function labelValues(text, labels) {
 }
 
 async function main() {
-  if (!["diagnose", "upload", "extract", "build", "status", "disk", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "enable-runtime", "restart-runtime"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
+  if (!["diagnose", "upload", "extract", "build", "status", "disk", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
   const panel = normalizePanelUrl(process.env.PLESK_PANEL_URL || "");
   const readOnly = ACTION === "diagnose" || ACTION === "status";
   const actionDescription = ACTION === "upload"
@@ -99,8 +100,10 @@ async function main() {
               : ACTION === "restart-runtime"
                 ? "Controlled action: restart only Nomreh's already-enabled Node.js application. No files, persistent data, environment settings, or other domains are touched; live-site validation remains separate."
                 : ACTION === "retire-obsolete"
-              ? "Controlled action: rename only three verified obsolete Cloudflare/better-sqlite3 host artifacts to non-TypeScript backup names. No current source, persistent data, build, restart, or other domain is touched."
-              : "Controlled action: run the validated Nomreh production build with its domain-local Node 22 runtime. Node.js enablement and restart remain pending.";
+                  ? "Controlled action: rename only three verified obsolete Cloudflare/better-sqlite3 host artifacts to non-TypeScript backup names. No current source, persistent data, build, restart, or other domain is touched."
+                  : ACTION === "cleanup-deploy-archives"
+                    ? "Controlled action: remove only exact Nomreh deployment ZIP archives in the application root, preserving the current validated archive and every application, runtime, upload, persistent-data, and user file."
+                    : "Controlled action: run the validated Nomreh production build with its domain-local Node 22 runtime. Node.js enablement and restart remain pending.";
   const lines = ["# Plesk browser diagnostics", "", readOnly
     ? "Read-only browser inspection. No settings, deployments or files were changed."
     : actionDescription, ""];
@@ -669,6 +672,79 @@ async function main() {
                 if (!progressLines.length) lines.push("- Previous progress content was not exposed by the File Manager view.");
               }
               lines.push("- Persistent-data inspection only; no file was saved or changed.", "");
+              actionCompleted = true;
+            }
+            if (ACTION === "cleanup-deploy-archives") {
+              lines.push("## Controlled Nomreh deployment-archive cleanup", "");
+              const verifyApplicationRoot = async () => {
+                const body = await page.locator("body").innerText().catch(() => "");
+                if (!body.includes("package.json") || !body.includes("server.js") || !body.includes(ARCHIVE_NAME)) {
+                  throw new Error("The Nomreh application root or its current validated archive could not be verified. Cleanup stopped.");
+                }
+                return body;
+              };
+              await verifyApplicationRoot();
+              const archiveNames = await page.locator("a:visible").evaluateAll((anchors) => [...new Set(anchors.map((anchor) => (anchor.textContent || "").trim()).filter(Boolean))]);
+              const candidates = cleanupCandidates(archiveNames, ARCHIVE_NAME);
+              lines.push(`- Current archive preserved: ${ARCHIVE_NAME}`);
+              lines.push(`- Exact obsolete archive candidates: ${candidates.length}`);
+              for (const name of candidates) {
+                await verifyApplicationRoot();
+                const checked = page.locator("input[type='checkbox']:checked:visible");
+                for (let attempt = 0; attempt < 100 && await checked.count(); attempt += 1) {
+                  await checked.first().uncheck({ force: true, timeout: 3000 }).catch(() => undefined);
+                }
+                if (await checked.count()) throw new Error("Other File Manager selections could not be cleared. Cleanup stopped before removal.");
+                const link = page.getByText(name, { exact: true }).first();
+                if (!await link.count()) throw new Error(`The exact archive row disappeared before selection: ${name}. Cleanup stopped.`);
+                const row = link.locator("xpath=ancestor::*[.//input[@type='checkbox']][1]");
+                const rowText = await row.innerText().catch(() => "");
+                const size = rowText.match(/\b\d+(?:\.\d+)?\s+(?:B|KB|MB)\b/i)?.[0] || "";
+                if (!size) throw new Error(`The archive row did not expose a regular-file size: ${name}. Cleanup stopped.`);
+                const checkbox = row.locator("input[type='checkbox']").first();
+                if (!await checkbox.count()) throw new Error(`The exact archive checkbox was not found: ${name}. Cleanup stopped.`);
+                await checkbox.check({ force: true, timeout: 5000 }).catch(async () => checkbox.click({ force: true, timeout: 5000 }));
+                if (!await checkbox.isChecked().catch(() => false)) throw new Error(`The exact archive was not selected: ${name}. Cleanup stopped.`);
+                let removeChoice = null;
+                const rowActions = row.locator("button[title='Actions'], button[aria-label='Actions']").first();
+                if (await rowActions.count()) {
+                  await rowActions.evaluate((element) => element.click());
+                  await page.waitForTimeout(400);
+                  const candidate = page.locator("a:visible, button:visible").filter({ hasText: /^Remove$/i }).first();
+                  if (await candidate.count()) removeChoice = candidate;
+                }
+                if (!removeChoice) {
+                  const toolbarRemove = page.getByRole("button", { name: /^Remove$/i }).first();
+                  if (await toolbarRemove.count() && await toolbarRemove.isVisible().catch(() => false)) removeChoice = toolbarRemove;
+                }
+                if (!removeChoice) {
+                  const moreButton = page.getByRole("button", { name: /^More/i }).first();
+                  if (await moreButton.count()) {
+                    await moreButton.evaluate((element) => element.click());
+                    await page.waitForTimeout(400);
+                    const candidate = page.locator("a:visible, button:visible").filter({ hasText: /^Remove$/i }).first();
+                    if (await candidate.count()) removeChoice = candidate;
+                  }
+                }
+                if (!removeChoice) throw new Error(`The Remove command was not available for ${name}. Cleanup stopped.`);
+                await removeChoice.evaluate((element) => element.click());
+                const dialog = page.locator("[role='dialog']:visible, .pul-modal:visible, .modal:visible").last();
+                await dialog.waitFor({ state: "visible", timeout: 8000 });
+                const dialogText = await dialog.innerText().catch(() => "");
+                if (!/remove|delete/i.test(dialogText)) throw new Error(`The removal confirmation was not recognized for ${name}. Cleanup stopped.`);
+                const confirm = dialog.getByRole("button", { name: /^(OK|Remove|Delete|Confirm|Yes)$/i }).last();
+                if (!await confirm.count()) throw new Error(`The removal confirmation button was not found for ${name}. Cleanup stopped.`);
+                await confirm.evaluate((element) => element.click());
+                await page.waitForTimeout(2500);
+                if (await page.getByText(name, { exact: true }).count()) throw new Error(`The archive was still visible after removal: ${name}. Cleanup stopped.`);
+                await verifyApplicationRoot();
+                lines.push(`- Removed only obsolete deployment archive: ${name} (${size})`);
+              }
+              const remainingNames = await page.locator("a:visible").evaluateAll((anchors) => [...new Set(anchors.map((anchor) => (anchor.textContent || "").trim()).filter(Boolean))]);
+              const remaining = cleanupCandidates(remainingNames, ARCHIVE_NAME).filter((name) => candidates.includes(name));
+              if (remaining.length) throw new Error("One or more targeted deployment archives remained after cleanup. No further host action was attempted.");
+              await verifyApplicationRoot();
+              lines.push("- Cleanup verified. The current archive, application source, runtime, persistent data, teacher uploads, databases, and all non-matching files were preserved.", "");
               actionCompleted = true;
             }
             if (ACTION === "retire-obsolete") {
@@ -1472,7 +1548,7 @@ async function main() {
         lines.push("## Read-only Nomreh domain logs", "", "- Nomreh's scoped Logs tool was not exposed on the domain card; no alternate domain or log path was accessed.", "");
       }
     }
-    if (["upload", "extract", "build", "status", "disk", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "enable-runtime", "restart-runtime"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Review the reported host state before further action; no live-success claim was made.`);
+    if (["upload", "extract", "build", "status", "disk", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Review the reported host state before further action; no live-success claim was made.`);
     lines.push("## Result", "", ACTION === "upload"
       ? "The validated application archive was uploaded to Nomreh. Extraction, dependency installation, build, and Node.js enablement remain pending."
       : ACTION === "extract"
@@ -1494,8 +1570,10 @@ async function main() {
                       : ACTION === "restart-runtime"
                         ? "Nomreh's Passenger restart request was acknowledged. This is not a live-success claim; independent HTTPS validation remains pending."
                         : ACTION === "retire-obsolete"
-                    ? "All three obsolete Nomreh Cloudflare/better-sqlite3 artifacts were preserved as non-TypeScript backups and verified. No build or restart was attempted."
-                    : domainFound
+                          ? "All three obsolete Nomreh Cloudflare/better-sqlite3 artifacts were preserved as non-TypeScript backups and verified. No build or restart was attempted."
+                          : ACTION === "cleanup-deploy-archives"
+                            ? "Only the listed redundant Nomreh deployment ZIP archives were removed and the current application root was reverified. No build, restart, settings, persistent-data, or educational-data change was attempted."
+                            : domainFound
         ? "Plesk web login succeeded and the Nomreh domain was found. No remediation was attempted."
         : "Plesk web login completed, but the Nomreh domain was not visible on the inspected pages. No remediation was attempted.", "");
   } catch (error) {

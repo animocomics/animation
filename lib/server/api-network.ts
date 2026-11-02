@@ -378,7 +378,7 @@ async function curlUpdateStatusWithFallback(
     try {
       dohAddresses = await resolveShecanDoh(hostname).then((records) => records.map((record) => record.address).filter(isIPv4));
     } catch (error) {
-      dohNote = safeNetworkCode(error) === "TIMEOUT" ? "TIMEOUT" : "FAILED";
+      dohNote = ["TIMEOUT", "DOH_DUAL_TIMEOUT"].includes(safeNetworkCode(error)) ? "TIMEOUT" : "FAILED";
     }
     if (dohAddresses) {
       const freshAddresses = [...new Set(dohAddresses)].filter((address) => !attempted.has(address));

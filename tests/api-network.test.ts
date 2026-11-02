@@ -8,7 +8,7 @@ import { EventEmitter } from "node:events";
 import { Resolver } from "node:dns/promises";
 import test from "node:test";
 import { closeProviderNetwork, createShecanLookup, providerFetch, ProviderNetworkError } from "../lib/server/provider-network";
-import { parseShecanDohMessage } from "../lib/server/shecan-doh";
+import { parseShecanDohMessage, resolveShecanDoh } from "../lib/server/shecan-doh";
 
 const dataDirectory = mkdtempSync(path.join(tmpdir(), "nomreh-api-network-"));
 process.env.NOMREH_DATA_DIR = dataDirectory;
@@ -88,6 +88,51 @@ test("Shecan DoH parser reads compressed A answers and rejects DNS errors", () =
   const failed = Buffer.from(header);
   failed[3] = 0x82;
   assert.throws(() => parseShecanDohMessage(Buffer.concat([failed, question])), /DNS status 2/);
+});
+
+test("Shecan DoH pins only the official transport address, preserves TLS identity, then tries system resolution", async () => {
+  const originalRequest = https.request;
+  const calls: Array<{ input: URL; options: { lookup?: (hostname: string, options: { all: boolean }, callback: (error: Error | null, address: unknown, family?: number) => void) => void; servername?: string; rejectUnauthorized?: boolean } }> = [];
+  const question = Buffer.from([4, 100, 100, 110, 115, 6, 115, 104, 101, 99, 97, 110, 2, 105, 114, 0, 0, 1, 0, 1]);
+  const answer = Buffer.from([0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 180, 0, 4, 185, 143, 233, 133]);
+  const header = Buffer.from([0, 0, 0x81, 0x80, 0, 1, 0, 1, 0, 0, 0, 0]);
+  const packet = Buffer.concat([header, question, answer]);
+  https.request = ((input: URL, options: (typeof calls)[number]["options"], callback: (response: EventEmitter) => void) => {
+    calls.push({ input, options });
+    const request = new EventEmitter() as EventEmitter & { end: () => void; destroy: (error?: Error) => void };
+    request.end = () => process.nextTick(() => {
+      if (calls.length === 1) {
+        request.emit("error", Object.assign(new Error("mock pinned transport timeout"), { name: "TimeoutError" }));
+        return;
+      }
+      const response = new EventEmitter() as EventEmitter & { statusCode: number; destroy: (error?: Error) => void };
+      response.statusCode = 200;
+      response.destroy = (error?: Error) => { if (error) response.emit("error", error); };
+      callback(response);
+      response.emit("data", packet);
+      response.emit("end");
+    });
+    request.destroy = (error?: Error) => { if (error) request.emit("error", error); };
+    return request as unknown as ReturnType<typeof https.request>;
+  }) as typeof https.request;
+  try {
+    assert.deepEqual(await resolveShecanDoh("ddns.shecan.ir"), [{ address: "185.143.233.133", ttl: 180 }]);
+    assert.equal(calls.length, 2);
+    assert.equal(calls[0].input.hostname, "pro.shecan.ir");
+    assert.equal(calls[0].options.servername, "pro.shecan.ir");
+    assert.notEqual(calls[0].options.rejectUnauthorized, false);
+    assert.equal(calls[1].options.lookup, undefined, "the fallback must allow ordinary system resolution");
+    const pinned = await new Promise<unknown>((resolve, reject) => {
+      calls[0].options.lookup?.("pro.shecan.ir", { all: false }, (error, address) => error ? reject(error) : resolve(address));
+    });
+    assert.equal(pinned, "185.51.200.1");
+    const pinnedAll = await new Promise<unknown>((resolve, reject) => {
+      calls[0].options.lookup?.("pro.shecan.ir", { all: true }, (error, address) => error ? reject(error) : resolve(address));
+    });
+    assert.deepEqual(pinnedAll, [{ address: "185.51.200.1", family: 4 }]);
+  } finally {
+    https.request = originalRequest;
+  }
 });
 
 test("providerFetch attaches an AI-only dispatcher when enabled and stays direct otherwise", async () => {
