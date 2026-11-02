@@ -372,7 +372,24 @@ async function main() {
               }
               lines.push(`- Extract menu item found: ${extractChoice && await extractChoice.count() ? "yes" : "no"}`);
               if (extractChoice && await extractChoice.count()) {
-                lines.push("- Extract Files was located but not activated during diagnostics.");
+                await extractChoice.click({ timeout: 8000 }).catch(() => undefined);
+                await page.waitForTimeout(900);
+                const formBody = await page.locator("body").innerText().catch(() => "");
+                const formLines = formBody.split(/\r?\n/).map((line) => line.trim()).filter((line) => /extract|overwrite|existing files|destination|target|directory|cancel|confirm/i.test(line) && !/secret|token|password|credential/i.test(line)).slice(0, 40);
+                for (const line of formLines) lines.push(`- Extract form text: ${sanitize(line.slice(0, 300))}`);
+                const formInputs = await page.locator("input:visible").evaluateAll((elements) => elements.map((element) => ({
+                  name: element.getAttribute("name") || element.id || "",
+                  type: element.getAttribute("type") || "text",
+                  value: (element.getAttribute("value") || "").slice(0, 200),
+                  checked: element.checked,
+                })).filter((input) => !/password|secret|token|credential/i.test(input.name)).slice(0, 30));
+                for (const input of formInputs) lines.push(`- Extract form input: ${sanitize(JSON.stringify(input))}`);
+                const formButtons = await page.locator("button:visible, input[type='submit']:visible").evaluateAll((elements) => elements.map((element) => ({
+                  text: (element.textContent || element.getAttribute("value") || "").trim().replace(/\s+/g, " "),
+                  title: element.getAttribute("title") || element.getAttribute("aria-label") || "",
+                })).filter((item) => /extract|ok|confirm|overwrite|cancel/i.test(`${item.text} ${item.title}`)).slice(0, 20));
+                for (const button of formButtons) lines.push(`- Extract form button: ${sanitize(JSON.stringify(button))}`);
+                lines.push("- Extract Files was opened for inspection; no confirmation or overwrite action was activated.");
               }
               const dialog = page.locator("[role='dialog']:visible, .pul-modal:visible, .modal:visible").last();
               if (await dialog.count()) {
@@ -390,7 +407,7 @@ async function main() {
               } else {
                 lines.push("- No extract confirmation dialog was opened; no files were extracted.");
               }
-              lines.push("- Inspection only: no extraction action or confirmation was activated in this run.", "");
+              lines.push("- Inspection only: no extraction confirmation or overwrite action was activated in this run.", "");
             }
             if (ACTION === "upload" || !archivePresent) {
               const addNewButton = page.getByRole("button", { name: "Add New", exact: true }).first();
