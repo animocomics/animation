@@ -19,7 +19,7 @@ concurrency:
 jobs:
   update-package:
     runs-on: ubuntu-latest
-    timeout-minutes: 9
+    timeout-minutes: 10
     steps:
       - name: Check private Plesk browser configuration
         id: config

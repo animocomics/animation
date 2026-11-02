@@ -75,7 +75,7 @@ async function main() {
         : ACTION === "fix-node-version"
           ? "Controlled action: preserve Nomreh's Node override backups and pin its untracked .node-version file only to a verified installed nodenv version. No application source, persistent data, build, restart, or other domain is touched."
           : ACTION === "update-package"
-            ? "Controlled action: replace only Nomreh's package.json with the hash-validated npm launcher fix. No other application file, persistent data, build, restart, or other domain is touched."
+            ? "Controlled action: preserve Nomreh's current package.json as package.json.pre-npm-node-fix and upload only the hash-validated replacement. No other application file, persistent data, build, restart, or other domain is touched."
             : "Controlled action: run the validated Nomreh production build with its domain-local Node 22 runtime. Node.js enablement and restart remain pending.";
   const lines = ["# Plesk browser diagnostics", "", readOnly
     ? "Read-only browser inspection. No settings, deployments or files were changed."
@@ -469,7 +469,60 @@ async function main() {
               const packageBytes = fs.readFileSync(localPackage);
               const actualPackageSha256 = crypto.createHash("sha256").update(packageBytes).digest("hex");
               if (actualPackageSha256 !== expectedPackageSha256) throw new Error("The local package.json does not match the validated legacy-build commit. No file was uploaded.");
-              if (!await page.getByText("package.json", { exact: true }).count()) throw new Error("The existing Nomreh package.json was not found. No file was uploaded.");
+              const packageBackupName = "package.json.pre-npm-node-fix";
+              const existingPackageLink = page.getByText("package.json", { exact: true }).first();
+              const existingPackageCount = await existingPackageLink.count();
+              const packageBackupCount = await page.getByText(packageBackupName, { exact: true }).count();
+              if (packageBackupCount && existingPackageCount) throw new Error("Both package.json and its pre-fix backup are present. No overwrite was attempted; inspect the active launcher before continuing.");
+              if (packageBackupCount && !existingPackageCount) {
+                lines.push("- The original package.json is already preserved as a backup; uploading the validated replacement without overwriting it.");
+              } else {
+                if (!existingPackageCount) throw new Error("Neither package.json nor its preserved backup was found. No file was changed.");
+                const packageRow = existingPackageLink.locator("xpath=ancestor::*[.//input[@type='checkbox']][1]");
+                const packageCheckbox = packageRow.locator("input[type='checkbox']").first();
+                if (!await packageCheckbox.count()) throw new Error("The package.json row could not be selected. No file was changed.");
+                await packageCheckbox.check({ force: true, timeout: 5000 }).catch(async () => packageCheckbox.click({ force: true, timeout: 5000 }));
+                if (!await packageCheckbox.isChecked().catch(() => false)) throw new Error("The package.json row was not selected. No file was changed.");
+                let renameChoice = null;
+                const rowActions = packageRow.locator("button[title='Actions'], button[aria-label='Actions']").first();
+                if (await rowActions.count()) {
+                  await rowActions.click({ timeout: 5000 });
+                  await page.waitForTimeout(400);
+                  renameChoice = page.locator("a:visible, button:visible").filter({ hasText: /^Rename$/i }).first();
+                }
+                if (!renameChoice || !await renameChoice.count()) {
+                  const moreButton = page.getByRole("button", { name: /^More/i }).first();
+                  if (await moreButton.count()) {
+                    await moreButton.click({ timeout: 5000 }).catch(() => undefined);
+                    await page.waitForTimeout(400);
+                    renameChoice = page.locator("a:visible, button:visible").filter({ hasText: /^Rename$/i }).first();
+                  }
+                }
+                if (!renameChoice || !await renameChoice.count()) throw new Error("The Rename command was not available for package.json. No file was changed.");
+                await renameChoice.click({ timeout: 8000 });
+                await page.waitForTimeout(700);
+                let renameInput = page.locator('input:not([type="checkbox"]):not([type="hidden"])[value="package.json"]:visible').first();
+                if (!await renameInput.count()) {
+                  const candidates = page.locator("input:not([type='checkbox']):not([type='hidden']):visible");
+                  for (let index = 0; index < Math.min(await candidates.count(), 30); index += 1) {
+                    const candidate = candidates.nth(index);
+                    if (await candidate.inputValue().catch(() => "") === "package.json") {
+                      renameInput = candidate;
+                      break;
+                    }
+                  }
+                }
+                if (!await renameInput.count()) throw new Error("The package.json Rename input was not found. Rename was not confirmed.");
+                await renameInput.fill(packageBackupName);
+                if (await renameInput.inputValue() !== packageBackupName) throw new Error("The package.json backup name was not retained. Rename was not confirmed.");
+                const dialog = page.locator("[role='dialog']:visible, .pul-modal:visible, .modal:visible").last();
+                const scope = await dialog.count() ? dialog : page;
+                const confirmRename = scope.getByRole("button", { name: /^(OK|Rename|Confirm)$/i }).last();
+                if (!await confirmRename.count()) throw new Error("The package.json Rename confirmation was not found. Rename was not confirmed.");
+                await confirmRename.click({ timeout: 8000 });
+                await page.waitForTimeout(2500);
+                lines.push(`- Preserved the previous hosted package.json as ${packageBackupName}.`);
+              }
               lines.push(`- Validated package.json bytes: ${packageBytes.length}`, `- Validated package.json SHA-256: ${actualPackageSha256}`, "");
               const packageDialogHandler = async (dialog) => {
                 const message = dialog.message();
@@ -506,6 +559,15 @@ async function main() {
                 await confirmOverwrite.click({ timeout: 8000 });
                 await page.waitForTimeout(2500);
               }
+              await page.waitForTimeout(3500);
+              await page.reload({ waitUntil: "domcontentloaded", timeout: 30000 }).catch(() => undefined);
+              await page.waitForTimeout(1500);
+              const appFolder = page.locator("a.tree-item-content").filter({ hasText: DOMAIN }).first();
+              if (await appFolder.count()) {
+                await appFolder.click({ timeout: 8000 }).catch(() => undefined);
+                await page.waitForTimeout(2000);
+              }
+              if (!await page.getByText(packageBackupName, { exact: true }).count()) throw new Error("The preserved package.json backup was not visible after upload. No build or further host change was attempted.");
               const uploadedPackageLink = page.getByText("package.json", { exact: true }).first();
               if (!await uploadedPackageLink.count()) throw new Error("package.json was not visible after upload. No build or further host change was attempted.");
               const downloadPromise = page.waitForEvent("download", { timeout: 6000 }).catch(() => null);
@@ -532,7 +594,7 @@ async function main() {
                 throw new Error("The hosted package.json launcher fix could not be verified. No build or restart was attempted.");
               }
               page.off("dialog", packageDialogHandler);
-              lines.push("- Nomreh package.json was replaced only with the validated npm-node launcher fix and verified after upload.", "- No other application file, persistent data, build, restart, or other domain was changed.", "");
+              lines.push("- Nomreh package.json was replaced only with the validated npm-node launcher fix and verified after upload; the previous file remains preserved as package.json.pre-npm-node-fix.", "- No other application file, persistent data, build, restart, or other domain was changed.", "");
               actionCompleted = true;
             }
             if (ACTION === "fix-node-version") {
