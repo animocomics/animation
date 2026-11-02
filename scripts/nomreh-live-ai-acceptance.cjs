@@ -8,6 +8,7 @@ const { request } = require("playwright");
 const ORIGIN = "https://nomreh.arounidea.com";
 const OUTPUT = process.env.NOMREH_AI_ACCEPTANCE_OUTPUT || "";
 const RUN_HANDWRITING = process.env.NOMREH_RUN_HANDWRITING === "1";
+const SKIP_PROVIDER_TEST = process.env.NOMREH_SKIP_PROVIDER_TEST === "1";
 const lines = ["# Nomreh live AI acceptance", "", "Authorized test accounts are used in memory. No API key, cookie, student paper, or credential is printed. The handwriting fixture is a generated, controlled handwriting-style sample, not a human-written exam.", ""];
 let admin;
 let teacher;
@@ -61,7 +62,10 @@ async function api(context, method, pathname, body) {
 
 function errorText(result) {
   if (result.payload && typeof result.payload.error === "string") return clean(result.payload.error);
-  if (!result.payload && result.text) return `پاسخ غیر JSON (نوع محتوا: ${clean(result.contentType)})`;
+  if (!result.payload && result.text) {
+    const title = result.text.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || "";
+    return `پاسخ غیر JSON (نوع محتوا: ${clean(result.contentType)}${title ? `؛ عنوان: ${clean(title)}` : ""})`;
+  }
   return "خطای نامشخص";
 }
 
@@ -167,16 +171,27 @@ async function run() {
   lines.push("## Current provider and recorded usage", "");
   lines.push(`- Configured: ${provider.configured ? "yes" : "no"}; provider: ${clean(provider.providerLabel)}; model: ${clean(provider.model)}.`);
   if (!provider.configured) lines.push("- No stored provider key is configured; no external AI grading request can be made.");
+  const networkResult = await api(admin, "GET", "/api/admin/api-network");
+  if (networkResult.response.ok() && networkResult.payload?.status) {
+    const network = networkResult.payload.status;
+    lines.push(`- Shecan status (read-only): configured ${network.configured ? "yes" : "no"}; enabled ${network.enabled ? "yes" : "no"}; plan ${clean(network.plan)}; last test ${clean(network.lastTestStatus)}; message: ${clean(network.lastTestMessage)}.`);
+  } else {
+    lines.push(`- Shecan status could not be read: HTTP ${networkResult.status} ${errorText(networkResult)}.`);
+  }
+  const publicResponse = await admin.get(`${ORIGIN}/`, { timeout: 20000 }).catch(() => undefined);
+  lines.push(`- Public home response during this check: ${publicResponse ? `HTTP ${publicResponse.status()}` : "unavailable"}.`);
 
   const beforeUsageResult = await api(admin, "GET", "/api/admin/usage");
   if (!beforeUsageResult.response.ok()) throw new Error(`گزارش مصرف خوانده نشد: HTTP ${beforeUsageResult.status} ${errorText(beforeUsageResult)}`);
   const beforeUsage = usageSummary(beforeUsageResult.payload);
   lines.push(usageLine(beforeUsage, "Recorded usage before this check"));
 
-  if (provider.configured) {
+  if (provider.configured && !SKIP_PROVIDER_TEST) {
     const testResult = await api(admin, "POST", "/api/provider/test", { provider: provider.provider, model: provider.model });
     lines.push(`- Stored-key provider test: HTTP ${testResult.status}; ${testResult.response.ok() ? "provider accepted the model/key test" : `failed: ${errorText(testResult)}`}.`);
     if (testResult.status === 429) lines.push("- The provider returned HTTP 429; this is a quota/rate-limit signal, not a measurement of the remaining quota.");
+  } else if (SKIP_PROVIDER_TEST) {
+    lines.push("- Stored-key provider test skipped for this read-only network check.");
   }
 
   let handwritingAttempted = false;
