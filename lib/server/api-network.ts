@@ -8,6 +8,7 @@ import { Agent } from "undici";
 import type { ApiNetworkPublicStatus } from "../types";
 import { SHECAN_DNS, type ProviderNetworkConfig } from "../api-network";
 import { closeProviderNetwork, createShecanLookup, providerFetch, ProviderNetworkError } from "./provider-network";
+import { resolveShecanDoh } from "./shecan-doh";
 import { decryptSecret, encryptSecret } from "./secret-crypto";
 
 const UPDATE_URL_PURPOSE = "nomreh-api-network-v1";
@@ -352,6 +353,7 @@ async function curlUpdateStatusWithFallback(updateUrl: string, servers: [string,
   const shecan = createShecanLookup(servers);
   const attempted = new Set<string>();
   let lastError: unknown;
+  let dohNote = "";
   const shecanAddresses = await shecan.resolve(hostname).catch(() => [] as string[]);
   for (const address of shecanAddresses) {
     attempted.add(address);
@@ -361,9 +363,32 @@ async function curlUpdateStatusWithFallback(updateUrl: string, servers: [string,
       lastError = error;
     }
   }
-  // If Shecan supplied addresses, native HTTPS handles the next independent
-  // attempt instead of repeating the same timeouts in curl. System resolution
-  // is needed here only when Shecan supplied no usable update-service address.
+  // Shecan's FAQ warns that ISP DNS caching can leave an apparently valid but
+  // stale UDP answer. Cross-check through the official Pro DoH service after a
+  // transport failure, and retry only addresses not already attempted above.
+  // Missing curl is handled by native HTTPS instead of an unnecessary DoH call.
+  if (safeNetworkCode(lastError) !== "ENOENT") {
+    let dohAddresses: string[] | undefined;
+    try {
+      dohAddresses = await resolveShecanDoh(hostname).then((records) => records.map((record) => record.address).filter(isIPv4));
+    } catch (error) {
+      dohNote = safeNetworkCode(error) === "TIMEOUT" ? "TIMEOUT" : "FAILED";
+    }
+    if (dohAddresses) {
+      const freshAddresses = [...new Set(dohAddresses)].filter((address) => !attempted.has(address));
+      dohNote = freshAddresses.length ? "RETRIED" : "SAME";
+      for (const address of freshAddresses) {
+        attempted.add(address);
+        try { return await curlUpdateStatus(updateUrl, servers, address); }
+        catch (error) {
+          if (error instanceof ApiNetworkError) throw error;
+          lastError = error;
+        }
+      }
+    }
+  }
+  // Native HTTPS handles the next independent attempt after connection errors.
+  // System resolution is needed here only when no address has failed yet.
   if (!lastError) {
     const systemAddresses = await dnsLookup(hostname, { all: true, verbatim: true })
       .then((records) => records.filter((record) => isIPv4(record.address)).map((record) => record.address))
@@ -378,7 +403,12 @@ async function curlUpdateStatusWithFallback(updateUrl: string, servers: [string,
       }
     }
   }
-  throw lastError || Object.assign(new Error("Shecan curl did not return a response"), { code: "NO_RESPONSE" });
+  if (lastError && dohNote) {
+    const baseCode = safeNetworkCode(lastError);
+    const prefix = baseCode === "TIMEOUT" ? "CURL_TIMEOUT" : baseCode === "CURL_CONNECT_FAILED" ? "CURL_CONNECT" : "CURL";
+    throw Object.assign(new Error("Shecan curl and official DoH fallback failed"), { code: `${prefix}_DOH_${dohNote}`, cause: lastError });
+  }
+  throw lastError || Object.assign(new Error("Shecan curl did not return a response"), { code: dohNote ? `CURL_DOH_${dohNote}` : "NO_RESPONSE" });
 }
 
 async function nativeUpdateStatus(updateUrl: string, lookup: NonNullable<TcpSocketConnectOpts["lookup"]>, redirectCount = 0): Promise<number> {
