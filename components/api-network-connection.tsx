@@ -18,7 +18,7 @@ type ApiNetworkPayload = {
 async function resolveNetworkJob(initial: ApiNetworkPayload, onPayload: (payload: ApiNetworkPayload) => void): Promise<ApiNetworkPayload> {
   let current = initial;
   onPayload(current);
-  for (let attempt = 0; current.pending && attempt < 150; attempt += 1) {
+  for (let attempt = 0; current.pending && attempt < 240; attempt += 1) {
     await new Promise<void>((resolve) => setTimeout(resolve, 2000));
     const response = await fetch("/api/admin/api-network", { cache: "no-store" });
     current = await readJsonResponse<ApiNetworkPayload>(response, "دریافت وضعیت آزمایش شکن");

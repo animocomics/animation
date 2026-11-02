@@ -1,5 +1,6 @@
 import { isIPv4 } from "node:net";
 import https from "node:https";
+import childProcess from "node:child_process";
 import { lookup as dnsLookup } from "node:dns/promises";
 import type { LookupOptions } from "node:dns";
 import type { TcpSocketConnectOpts } from "node:net";
@@ -241,6 +242,145 @@ async function activateUpdateUrlWithFetch(updateUrl: string, servers: [string, s
   }
 }
 
+function curlConfig(updateUrl: string, address?: string): string {
+  const current = new URL(updateUrl);
+  const quote = (value: string) => `"${value.replace(/(["\\])/g, "\\$1")}"`;
+  const lines = [
+    "disable",
+    "silent",
+    "show-error",
+    "no-buffer",
+    `request = ${quote("GET")}`,
+    `dump-header = ${quote("-")}`,
+    `output = ${quote("/dev/null")}`,
+    "connect-timeout = 6",
+    "max-time = 12",
+    `proto = ${quote("=https")}`,
+  ];
+  if (address) lines.push(`resolve = ${quote(`${current.hostname}:${current.port || 443}:${address}`)}`);
+  // The secret URL is written to stdin, never exposed in process arguments.
+  lines.push(`url = ${quote(current.toString())}`);
+  return `${lines.join("\n")}\n`;
+}
+
+async function curlUpdateHeaders(updateUrl: string, address?: string): Promise<{ status: number; location?: string }> {
+  return new Promise((resolve, reject) => {
+    const child = childProcess.spawn("/usr/bin/curl", ["--config", "-"], { stdio: ["pipe", "pipe", "pipe"] });
+    let settled = false;
+    let buffered = Buffer.alloc(0);
+    let timer: NodeJS.Timeout | undefined;
+    const finish = (error?: Error, result?: { status: number; location?: string }) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      if (error) {
+        child.kill("SIGKILL");
+        reject(error);
+      } else if (result) {
+        child.kill("SIGTERM");
+        resolve(result);
+      }
+    };
+    child.stdout.on("data", (chunk: Buffer) => {
+      if (settled) return;
+      buffered = Buffer.concat([buffered, chunk]);
+      while (!settled) {
+        const crlfEnd = buffered.indexOf("\r\n\r\n");
+        const lfEnd = buffered.indexOf("\n\n");
+        const useCrlf = crlfEnd >= 0 && (lfEnd < 0 || crlfEnd <= lfEnd);
+        const end = useCrlf ? crlfEnd : lfEnd;
+        if (end < 0) {
+          if (buffered.length > 65_536) finish(Object.assign(new Error("Shecan curl returned oversized headers"), { code: "CURL_HEADERS_TOO_LARGE" }));
+          return;
+        }
+        const text = buffered.subarray(0, end).toString("latin1");
+        buffered = buffered.subarray(end + (useCrlf ? 4 : 2));
+        const match = text.match(/^HTTP\/\d(?:\.\d)?\s+(\d{3})(?:\s+([^\r\n]*))?/i);
+        if (!match) {
+          finish(Object.assign(new Error("Shecan curl returned invalid HTTP headers"), { code: "CURL_BAD_HEADERS" }));
+          return;
+        }
+        const status = Number(match[1]);
+        // Proxy CONNECT and interim HTTP responses are followed by another
+        // complete header block. Only the final response determines activation.
+        if ((status >= 100 && status < 200) || /connection established/i.test(match[2] || "")) continue;
+        const location = text.match(/^location:\s*([^\r\n]+)/im)?.[1]?.trim();
+        finish(undefined, { status, location });
+      }
+    });
+    child.stderr.on("data", () => undefined);
+    child.stdin.on("error", () => undefined);
+    child.on("error", (error) => finish(error));
+    child.on("close", (code) => {
+      if (settled) return;
+      if (code === 28) {
+        const error = new Error("Shecan curl request timed out");
+        error.name = "TimeoutError";
+        finish(error);
+        return;
+      }
+      const codes: Record<number, string> = { 6: "CURL_DNS_FAILED", 7: "CURL_CONNECT_FAILED", 35: "CURL_TLS_FAILED", 60: "CURL_CERT_FAILED" };
+      finish(Object.assign(new Error("Shecan curl exited before HTTP headers"), { code: codes[code || 0] || "CURL_NO_RESPONSE" }));
+    });
+    timer = setTimeout(() => {
+      const error = new Error("Shecan curl request timed out");
+      error.name = "TimeoutError";
+      finish(error);
+    }, 15_000);
+    child.stdin.end(curlConfig(updateUrl, address));
+  });
+}
+
+async function curlUpdateStatus(updateUrl: string, servers: [string, string], address?: string, redirectCount = 0): Promise<number> {
+  const current = new URL(updateUrl);
+  const { status, location } = await curlUpdateHeaders(updateUrl, address);
+  if (status >= 300 && status < 400 && location) {
+    if (redirectCount >= 3) throw new ApiNetworkError("تعداد تغییرمسیرهای لینک شکن بیش از حد مجاز است.", 400);
+    const next = new URL(location, current);
+    validateUpdateUrl(next.toString());
+    let nextAddress = address;
+    if (next.hostname !== current.hostname || (next.port || "443") !== (current.port || "443")) {
+      nextAddress = await createShecanLookup(servers).resolve(next.hostname).then((addresses) => addresses[0]).catch(() => undefined);
+    }
+    return curlUpdateStatus(next.toString(), servers, nextAddress, redirectCount + 1);
+  }
+  return status;
+}
+
+async function curlUpdateStatusWithFallback(updateUrl: string, servers: [string, string]): Promise<number> {
+  const hostname = new URL(updateUrl).hostname;
+  const shecan = createShecanLookup(servers);
+  const attempted = new Set<string>();
+  let lastError: unknown;
+  const shecanAddresses = await shecan.resolve(hostname).catch(() => [] as string[]);
+  for (const address of shecanAddresses) {
+    attempted.add(address);
+    try { return await curlUpdateStatus(updateUrl, servers, address); }
+    catch (error) {
+      if (error instanceof ApiNetworkError) throw error;
+      lastError = error;
+    }
+  }
+  // If Shecan supplied addresses, native HTTPS handles the next independent
+  // attempt instead of repeating the same timeouts in curl. System resolution
+  // is needed here only when Shecan supplied no usable update-service address.
+  if (!lastError) {
+    const systemAddresses = await dnsLookup(hostname, { all: true, verbatim: true })
+      .then((records) => records.filter((record) => isIPv4(record.address)).map((record) => record.address))
+      .catch(() => [] as string[]);
+    for (const address of systemAddresses) {
+      if (attempted.has(address)) continue;
+      attempted.add(address);
+      try { return await curlUpdateStatus(updateUrl, servers, address); }
+      catch (error) {
+        if (error instanceof ApiNetworkError) throw error;
+        lastError = error;
+      }
+    }
+  }
+  throw lastError || Object.assign(new Error("Shecan curl did not return a response"), { code: "NO_RESPONSE" });
+}
+
 async function nativeUpdateStatus(updateUrl: string, lookup: NonNullable<TcpSocketConnectOpts["lookup"]>, redirectCount = 0): Promise<number> {
   const current = new URL(updateUrl);
   return new Promise<number>((resolve, reject) => {
@@ -328,17 +468,27 @@ async function activateUpdateUrl(updateUrl: string, servers: [string, string], s
     await activateUpdateUrlWithFetch(updateUrl, servers);
   } catch (error) {
     if (!(error instanceof ApiNetworkError) || error.status !== 502) throw error;
-    // Match the documented curl/WebRequest behavior with Node's independent
-    // native HTTPS stack. This is still scoped to Shecan's own resolver.
+    // Follow the official Linux curl path with scoped --resolve addresses.
+    // Native Node HTTPS remains an independent fallback if libcurl is absent
+    // or cannot establish the update connection either.
     try {
-      const status = await nativeUpdateStatusWithFallback(updateUrl, servers);
+      const status = await curlUpdateStatusWithFallback(updateUrl, servers);
       if (status < 200 || status >= 300) {
         throw new ApiNetworkError(`شکن لینک به‌روزرسان را نپذیرفت (HTTP ${status}). لینک را از همان سفارش فعال دوباره کپی کنید.`, 400);
       }
-    } catch (nativeError) {
-      if (nativeError instanceof ApiNetworkError) throw nativeError;
-      const code = safeNetworkCode(nativeError) || "NO_RESPONSE";
-      throw new ApiNetworkError(`روش مستقل HTTPS نیز به شکن نرسید؛ کد فنی: ${code}. ${error.message}`, 502, { cause: nativeError });
+    } catch (curlError) {
+      if (curlError instanceof ApiNetworkError) throw curlError;
+      try {
+        const status = await nativeUpdateStatusWithFallback(updateUrl, servers);
+        if (status < 200 || status >= 300) {
+          throw new ApiNetworkError(`شکن لینک به‌روزرسان را نپذیرفت (HTTP ${status}). لینک را از همان سفارش فعال دوباره کپی کنید.`, 400);
+        }
+      } catch (nativeError) {
+        if (nativeError instanceof ApiNetworkError) throw nativeError;
+        const curlCode = safeNetworkCode(curlError) || "NO_RESPONSE";
+        const nativeCode = safeNetworkCode(nativeError) || "NO_RESPONSE";
+        throw new ApiNetworkError(`روش رسمی curl (${curlCode}) و HTTPS مستقل (${nativeCode}) به شکن نرسیدند. ${error.message}`, 502, { cause: nativeError });
+      }
     }
   }
   // Shecan's official Linux/Windows instructions ask for about one minute of

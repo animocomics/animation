@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import https from "node:https";
+import childProcess from "node:child_process";
 import { EventEmitter } from "node:events";
 import { Resolver } from "node:dns/promises";
 import test from "node:test";
@@ -192,9 +193,127 @@ test("Pro activation accepts HTTP headers without waiting for an unterminated bo
   }
 });
 
+test("official curl fallback uses scoped resolve and stdin config without waiting for the body", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalRequest = https.request;
+  const originalSpawn = childProcess.spawn;
+  const originalResolve = Resolver.prototype.resolve4;
+  const updateUrl = "https://ddns.shecan.ir/update/test-curl-fallback";
+  let curlCalls = 0;
+  let nativeCalls = 0;
+  let suppliedConfig = "";
+  Resolver.prototype.resolve4 = (async () => [{ address: "203.0.113.39", ttl: 60 }]) as unknown as typeof Resolver.prototype.resolve4;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url === updateUrl) throw Object.assign(new Error("mock fetch transport failure"), { code: "FETCH_FAILED" });
+    if (url === "https://ddns.shecan.ir") return new Response(null, { status: 404 });
+    if (url === "https://generativelanguage.googleapis.com/v1beta/models") {
+      return Response.json({ error: { message: "API key not valid. Please pass a valid API key." } }, { status: 400 });
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  }) as typeof fetch;
+  https.request = (() => { nativeCalls += 1; throw new Error("native HTTPS should not run after curl succeeds"); }) as typeof https.request;
+  childProcess.spawn = ((command: string, args: string[]) => {
+    assert.equal(command, "/usr/bin/curl");
+    assert.deepEqual(args, ["--config", "-"]);
+    curlCalls += 1;
+    const child = new EventEmitter() as EventEmitter & {
+      stdout: EventEmitter;
+      stderr: EventEmitter;
+      stdin: EventEmitter & { end: (value: string) => void };
+      kill: () => void;
+    };
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.stdin = Object.assign(new EventEmitter(), {
+      end: (value: string) => {
+        suppliedConfig = value;
+        process.nextTick(() => child.stdout.emit("data", Buffer.from("HTTP/1.1 200 Connection established\r\n\r\nHTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 999\r\n\r\n")));
+      },
+    });
+    child.kill = () => undefined;
+    return child as unknown as ReturnType<typeof childProcess.spawn>;
+  }) as typeof childProcess.spawn;
+  try {
+    const { saveAndTestApiNetwork } = await import("../lib/server/api-network");
+    const { getDb } = await import("../lib/server/db");
+    const admin = getDb().prepare("SELECT id FROM users WHERE role='admin' ORDER BY created_at LIMIT 1").get() as { id: string };
+    const status = await saveAndTestApiNetwork({ enabled: true, plan: "pro", servers: ["198.51.100.32", "198.51.100.33"], updateUrl }, admin.id, { activationSettleMs: 0 });
+    assert.equal(status.enabled, true);
+    assert.equal(curlCalls, 1);
+    assert.equal(nativeCalls, 0);
+    assert.match(suppliedConfig, /resolve = "ddns\.shecan\.ir:443:203\.0\.113\.39"/);
+    assert.match(suppliedConfig, /output = "\/dev\/null"/);
+    assert.ok(suppliedConfig.includes(updateUrl), "the secret belongs only in stdin config, not process arguments");
+  } finally {
+    globalThis.fetch = originalFetch;
+    https.request = originalRequest;
+    childProcess.spawn = originalSpawn;
+    Resolver.prototype.resolve4 = originalResolve;
+  }
+});
+
+test("curl activation follows only validated Shecan redirects and retains scoped DNS", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalRequest = https.request;
+  const originalSpawn = childProcess.spawn;
+  const originalResolve = Resolver.prototype.resolve4;
+  const updateUrl = "https://ddns.shecan.ir/update/test-curl-redirect";
+  const redirectedUrl = "https://ddns.shecan.ir/update/test-curl-redirected";
+  const configs: string[] = [];
+  Resolver.prototype.resolve4 = (async () => [{ address: "203.0.113.40", ttl: 60 }]) as unknown as typeof Resolver.prototype.resolve4;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url === updateUrl) throw Object.assign(new Error("mock fetch transport failure"), { code: "FETCH_FAILED" });
+    if (url === "https://generativelanguage.googleapis.com/v1beta/models") {
+      return Response.json({ error: { message: "API key not valid. Please pass a valid API key." } }, { status: 400 });
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  }) as typeof fetch;
+  https.request = (() => { throw new Error("native HTTPS should not run after redirected curl succeeds"); }) as typeof https.request;
+  childProcess.spawn = (() => {
+    const call = configs.length;
+    const child = new EventEmitter() as EventEmitter & {
+      stdout: EventEmitter;
+      stderr: EventEmitter;
+      stdin: EventEmitter & { end: (value: string) => void };
+      kill: () => void;
+    };
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.stdin = Object.assign(new EventEmitter(), {
+      end: (value: string) => {
+        configs.push(value);
+        process.nextTick(() => child.stdout.emit("data", Buffer.from(call === 0
+          ? `HTTP/1.1 302 Found\r\nLocation: ${redirectedUrl}\r\n\r\n`
+          : "HTTP/1.1 204 No Content\r\n\r\n")));
+      },
+    });
+    child.kill = () => undefined;
+    return child as unknown as ReturnType<typeof childProcess.spawn>;
+  }) as typeof childProcess.spawn;
+  try {
+    const { saveAndTestApiNetwork } = await import("../lib/server/api-network");
+    const { getDb } = await import("../lib/server/db");
+    const admin = getDb().prepare("SELECT id FROM users WHERE role='admin' ORDER BY created_at LIMIT 1").get() as { id: string };
+    const status = await saveAndTestApiNetwork({ enabled: true, plan: "pro", servers: ["198.51.100.34", "198.51.100.35"], updateUrl }, admin.id, { activationSettleMs: 0 });
+    assert.equal(status.enabled, true);
+    assert.equal(configs.length, 2);
+    assert.ok(configs[1].includes(redirectedUrl));
+    assert.equal((configs[1].match(/resolve = /g) || []).length, 1);
+    assert.match(configs[1], /ddns\.shecan\.ir:443:203\.0\.113\.40/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    https.request = originalRequest;
+    childProcess.spawn = originalSpawn;
+    Resolver.prototype.resolve4 = originalResolve;
+  }
+});
+
 test("native HTTPS fallback tries every scoped Shecan IPv4 address after fetch failure", async () => {
   const originalFetch = globalThis.fetch;
   const originalRequest = https.request;
+  const originalSpawn = childProcess.spawn;
   const originalResolve = Resolver.prototype.resolve4;
   const updateUrl = "https://ddns.shecan.ir/update/test-native-fallback";
   let nativeLookup = false;
@@ -229,6 +348,19 @@ test("native HTTPS fallback tries every scoped Shecan IPv4 address after fetch f
     request.destroy = (error?: Error) => { if (error) request.emit("error", error); };
     return request as unknown as ReturnType<typeof https.request>;
   }) as typeof https.request;
+  childProcess.spawn = (() => {
+    const child = new EventEmitter() as EventEmitter & {
+      stdout: EventEmitter;
+      stderr: EventEmitter;
+      stdin: EventEmitter & { end: () => void };
+      kill: () => void;
+    };
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.stdin = Object.assign(new EventEmitter(), { end: () => process.nextTick(() => child.emit("error", Object.assign(new Error("mock curl unavailable"), { code: "ENOENT" }))) });
+    child.kill = () => undefined;
+    return child as unknown as ReturnType<typeof childProcess.spawn>;
+  }) as typeof childProcess.spawn;
   try {
     const { saveAndTestApiNetwork } = await import("../lib/server/api-network");
     const { getDb } = await import("../lib/server/db");
@@ -242,6 +374,7 @@ test("native HTTPS fallback tries every scoped Shecan IPv4 address after fetch f
   } finally {
     globalThis.fetch = originalFetch;
     https.request = originalRequest;
+    childProcess.spawn = originalSpawn;
     Resolver.prototype.resolve4 = originalResolve;
   }
 });

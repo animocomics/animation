@@ -124,7 +124,7 @@ async function run() {
   await page.waitForTimeout(1200);
 
   let after = await api(page, "/api/admin/api-network");
-  for (let attempt = 0; payloadOf(after)?.pending && attempt < 120; attempt += 1) {
+  for (let attempt = 0; payloadOf(after)?.pending && attempt < 240; attempt += 1) {
     await page.waitForTimeout(2000);
     after = await api(page, "/api/admin/api-network");
   }
@@ -132,7 +132,7 @@ async function run() {
   const afterStatus = afterPayload?.status;
   lines.push(`- ${networkLine("Shecan after the requested test", after)}`);
   if (afterPayload?.jobError) lines.push(`- Background activation result: ${clean(afterPayload.jobError)}.`);
-  if (afterPayload?.pending) lines.push("- Background activation remained pending beyond the 240-second browser polling limit.");
+  if (afterPayload?.pending) lines.push("- Background activation remained pending beyond the 480-second browser polling limit.");
   if ([200, 202].includes(result.status) && afterStatus?.enabled && !afterPayload?.pending && !afterPayload?.jobError) {
     const providerStatusResult = await api(page, "/api/provider");
     const providerStatus = payloadOf(providerStatusResult)?.status;
