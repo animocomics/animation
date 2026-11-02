@@ -1,0 +1,59 @@
+name: Nomreh live AI acceptance
+
+on:
+  push:
+    branches: [arena/f4b832aa-animation]
+    paths:
+      - scripts/nomreh-live-ai-acceptance.cjs
+      - scripts/fixtures/persian-handwriting-test.png
+      - .github/workflows/nomreh-live-ai-acceptance.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nomreh-live-ai-acceptance
+  cancel-in-progress: false
+
+jobs:
+  live-ai:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install isolated test dependencies
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund --package-lock=false
+          npm install --no-save --package-lock=false --ignore-scripts --no-audit --no-fund playwright
+      - name: Run authorized live provider, usage, and handwriting checks
+        env:
+          NOMREH_ADMIN_USERNAME: ${{ secrets.NOMREH_ADMIN_USERNAME }}
+          NOMREH_ADMIN_PASSWORD: ${{ secrets.NOMREH_ADMIN_PASSWORD }}
+          NOMREH_TEACHER_USERNAME: ${{ secrets.NOMREH_TEACHER_USERNAME }}
+          NOMREH_TEACHER_PASSWORD: ${{ secrets.NOMREH_TEACHER_PASSWORD }}
+          NOMREH_RUN_HANDWRITING: "1"
+          NOMREH_AI_ACCEPTANCE_OUTPUT: /tmp/nomreh-live-ai-acceptance.md
+        run: node scripts/nomreh-live-ai-acceptance.cjs
+      - name: Publish redacted evidence
+        if: always()
+        run: |
+          test -s /tmp/nomreh-live-ai-acceptance.md
+          python - <<'PY'
+          from pathlib import Path
+          import os, re
+          text = Path('/tmp/nomreh-live-ai-acceptance.md').read_text()
+          required = ['Current provider and recorded usage', 'Recorded usage before this check', 'Recorded usage after this check', 'Quota boundary', 'Result']
+          if any(item not in text for item in required):
+              raise SystemExit('The live AI report is incomplete')
+          if re.search(r'AIza[0-9A-Za-z_-]{8,}|Bearer\s+[A-Za-z0-9]', text):
+              raise SystemExit('The report contains a credential-like value')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write(text)
+          print(text)
+          PY
