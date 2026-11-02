@@ -31,7 +31,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          restart_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41466867854" --jq '.status + " " + .conclusion')"
+          restart_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41477621153" --jq '.status + " " + .conclusion')"
           test "$restart_state" = "completed success"
 
       - name: Validate the real public Nomreh site
