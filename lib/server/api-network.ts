@@ -1,4 +1,7 @@
 import { isIPv4 } from "node:net";
+import { lookup as dnsLookup } from "node:dns/promises";
+import type { LookupOptions } from "node:dns";
+import type { TcpSocketConnectOpts } from "node:net";
 import { Agent } from "undici";
 import type { ApiNetworkPublicStatus } from "../types";
 import { SHECAN_DNS, type ProviderNetworkConfig } from "../api-network";
@@ -125,14 +128,21 @@ function safeNetworkCode(error: unknown): string {
 }
 
 async function activateUpdateUrl(updateUrl: string): Promise<string> {
-  let response: Response;
+  let response: Response | undefined;
   let ipv4Agent: Agent | undefined;
-  const request = async (forceIpv4: boolean) => {
-    if (forceIpv4) ipv4Agent = new Agent({ connect: { family: 4, timeout: 15_000 } });
+  const request = async (address?: string) => {
+    if (address) {
+      if (ipv4Agent) await ipv4Agent.close().catch(() => undefined);
+      const lookup: NonNullable<TcpSocketConnectOpts["lookup"]> = (_hostname, options: LookupOptions, callback) => {
+        if (options.all) callback(null, [{ address, family: 4 }]);
+        else callback(null, address, 4);
+      };
+      ipv4Agent = new Agent({ connect: { lookup, timeout: 10_000 } });
+    }
     const init: RequestInit & { dispatcher?: Agent } = {
       cache: "no-store",
       redirect: "follow",
-      signal: AbortSignal.timeout(15_000),
+      signal: AbortSignal.timeout(address ? 10_000 : 15_000),
       headers: { "User-Agent": "Nomreh-Shecan-IP-Activation/1.0" },
     };
     if (ipv4Agent) init.dispatcher = ipv4Agent;
@@ -140,13 +150,28 @@ async function activateUpdateUrl(updateUrl: string): Promise<string> {
   };
   try {
     try {
-      response = await request(false);
+      response = await request();
     } catch (error) {
-      // Some shared hosts advertise an unreachable IPv6 route. Shecan's
-      // documented IP-update flow is IPv4; retry only this Shecan request.
-      if (safeNetworkCode(error) !== "UND_ERR_CONNECT_TIMEOUT") throw error;
-      response = await request(true);
+      // Try every public IPv4 address, not only the first resolver answer.
+      // This remains scoped to the Shecan update URL and changes no host DNS.
+      if (!["UND_ERR_CONNECT_TIMEOUT", "TIMEOUT"].includes(safeNetworkCode(error))) throw error;
+      const hostname = new URL(updateUrl).hostname;
+      const addresses = await dnsLookup(hostname, { all: true, verbatim: true })
+        .then((records) => records.filter((record) => isIPv4(record.address)).map((record) => record.address))
+        .catch(() => [] as string[]);
+      let lastError: unknown = error;
+      for (const address of [...new Set(addresses)]) {
+        try {
+          response = await request(address);
+          lastError = undefined;
+          break;
+        } catch (retryError) {
+          lastError = retryError;
+        }
+      }
+      if (lastError) throw lastError;
     }
+    if (!response) throw new Error("Shecan update connection was not established");
     await response.arrayBuffer();
     const finalUrl = new URL(response.url || updateUrl);
     const finalHost = finalUrl.hostname.toLowerCase();
