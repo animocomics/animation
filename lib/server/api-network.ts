@@ -127,34 +127,63 @@ function safeNetworkCode(error: unknown): string {
   return "";
 }
 
+async function discardResponse(response: Response): Promise<void> {
+  // Activation depends on the HTTP status, not on a response payload. Waiting
+  // for an unterminated response body can otherwise produce a false timeout.
+  if (response.body) await response.body.cancel().catch(() => undefined);
+}
+
+async function probeUpdateService(updateUrl: string): Promise<string> {
+  // On failure only, check the same official origin without the secret path.
+  // The result distinguishes host connectivity from an update-link failure.
+  try {
+    const response = await fetch(new URL(updateUrl).origin, {
+      cache: "no-store",
+      redirect: "manual",
+      signal: AbortSignal.timeout(5_000),
+      headers: { "User-Agent": "Nomreh-Shecan-IP-Activation/1.0" },
+    });
+    await discardResponse(response);
+    return `HTTP ${response.status}`;
+  } catch (error) {
+    return safeNetworkCode(error) || "NO_RESPONSE";
+  }
+}
+
 async function activateUpdateUrl(updateUrl: string): Promise<string> {
   let response: Response | undefined;
-  let ipv4Agent: Agent | undefined;
+  const agents: Agent[] = [];
   const request = async (address?: string) => {
+    let lookup: NonNullable<TcpSocketConnectOpts["lookup"]> | undefined;
     if (address) {
-      if (ipv4Agent) await ipv4Agent.close().catch(() => undefined);
-      const lookup: NonNullable<TcpSocketConnectOpts["lookup"]> = (_hostname, options: LookupOptions, callback) => {
+      lookup = (_hostname, options: LookupOptions, callback) => {
         if (options.all) callback(null, [{ address, family: 4 }]);
         else callback(null, address, 4);
       };
-      ipv4Agent = new Agent({ connect: { lookup, timeout: 10_000 } });
     }
+    const agent = new Agent({
+      connect: { ...(lookup ? { lookup } : {}), timeout: 8_000 },
+      headersTimeout: 8_000,
+      bodyTimeout: 8_000,
+    });
+    agents.push(agent);
     const init: RequestInit & { dispatcher?: Agent } = {
       cache: "no-store",
       redirect: "follow",
       signal: AbortSignal.timeout(address ? 10_000 : 15_000),
       headers: { "User-Agent": "Nomreh-Shecan-IP-Activation/1.0" },
+      dispatcher: agent,
     };
-    if (ipv4Agent) init.dispatcher = ipv4Agent;
     return fetch(updateUrl, init);
   };
   try {
     try {
       response = await request();
     } catch (error) {
-      // Try every public IPv4 address, not only the first resolver answer.
+      // Try every resolved IPv4 address after a transient network failure.
       // This remains scoped to the Shecan update URL and changes no host DNS.
-      if (!["UND_ERR_CONNECT_TIMEOUT", "TIMEOUT"].includes(safeNetworkCode(error))) throw error;
+      const retryable = ["UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "TIMEOUT", "ETIMEDOUT", "ECONNRESET", "ECONNREFUSED", "EHOSTUNREACH", "ENETUNREACH"];
+      if (!retryable.includes(safeNetworkCode(error))) throw error;
       const hostname = new URL(updateUrl).hostname;
       const addresses = await dnsLookup(hostname, { all: true, verbatim: true })
         .then((records) => records.filter((record) => isIPv4(record.address)).map((record) => record.address))
@@ -172,20 +201,25 @@ async function activateUpdateUrl(updateUrl: string): Promise<string> {
       if (lastError) throw lastError;
     }
     if (!response) throw new Error("Shecan update connection was not established");
-    await response.arrayBuffer();
     const finalUrl = new URL(response.url || updateUrl);
     const finalHost = finalUrl.hostname.toLowerCase();
     if (finalUrl.protocol !== "https:" || !(finalHost === "shecan.ir" || finalHost.endsWith(".shecan.ir"))) {
+      await discardResponse(response);
       throw new ApiNetworkError("لینک به‌روزرسان به مقصد غیرمنتظره‌ای هدایت شد و پذیرفته نشد.", 400);
     }
-    if (!response.ok) throw new ApiNetworkError(`شکن لینک به‌روزرسان را نپذیرفت (HTTP ${response.status}). لینک را از همان سفارش فعال دوباره کپی کنید.`, 400);
+    if (!response.ok) {
+      await discardResponse(response);
+      throw new ApiNetworkError(`شکن لینک به‌روزرسان را نپذیرفت (HTTP ${response.status}). لینک را از همان سفارش فعال دوباره کپی کنید.`, 400);
+    }
+    await discardResponse(response);
     return new Date().toISOString();
   } catch (error) {
     if (error instanceof ApiNetworkError) throw error;
     const code = safeNetworkCode(error);
-    throw new ApiNetworkError(`فراخوانی لینک به‌روزرسان شکن ناموفق بود؛ لینک و دسترسی خروجی سرور به shecan.ir را بررسی کنید.${code ? ` کد فنی: ${code}.` : ""}`, 502, { cause: error });
+    const serviceProbe = await probeUpdateService(updateUrl);
+    throw new ApiNetworkError(`فراخوانی لینک به‌روزرسان شکن ناموفق بود؛ لینک و دسترسی خروجی سرور به shecan.ir را بررسی کنید.${code ? ` کد فنی: ${code}.` : ""} بررسی بدون لینک محرمانه: ${serviceProbe}.`, 502, { cause: error });
   } finally {
-    if (ipv4Agent) await ipv4Agent.close().catch(() => undefined);
+    await Promise.all(agents.map((agent) => agent.close().catch(() => undefined)));
   }
 }
 

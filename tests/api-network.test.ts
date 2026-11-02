@@ -111,6 +111,41 @@ test("Pro update link is encrypted, activation and Google are tested before enab
   }
 });
 
+test("Pro activation accepts HTTP headers without waiting for an unterminated body", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalResolve = Resolver.prototype.resolve4;
+  const updateUrl = "https://ddns.shecan.ir/update/test-unterminated-body";
+  let cancelled = 0;
+  Resolver.prototype.resolve4 = (async () => [{ address: "203.0.113.35", ttl: 60 }]) as unknown as typeof Resolver.prototype.resolve4;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url === updateUrl) {
+      const body = new ReadableStream<Uint8Array>({
+        pull: () => undefined,
+        cancel: () => { cancelled += 1; },
+      });
+      return new Response(body, { status: 200 });
+    }
+    if (url === "https://generativelanguage.googleapis.com/v1beta/models") {
+      return Response.json({ error: { message: "API key not valid. Please pass a valid API key." } }, { status: 400 });
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  }) as typeof fetch;
+  try {
+    const { getApiNetworkStatus, saveAndTestApiNetwork } = await import("../lib/server/api-network");
+    const { getDb } = await import("../lib/server/db");
+    const admin = getDb().prepare("SELECT id FROM users WHERE role='admin' ORDER BY created_at LIMIT 1").get() as { id: string };
+    const status = await saveAndTestApiNetwork({ enabled: true, plan: "pro", servers: ["198.51.100.24", "198.51.100.25"], updateUrl }, admin.id);
+    assert.equal(status.enabled, true);
+    assert.equal(status.lastTestStatus, "success");
+    assert.equal(cancelled, 1, "the update response body should be cancelled, not consumed until EOF");
+    assert.equal((await getApiNetworkStatus()).hasUpdateUrl, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    Resolver.prototype.resolve4 = originalResolve;
+  }
+});
+
 test("failed Google validation saves an actionable error and never enables Shecan", async () => {
   const originalFetch = globalThis.fetch;
   const originalResolve = Resolver.prototype.resolve4;
