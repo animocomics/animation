@@ -37,6 +37,10 @@ jobs:
         if: steps.config.outputs.configured == 'true'
         uses: actions/checkout@v4
 
+      - name: Confirm the validated npm launcher fix
+        if: steps.config.outputs.configured == 'true'
+        run: echo "abafaf85f46b391dcbd9f675a5b1eb959555870eae8667290c6ab8216190d9c0  package.json" | sha256sum --check -
+
       - name: Prepare an isolated temporary browser
         if: steps.config.outputs.configured == 'true'
         run: |
