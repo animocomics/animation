@@ -727,16 +727,38 @@ async function main() {
                   }
                 }
                 if (!removeChoice) throw new Error(`The Remove command was not available for ${name}. Cleanup stopped.`);
-                await removeChoice.evaluate((element) => element.click());
-                const dialog = page.locator("[role='dialog']:visible, .pul-modal:visible, .modal:visible").last();
-                await dialog.waitFor({ state: "visible", timeout: 8000 });
-                const dialogText = await dialog.innerText().catch(() => "");
-                if (!/remove|delete/i.test(dialogText)) throw new Error(`The removal confirmation was not recognized for ${name}. Cleanup stopped.`);
-                const confirm = dialog.getByRole("button", { name: /^(OK|Remove|Delete|Confirm|Yes)$/i }).last();
-                if (!await confirm.count()) throw new Error(`The removal confirmation button was not found for ${name}. Cleanup stopped.`);
-                await confirm.evaluate((element) => element.click());
+                let nativeRemovalAccepted = false;
+                let unexpectedNativeDialog = "";
+                const nativeDialogHandler = async (dialog) => {
+                  const message = dialog.message();
+                  if (dialog.type() === "confirm" && /remove|delete/i.test(message)) {
+                    await dialog.accept();
+                    nativeRemovalAccepted = true;
+                  } else {
+                    unexpectedNativeDialog = `${dialog.type()}: ${message.slice(0, 180)}`;
+                    await dialog.dismiss();
+                  }
+                };
+                page.on("dialog", nativeDialogHandler);
+                try {
+                  await removeChoice.evaluate((element) => element.click());
+                  if (!nativeRemovalAccepted) {
+                    const dialog = page.locator("[role='dialog']:visible, .pul-modal:visible, .modal:visible").last();
+                    const domDialogVisible = await dialog.waitFor({ state: "visible", timeout: 3000 }).then(() => true).catch(() => false);
+                    if (domDialogVisible) {
+                      const dialogText = await dialog.innerText().catch(() => "");
+                      if (!/remove|delete/i.test(dialogText)) throw new Error(`The removal confirmation was not recognized for ${name}. Cleanup stopped.`);
+                      const confirm = dialog.getByRole("button", { name: /^(OK|Remove|Delete|Confirm|Yes)$/i }).last();
+                      if (!await confirm.count()) throw new Error(`The removal confirmation button was not found for ${name}. Cleanup stopped.`);
+                      await confirm.evaluate((element) => element.click());
+                    }
+                  }
+                } finally {
+                  page.off("dialog", nativeDialogHandler);
+                }
+                if (unexpectedNativeDialog) throw new Error(`An unexpected browser dialog stopped cleanup: ${sanitize(unexpectedNativeDialog)}`);
                 await page.waitForTimeout(2500);
-                if (await page.getByText(name, { exact: true }).count()) throw new Error(`The archive was still visible after removal: ${name}. Cleanup stopped.`);
+                if (await page.getByText(name, { exact: true }).count()) throw new Error(`The removal confirmation was not recognized or the archive remained after removal: ${name}. Cleanup stopped.`);
                 await verifyApplicationRoot();
                 lines.push(`- Removed only obsolete deployment archive: ${name} (${size})`);
               }

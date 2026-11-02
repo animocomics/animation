@@ -50,6 +50,7 @@ jobs:
           for run_id in 41546736280 41546956067 41547264488 41547465491; do
             test "$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}" --jq '.status + " " + .conclusion')" = 'completed success'
           done
+          node --check scripts/plesk-browser-diagnostics.cjs
           node - <<'NODE'
           const { cleanupCandidates } = require('./scripts/plesk-deploy-archives.cjs');
           const keep = 'nomreh-deploy-shecan-5353-v23-delta.zip';
