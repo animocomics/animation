@@ -40,6 +40,8 @@ jobs:
       - name: Check out the browser control script
         if: steps.config.outputs.configured == 'true'
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Verify the validated Passenger-aware archive upload
         if: steps.config.outputs.configured == 'true'
