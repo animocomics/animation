@@ -247,6 +247,21 @@ async function main() {
             filePath = `${appUrl.pathname}${appUrl.search}`;
             continue;
           }
+          if (depth === 0) {
+            const candidates = await page.getByText(DOMAIN, { exact: true }).evaluateAll((elements) => elements.slice(0, 6).map((element) => {
+              const describe = (item) => item ? {
+                tag: item.tagName,
+                id: item.id || "",
+                className: String(item.getAttribute("class") || "").slice(0, 180),
+                href: item.getAttribute("href") || "",
+                dataPath: item.getAttribute("data-path") || item.getAttribute("data-name") || "",
+                onclick: (item.getAttribute("onclick") || "").slice(0, 220),
+              } : null;
+              return { element: describe(element), parent: describe(element.parentElement), grandparent: describe(element.parentElement?.parentElement) };
+            }));
+            for (const candidate of candidates) lines.push(`- Nomreh DOM candidate: ${sanitize(JSON.stringify(candidate))}`);
+            if (candidates.length) lines.push("");
+          }
           const domainRows = page.locator("tr, [role='row']").filter({ hasText: DOMAIN });
           if (depth === 0 && await domainRows.count()) {
             const domainRow = domainRows.first();
