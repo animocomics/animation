@@ -582,6 +582,7 @@ async function main() {
   const adminResponse = await page.goto(`${ORIGIN}/admin`, { waitUntil: "domcontentloaded", timeout: 30000 });
   await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => undefined);
   lines.push(`- Admin page HTTP status: ${adminResponse ? adminResponse.status() : "unavailable"}.`);
+  lines.push(`- Admin HTML cache control: ${clean(adminResponse?.headers()["cache-control"] || "none")}; Age: ${clean(adminResponse?.headers().age || "none")}.`);
   await page.getByRole("heading", { name: "مدیریت سامانهٔ نمره" }).waitFor({ state: "visible" });
   await page.getByText("پیکربندی سراسری مدل", { exact: true }).waitFor({ state: "visible" });
   await page.getByText("مسیر اختصاصی API با شکن", { exact: true }).waitFor({ state: "visible" });
@@ -652,6 +653,30 @@ async function main() {
   await page.unroute(`${ORIGIN}/api/provider/test`);
   await page.unroute(`${ORIGIN}/api/provider`);
   lines.push("- The real admin UI used POST for provider save; an intercepted HTML 403 response became a safe Persian HTTP error, never a raw JSON parser failure. Both provider requests were mocked.");
+
+  await page.locator("#admin-model").fill("gemini-3.8-flash");
+  await page.locator("#admin-api-key").fill("AIzaSyNomrehReadinessInvalid0000000000000000");
+  let unexpectedSaveCalls = 0;
+  await page.route(`${ORIGIN}/api/provider`, async (route) => {
+    if (route.request().method() === "POST") {
+      unexpectedSaveCalls += 1;
+      await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "Readiness save guard" }) });
+    } else await route.continue();
+  });
+  const actualTestResponsePromise = page.waitForResponse((response) => response.url() === `${ORIGIN}/api/provider/test` && response.request().method() === "POST", { timeout: 30000 });
+  await page.getByRole("button", { name: "آزمایش و ذخیرهٔ امن", exact: true }).click();
+  const actualTestResponse = await actualTestResponsePromise;
+  await page.waitForFunction((previousText) => {
+    const element = document.querySelector(".api-test-message.error");
+    return Boolean(element?.textContent && element.textContent !== previousText);
+  }, safeHtmlErrorText, { timeout: 30000 });
+  const actualInvalidUiText = await page.locator(".api-test-message.error").innerText();
+  const actualTestContentType = actualTestResponse.headers()["content-type"] || "none";
+  if (actualTestResponse.status() !== 400 || !/application\/json/i.test(actualTestContentType)) throw new Error(`The real invalid-key UI test returned HTTP ${actualTestResponse.status()} with ${actualTestContentType}.`);
+  if (/Unexpected token|<!DOCTYPE|not valid JSON/i.test(actualInvalidUiText)) throw new Error("The real invalid-key UI flow exposed a raw JSON parser error.");
+  if (unexpectedSaveCalls !== 0) throw new Error("The deliberately invalid real provider test unexpectedly reached the guarded save request.");
+  await page.unroute(`${ORIGIN}/api/provider`);
+  lines.push(`- The actual secure-save button with a deliberately invalid Gemini key received HTTP ${actualTestResponse.status()} JSON and displayed a safe provider error; save was never called.`);
 
   const invalidKeyResponse = await context.request.post(`${ORIGIN}/api/provider/test`, {
     headers: { Accept: "application/json" },
