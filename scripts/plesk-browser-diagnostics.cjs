@@ -268,7 +268,7 @@ async function main() {
           })).slice(0, 60));
           for (const node of outputNodes) {
             lines.push(`- Output element: ${sanitize(JSON.stringify({ tag: node.tag, id: node.id, className: node.className, visible: node.visible, textLength: node.text.length }))}`);
-            const safeOutput = node.text.split(/\r?\n/).map((line) => line.trim()).filter((line) => /\[Nomreh|Node 22|SQLite|canvas|production build|npm ERR|GLIBC|exited with status|Report complete|Application total|MiB|GiB/i.test(line) && !/secret|token|password|credential|api.key/i.test(line)).slice(-30);
+            const safeOutput = node.text.split(/\r?\n/).map((line) => line.trim()).filter((line) => /\[Nomreh|Node 22|SQLite|canvas|production build|npm ERR|GLIBC|exited with status|Report complete|Application total|MiB|GiB|task|progress|running|completed|failed|npm/i.test(line) && !/secret|token|password|credential|api.key/i.test(line)).slice(-30);
             for (const line of safeOutput) lines.push(`- Existing output: ${sanitize(line.slice(0, 400))}`);
           }
           lines.push("- Inspection only: no command was entered or executed.", "");
@@ -350,7 +350,24 @@ async function main() {
                 const target = link.href.startsWith("/") ? new URL(link.href, page.url()) : null;
                 lines.push(`- Status link: ${sanitize(link.text)}${target ? ` (${sanitize(`${target.pathname}${target.search}`)})` : ""}`);
               }
-              lines.push("- Persistent-data inspection only; no file was opened for editing or changed.", "");
+              if (progressPresent) {
+                const progressLink = page.getByText("build-progress.txt", { exact: true }).first();
+                const downloadPromise = page.waitForEvent("download", { timeout: 6000 }).catch(() => null);
+                await progressLink.click({ timeout: 8000 }).catch(() => undefined);
+                const download = await downloadPromise;
+                let progressText = "";
+                if (download) {
+                  const downloadPath = await download.path();
+                  if (downloadPath && fs.statSync(downloadPath).size <= 16384) progressText = fs.readFileSync(downloadPath, "utf8");
+                } else {
+                  await page.waitForTimeout(1200);
+                  progressText = await page.locator("body").innerText().catch(() => "");
+                }
+                const progressLines = progressText.split(/\r?\n/).map((line) => line.trim()).filter((line) => /^Nomreh build status:|^Stage:|^Elapsed seconds:|^Process ID:|^Updated at:/i.test(line)).slice(0, 12);
+                for (const line of progressLines) lines.push(`- Previous progress: ${sanitize(line.slice(0, 350))}`);
+                if (!progressLines.length) lines.push("- Previous progress content was not exposed by the File Manager view.");
+              }
+              lines.push("- Persistent-data inspection only; no file was saved or changed.", "");
               actionCompleted = true;
             }
             const archivePresent = fileBody.includes(ARCHIVE_NAME);
