@@ -244,7 +244,16 @@ async function main() {
           if (depth === 1) {
             const fileDetails = fileBody.split(/\r?\n/).map((line) => line.trim()).filter((line) => /package\.json|server\.js|next\.config|sqlite\.ts|plesk-node22|\.next\b/i.test(line) && !/secret|token|password|credential/i.test(line)).slice(0, 20);
             if (fileDetails.length) lines.push(...fileDetails.map((line) => `- Application file: ${sanitize(line.slice(0, 300))}`), "");
-            const packageLink = page.locator("a").filter({ hasText: /^package\.json$/ }).first();
+            const managerControls = await page.locator("button, a, input").evaluateAll((elements) => elements.map((element) => ({
+              tag: element.tagName,
+              text: (element.textContent || "").trim().replace(/\s+/g, " ").slice(0, 120),
+              title: element.getAttribute("title") || element.getAttribute("aria-label") || "",
+              type: element.getAttribute("type") || "",
+              name: element.getAttribute("name") || element.id || "",
+            })).filter((item) => /upload|extract|archive/i.test(`${item.text} ${item.title} ${item.name}`) || item.type === "file").slice(0, 30));
+            for (const control of managerControls) lines.push(`- File control: ${sanitize(JSON.stringify(control))}`);
+            if (managerControls.length) lines.push("");
+            const packageLink = page.getByText("package.json", { exact: true }).first();
             if (await packageLink.count()) {
               await packageLink.click({ timeout: 8000 }).catch(() => undefined);
               await page.waitForTimeout(1800);
