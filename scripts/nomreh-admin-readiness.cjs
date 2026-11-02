@@ -416,7 +416,7 @@ async function testTeacherAccess() {
 
     const teacherWorkspace = await teacherContext.request.get(`${ORIGIN}/api/workspace`);
     if (!teacherWorkspace.ok()) throw new Error("The teacher workspace read API was not available.");
-    const forbiddenProviderSave = await teacherContext.request.put(`${ORIGIN}/api/provider`, { data: {} });
+    const forbiddenProviderSave = await teacherContext.request.post(`${ORIGIN}/api/provider`, { data: {} });
     if (forbiddenProviderSave.status() !== 403) throw new Error("A teacher provider save was not rejected with HTTP 403.");
     for (const pathname of ["/api/provider/test", "/api/provider/models"]) {
       const response = await teacherContext.request.post(`${ORIGIN}${pathname}`, { data: {} });
@@ -621,6 +621,22 @@ async function main() {
   if (await page.locator("#admin-model").inputValue() !== "gemini-manual-future-vision") throw new Error("The model control rejected a manually entered future model ID.");
   lines.push("- Gemini 2.5, 3.7, 3.8 and 4 remain together after account discovery; legacy retention and manual future-model entry passed in the real browser without saving a key or provider setting.");
 
+  await page.route(`${ORIGIN}/api/provider/test`, async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ message: "mocked readiness success" }) });
+  });
+  await page.route(`${ORIGIN}/api/provider`, async (route) => {
+    if (route.request().method() === "POST") await route.fulfill({ status: 403, contentType: "text/html", body: "<!DOCTYPE html><html><body>Readiness gateway fixture</body></html>" });
+    else await route.continue();
+  });
+  await page.getByRole("button", { name: "آزمایش و ذخیرهٔ امن", exact: true }).click();
+  const safeHtmlError = page.locator(".api-test-message.error");
+  await safeHtmlError.waitFor({ state: "visible", timeout: 15000 });
+  const safeHtmlErrorText = await safeHtmlError.innerText();
+  if (!safeHtmlErrorText.includes("۴۰۳") || /Unexpected token|<!DOCTYPE|not valid JSON/i.test(safeHtmlErrorText)) throw new Error("The real admin UI exposed a raw JSON parser error for an HTML provider-save response.");
+  await page.unroute(`${ORIGIN}/api/provider/test`);
+  await page.unroute(`${ORIGIN}/api/provider`);
+  lines.push("- An intercepted HTML 403 save response is shown as a safe Persian HTTP error, never as a raw JSON parser failure; both provider requests were mocked.");
+
   const invalidKeyResponse = await context.request.post(`${ORIGIN}/api/provider/test`, {
     headers: { Accept: "application/json" },
     data: { provider: "gemini", model: "gemini-3.8-flash", apiKey: "AIzaSyNomrehReadinessInvalid0000000000000000" },
@@ -634,7 +650,7 @@ async function main() {
   if (invalidKeyResponse.ok() || typeof invalidKeyPayload.error !== "string" || !invalidKeyPayload.error) throw new Error("The deliberately invalid provider key did not produce a structured error.");
   lines.push("- Invalid provider-key failures are structured JSON; no provider configuration was saved.");
 
-  const invalidSaveResponse = await context.request.put(`${ORIGIN}/api/provider`, {
+  const invalidSaveResponse = await context.request.post(`${ORIGIN}/api/provider`, {
     headers: { Accept: "application/json" },
     data: { provider: "gemini", model: "gemini-3.8-flash", apiKey: "AIzaSyNomrehReadinessInvalid0000000000000000" },
   });
