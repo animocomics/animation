@@ -198,6 +198,9 @@ async function run() {
     const testResult = await api(admin, "POST", "/api/provider/test", { provider: provider.provider, model: provider.model });
     lines.push(`- Stored-key provider test: HTTP ${testResult.status}; ${testResult.response.ok() ? "provider accepted the model/key test" : `failed: ${errorText(testResult)}`}.`);
     if (testResult.status === 429) lines.push("- The provider returned HTTP 429; this is a quota/rate-limit signal, not a measurement of the remaining quota.");
+    const modelsResult = await api(admin, "POST", "/api/provider/models", { provider: provider.provider });
+    const models = Array.isArray(modelsResult.payload?.models) ? modelsResult.payload.models : [];
+    lines.push(`- Stored-key account model discovery: HTTP ${modelsResult.status}; ${modelsResult.response.ok() ? `${models.length} compatible model(s) returned; selected model present: ${models.includes(provider.model) ? "yes" : "no"}` : errorText(modelsResult)}.`);
   } else if (SKIP_PROVIDER_TEST) {
     lines.push("- Stored-key provider test skipped for this read-only network check.");
   }

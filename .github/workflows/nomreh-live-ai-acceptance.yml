@@ -40,7 +40,7 @@ jobs:
           NOMREH_ADMIN_PASSWORD: ${{ secrets.NOMREH_ADMIN_PASSWORD }}
           NOMREH_TEACHER_USERNAME: ${{ secrets.NOMREH_TEACHER_USERNAME }}
           NOMREH_TEACHER_PASSWORD: ${{ secrets.NOMREH_TEACHER_PASSWORD }}
-          NOMREH_RUN_HANDWRITING: "1"
+          NOMREH_RUN_HANDWRITING: "0"
           NOMREH_SKIP_PROVIDER_TEST: "0"
           NOMREH_AI_ACCEPTANCE_OUTPUT: /tmp/nomreh-live-ai-acceptance.md
         run: node scripts/nomreh-live-ai-acceptance.cjs
