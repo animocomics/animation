@@ -62,12 +62,14 @@ function labelValues(text, labels) {
 }
 
 async function main() {
-  if (!["diagnose", "upload", "extract"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
+  if (!["diagnose", "upload", "extract", "build"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
   const panel = normalizePanelUrl(process.env.PLESK_PANEL_URL || "");
   const readOnly = ACTION === "diagnose";
   const actionDescription = ACTION === "upload"
     ? "Controlled action: upload one validated application archive to Nomreh only. No extraction, build, restart, or settings change is attempted."
-    : "Controlled action: extract the validated archive inside the Nomreh application root only. Persistent data, uploads, environment files, build, restart, and settings changes are not touched.";
+    : ACTION === "extract"
+      ? "Controlled action: extract the validated archive inside the Nomreh application root only. Persistent data, uploads, environment files, build, restart, and settings changes are not touched."
+      : "Controlled action: run the validated Nomreh production build with its domain-local Node 22 runtime. Node.js enablement and restart remain pending.";
   const lines = ["# Plesk browser diagnostics", "", readOnly
     ? "Read-only browser inspection. No settings, deployments or files were changed."
     : actionDescription, ""];
@@ -233,7 +235,7 @@ async function main() {
           if (fields.length || values.length) lines.push("");
         }
       }
-      if (ACTION === "diagnose" && nomrehConsoleLink && await nomrehConsoleLink.count()) {
+      if (["diagnose", "build"].includes(ACTION) && nomrehConsoleLink && await nomrehConsoleLink.count()) {
         const consoleResponsePromise = page.waitForResponse((item) => item.url().includes("/modules/nodejs/index.php/domain/console") && item.request().isNavigationRequest(), { timeout: 15000 }).catch(() => null);
         await nomrehConsoleLink.click({ timeout: 8000 }).catch(() => undefined);
         const consoleResponse = await consoleResponsePromise;
@@ -254,7 +256,47 @@ async function main() {
           title: element.getAttribute("title") || element.getAttribute("aria-label") || "",
         })).filter((item) => /run|execute|npm|build/i.test(`${item.text} ${item.title}`)).slice(0, 20));
         for (const button of consoleButtons) lines.push(`- Console button: ${sanitize(JSON.stringify(button))}`);
-        lines.push("- Inspection only: no command was entered or executed.", "");
+        if (ACTION === "diagnose") lines.push("- Inspection only: no command was entered or executed.", "");
+        if (ACTION === "build") {
+          if (!consoleBody.includes(`Node.js on ${DOMAIN}`) || !consoleBody.includes("/nomreh.arounidea.com")) {
+            throw new Error("The Node command console is not scoped to the Nomreh application root. Build was not started.");
+          }
+          const commandInput = page.getByPlaceholder(/Pick a script or command/i).first();
+          const executeButton = page.locator("button[title='Execute command'], button[aria-label='Execute command']").first();
+          if (!await commandInput.count() || !await executeButton.count()) throw new Error("The Nomreh npm command controls were not found. Build was not started.");
+          lines.push("## Controlled Nomreh production build", "", "- Command: run build:plesk", "");
+          await commandInput.fill("run build:plesk");
+          await executeButton.click({ timeout: 8000 });
+          const buildStartedAt = Date.now();
+          let lastProgressSignature = "";
+          let lastProgressReport = 0;
+          let completedOutput = "";
+          let buildSucceeded = false;
+          while (Date.now() - buildStartedAt < 40 * 60 * 1000) {
+            await page.waitForTimeout(4000);
+            const currentBody = await page.locator("body").innerText().catch(() => "");
+            const currentOutput = currentBody.startsWith(consoleBody) ? currentBody.slice(consoleBody.length) : currentBody;
+            const progressLines = currentOutput.split(/\r?\n/).map((line) => line.trim()).filter((line) => /\[Nomreh|Node 22|SQLite|canvas|production build|Installing application dependencies|Building Nomreh|npm ERR|GLIBC|exited with status/i.test(line) && !/secret|token|password|credential|api.key/i.test(line));
+            const signature = progressLines.slice(-6).join("\n");
+            if (signature && signature !== lastProgressSignature && Date.now() - lastProgressReport > 15000) {
+              console.log(sanitize(signature));
+              lastProgressSignature = signature;
+              lastProgressReport = Date.now();
+            }
+            if (/Nomreh production build is ready with the domain-local Node 22/i.test(currentOutput)) {
+              buildSucceeded = true;
+              completedOutput = currentOutput;
+              break;
+            }
+            const failure = currentOutput.split(/\r?\n/).find((line) => /\[Nomreh FAILED;|npm ERR!|exited with status|Build failed|Command failed/i.test(line));
+            if (failure) throw new Error(`Nomreh build failed: ${sanitize(failure.slice(0, 400))}`);
+          }
+          if (!buildSucceeded) throw new Error("The Nomreh build did not report completion within 40 minutes. Node.js was not enabled or restarted.");
+          const buildLines = completedOutput.split(/\r?\n/).map((line) => line.trim()).filter((line) => /\[Nomreh|Node 22|SQLite|canvas|production build|Installing application dependencies|Building Nomreh|added |removed |Compiled|Generating|Finalizing|BUILD_ID/i.test(line) && !/secret|token|password|credential|api.key/i.test(line)).slice(-80);
+          for (const line of buildLines) lines.push(`- Build output: ${sanitize(line.slice(0, 400))}`);
+          lines.push("- The domain-local Node 22 build and SQLite/canvas smoke tests completed successfully. Node.js enablement remains pending.", "");
+          actionCompleted = true;
+        }
       }
       if (nomrehFilesPath) {
         let filePath = nomrehFilesPath;
@@ -494,12 +536,14 @@ async function main() {
         }
       }
     }
-    if (["upload", "extract"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. No build, restart, or settings change was attempted.`);
+    if (["upload", "extract", "build"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Node.js was not enabled or restarted.`);
     lines.push("## Result", "", ACTION === "upload"
       ? "The validated application archive was uploaded to Nomreh. Extraction, dependency installation, build, and Node.js enablement remain pending."
       : ACTION === "extract"
         ? "The validated application source was extracted and verified in the Nomreh application root. Dependency installation, build, and Node.js enablement remain pending."
-        : domainFound
+        : ACTION === "build"
+          ? "The validated Nomreh production build and runtime smoke tests succeeded. Node.js enablement and live validation remain pending."
+          : domainFound
         ? "Plesk web login succeeded and the Nomreh domain was found. No remediation was attempted."
         : "Plesk web login completed, but the Nomreh domain was not visible on the inspected pages. No remediation was attempted.", "");
   } catch (error) {
