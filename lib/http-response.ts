@@ -1,3 +1,5 @@
+import { invalidProviderJsonMessage, isJsonParserErrorMessage } from "./error-message";
+
 function persianStatus(status: number) {
   return status > 0 ? status.toLocaleString("fa-IR") : "نامشخص";
 }
@@ -11,7 +13,11 @@ export async function readJsonResponse<T>(response: Response, actionLabel: strin
   const body = await response.text();
 
   try {
-    return JSON.parse(body) as T;
+    const payload = JSON.parse(body) as T;
+    if (payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string" && isJsonParserErrorMessage(payload.error)) {
+      return { ...payload, error: `${invalidProviderJsonMessage()} (کد ${persianStatus(response.status)})` } as T;
+    }
+    return payload;
   } catch {
     const status = persianStatus(response.status);
     const isHtml = /^\s*(?:<!doctype\s+html|<html[\s>])/i.test(body);

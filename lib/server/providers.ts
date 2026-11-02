@@ -5,6 +5,7 @@ import type { GradeApiRequest, ProviderId } from "../types";
 import type { ProviderNetworkConfig } from "../api-network";
 import { RECOMMENDED_MODELS } from "../provider-catalog";
 import { providerFetch, ProviderNetworkError } from "./provider-network";
+import { isJsonParserErrorMessage } from "../error-message";
 
 export const DEFAULT_MODELS: Record<ProviderId, string> = RECOMMENDED_MODELS;
 
@@ -132,7 +133,7 @@ async function responseJson(response: Response, provider: string): Promise<Recor
   if (!response.ok) {
     const errorObject = payload.error as { message?: string } | undefined;
     const rawMessage = errorObject?.message || (typeof payload.message === "string" ? payload.message : undefined);
-    throw friendlyProviderError(response.status, provider, rawMessage);
+    throw friendlyProviderError(response.status, provider, isJsonParserErrorMessage(rawMessage) ? undefined : rawMessage);
   }
   return payload;
 }
@@ -445,7 +446,10 @@ async function callGemini(input: ProviderCallInput): Promise<ProviderCallResult>
         contents: [{ role: "user", parts }],
         generationConfig: {
           responseMimeType: "application/json",
-          responseSchema: schemaForTask(input.task),
+          // Gemini's legacy responseSchema is an OpenAPI subset and rejects
+          // additionalProperties. responseJsonSchema accepts the JSON Schema
+          // used by the application, including nullable unions and bounds.
+          responseJsonSchema: schemaForTask(input.task),
           maxOutputTokens: 32768,
           temperature: 0.1,
         },

@@ -193,6 +193,9 @@ test("Gemini adapter sends inline PDF/image data and parses fenced JSON", async 
     assert.equal((init.headers as Record<string, string>)["x-goog-api-key"], "secret-gemini");
     const body = JSON.parse(String(init.body));
     assert.equal(body.generationConfig.responseMimeType, "application/json");
+    assert.equal(body.generationConfig.responseSchema, undefined);
+    assert.equal(body.generationConfig.responseJsonSchema.additionalProperties, false);
+    assert.equal(body.generationConfig.responseJsonSchema.properties.questions.items.properties.evidence.properties.page.type[1], "null");
     assert.equal(body.contents[0].parts.filter((part: { inline_data?: unknown }) => part.inline_data).length, 2);
     return Response.json({ candidates: [{ content: { parts: [{ text: `\`\`\`json\n${JSON.stringify(modelResult)}\n\`\`\`` }] } }], usageMetadata: { promptTokenCount: 80, candidatesTokenCount: 20 } });
   }, async () => {

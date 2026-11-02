@@ -3,6 +3,7 @@ import type { ProviderNetworkConfig } from "../api-network";
 import { FALLBACK_MODEL_OPTIONS, mergeModelOptions, SUPPORTS_ACCOUNT_MODEL_DISCOVERY } from "../provider-catalog";
 import { providerFetch } from "./provider-network";
 import { ProviderError } from "./providers";
+import { isJsonParserErrorMessage } from "../error-message";
 
 interface ProviderModelRequest {
   provider: ProviderId;
@@ -44,7 +45,7 @@ export async function providerResponseError(response: Response, provider: Provid
   } catch {
     // Provider proxies can return HTML or an empty response; do not expose it.
   }
-  const detail = safeProviderDetail(rawMessage, apiKey);
+  const detail = safeProviderDetail(isJsonParserErrorMessage(rawMessage) ? "" : rawMessage, apiKey);
   const lower = detail.toLowerCase();
   const providerName = provider === "gemini" ? "Google Gemini" : "سرویس‌دهنده";
 

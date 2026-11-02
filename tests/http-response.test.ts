@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { readJsonResponse } from "../lib/http-response";
+import { invalidProviderJsonMessage, isJsonParserErrorMessage } from "../lib/error-message";
 
 test("valid JSON errors remain available to the caller", async () => {
   const response = new Response(JSON.stringify({ error: "کلید API معتبر نیست." }), {
@@ -10,6 +11,23 @@ test("valid JSON errors remain available to the caller", async () => {
   });
   const payload = await readJsonResponse<{ error: string }>(response, "آزمایش اتصال");
   assert.equal(payload.error, "کلید API معتبر نیست.");
+});
+
+test("raw JSON parser errors forwarded by a server are sanitized before display", async () => {
+  const response = new Response(JSON.stringify({ error: 'Unexpected token \'<\', "<!DOCTYPE "... is not valid JSON' }), {
+    status: 502,
+    headers: { "Content-Type": "application/json" },
+  });
+  const payload = await readJsonResponse<{ error: string }>(response, "آزمایش اتصال");
+  assert.match(payload.error, /پاسخ JSON معتبر نداد/);
+  assert.match(payload.error, /۵۰۲/);
+  assert.doesNotMatch(payload.error, /Unexpected token|<!DOCTYPE|not valid JSON/);
+});
+
+test("server-side JSON parser failures have a stable safe provider message", () => {
+  assert.equal(isJsonParserErrorMessage(new SyntaxError('Unexpected token \'<\', "<!DOCTYPE "... is not valid JSON')), true);
+  assert.equal(isJsonParserErrorMessage("کلید API معتبر نیست."), false);
+  assert.doesNotMatch(invalidProviderJsonMessage(), /Unexpected token|<!DOCTYPE/);
 });
 
 test("HTML gateway errors become a safe message with the HTTP status", async () => {
