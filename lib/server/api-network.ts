@@ -1,4 +1,5 @@
 import { isIPv4 } from "node:net";
+import { Agent } from "undici";
 import type { ApiNetworkPublicStatus } from "../types";
 import { SHECAN_DNS, type ProviderNetworkConfig } from "../api-network";
 import { closeProviderNetwork, providerFetch, ProviderNetworkError } from "./provider-network";
@@ -125,25 +126,42 @@ function safeNetworkCode(error: unknown): string {
 
 async function activateUpdateUrl(updateUrl: string): Promise<string> {
   let response: Response;
-  try {
-    response = await fetch(updateUrl, {
+  let ipv4Agent: Agent | undefined;
+  const request = async (forceIpv4: boolean) => {
+    if (forceIpv4) ipv4Agent = new Agent({ connect: { family: 4, timeout: 15_000 } });
+    const init: RequestInit & { dispatcher?: Agent } = {
       cache: "no-store",
       redirect: "follow",
       signal: AbortSignal.timeout(15_000),
       headers: { "User-Agent": "Nomreh-Shecan-IP-Activation/1.0" },
-    });
+    };
+    if (ipv4Agent) init.dispatcher = ipv4Agent;
+    return fetch(updateUrl, init);
+  };
+  try {
+    try {
+      response = await request(false);
+    } catch (error) {
+      // Some shared hosts advertise an unreachable IPv6 route. Shecan's
+      // documented IP-update flow is IPv4; retry only this Shecan request.
+      if (safeNetworkCode(error) !== "UND_ERR_CONNECT_TIMEOUT") throw error;
+      response = await request(true);
+    }
+    await response.arrayBuffer();
+    const finalUrl = new URL(response.url || updateUrl);
+    const finalHost = finalUrl.hostname.toLowerCase();
+    if (finalUrl.protocol !== "https:" || !(finalHost === "shecan.ir" || finalHost.endsWith(".shecan.ir"))) {
+      throw new ApiNetworkError("لینک به‌روزرسان به مقصد غیرمنتظره‌ای هدایت شد و پذیرفته نشد.", 400);
+    }
+    if (!response.ok) throw new ApiNetworkError(`شکن لینک به‌روزرسان را نپذیرفت (HTTP ${response.status}). لینک را از همان سفارش فعال دوباره کپی کنید.`, 400);
+    return new Date().toISOString();
   } catch (error) {
+    if (error instanceof ApiNetworkError) throw error;
     const code = safeNetworkCode(error);
     throw new ApiNetworkError(`فراخوانی لینک به‌روزرسان شکن ناموفق بود؛ لینک و دسترسی خروجی سرور به shecan.ir را بررسی کنید.${code ? ` کد فنی: ${code}.` : ""}`, 502, { cause: error });
+  } finally {
+    if (ipv4Agent) await ipv4Agent.close().catch(() => undefined);
   }
-  await response.arrayBuffer();
-  const finalUrl = new URL(response.url || updateUrl);
-  const finalHost = finalUrl.hostname.toLowerCase();
-  if (finalUrl.protocol !== "https:" || !(finalHost === "shecan.ir" || finalHost.endsWith(".shecan.ir"))) {
-    throw new ApiNetworkError("لینک به‌روزرسان به مقصد غیرمنتظره‌ای هدایت شد و پذیرفته نشد.", 400);
-  }
-  if (!response.ok) throw new ApiNetworkError(`شکن لینک به‌روزرسان را نپذیرفت (HTTP ${response.status}). لینک را از همان سفارش فعال دوباره کپی کنید.`, 400);
-  return new Date().toISOString();
 }
 
 export async function ensureApiNetworkActivated(network: ApiNetworkConfig): Promise<void> {
