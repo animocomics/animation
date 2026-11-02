@@ -47,7 +47,7 @@ jobs:
           set -euo pipefail
           build_state=""
           for attempt in 1 2 3 4 5; do
-            build_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41527723411" --jq '.status + " " + .conclusion')"
+            build_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41530901666" --jq '.status + " " + .conclusion')"
             if [ "$build_state" = "completed success" ]; then break; fi
             sleep 3
           done
