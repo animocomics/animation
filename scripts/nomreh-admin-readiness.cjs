@@ -147,6 +147,7 @@ async function readConfiguredAdminFromPlesk() {
     }
     if (!domainFound) throw new Error("Nomreh's scoped Node.js settings were not found; no application credentials were read.");
     await page.waitForTimeout(1800);
+    await page.getByText("Application Root", { exact: true }).waitFor({ state: "visible", timeout: 15000 }).catch(() => undefined);
     const body = await page.locator("body").innerText().catch(() => "");
     if (!body.includes(`Node.js on ${DOMAIN}`) || !body.includes("Application Root") || !body.includes("/nomreh.arounidea.com") || !body.includes("server.js")) {
       throw new Error("The Node.js page was not verified as Nomreh's server.js application; no application credentials were read.");
