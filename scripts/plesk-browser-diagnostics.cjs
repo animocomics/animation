@@ -769,7 +769,8 @@ async function main() {
                 }
                 if (unexpectedNativeDialog) throw new Error(`An unexpected browser dialog stopped cleanup: ${sanitize(unexpectedNativeDialog)}`);
                 await page.waitForTimeout(2500);
-                if (await page.getByText(name, { exact: true }).count()) {
+                const archiveStillVisible = await page.locator("a:visible").evaluateAll((anchors, expectedName) => anchors.some((anchor) => (anchor.textContent || "").trim() === expectedName), name);
+                if (archiveStillVisible) {
                   const removalBody = await page.locator("body").innerText().catch(() => "");
                   const removalLines = removalBody.split(/\r?\n/).map((line) => line.trim()).filter((line) => /remove|delete|confirm|selected|permanently|are you sure|cancel/i.test(line) && !/secret|token|password|credential/i.test(line)).slice(0, 30);
                   for (const line of removalLines) lines.push(`- Removal state: ${sanitize(line.slice(0, 300))}`);
