@@ -51,6 +51,15 @@ class PackageProbeTests(unittest.TestCase):
             self.assertNotIn('nomreh-vm/gui/guest/initramfs-gui', archive.namelist())
             self.assertIn('nomreh-vm/gui/run-gui.sh', archive.namelist())
 
+    def test_rejects_oversized_expanded_base(self):
+        original = package.MAX_BASE_EXPANDED
+        try:
+            package.MAX_BASE_EXPANDED = 10
+            with self.assertRaisesRegex(ValueError, 'Base archive expands'):
+                package.pack(self.runtime, self.output, part_size=1000)
+        finally:
+            package.MAX_BASE_EXPANDED = original
+
     def test_independent_validator_detects_tampering(self):
         package.pack(self.runtime, self.output, part_size=1000)
         verified = validator.verify(self.output)

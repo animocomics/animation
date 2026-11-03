@@ -22,14 +22,14 @@ jobs:
       - name: Require successful local-only preparation
         env:
           GH_TOKEN: ${{ github.token }}
-        run: test "$(gh api repos/${GITHUB_REPOSITORY}/actions/runs/41613456732 --jq '.status + " " + .conclusion')" = 'completed success'
+        run: test "$(gh api repos/${GITHUB_REPOSITORY}/actions/runs/41614976333 --jq '.status + " " + .conclusion')" = 'completed success'
       - name: Download the exact private diagnostic artifact
         uses: actions/download-artifact@v4
         with:
           name: official-offline-host-probe
           path: ${{ runner.temp }}/host-probe-packages
           github-token: ${{ github.token }}
-          run-id: 41613456732
+          run-id: 41614976333
       - name: Check independent verifier tests
         run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests/shecan-vm -v
       - name: Verify all paths, file hashes and assembled payload
