@@ -14,7 +14,7 @@ QEMU_SHA256=57524261a242b4816f3790e5118a312bae9ccf7d23eee8a53c1b8a9a3001ddd7
 KERNEL_URL=https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/x86_64/netboot-3.24.2/vmlinuz-virt
 KERNEL_SHA256=40f620bc8c93d952e57dd8dfc0f94fca1759d192a4fc4a260705d50ca378559c
 WORK=$(mktemp -d)
-trap 'rm -rf "$WORK"' EXIT
+trap 'rm -rf "$WORK" 2>/dev/null || true' EXIT
 mkdir -p "$WORK/downloads" "$WORK/qemu" "$WORK/glibc" "$WORK/staging/nomreh-vm/probe/qemu" "$WORK/staging/nomreh-vm/probe/guest"
 
 curl --fail --location --silent --show-error --retry 5 --retry-all-errors \
@@ -29,6 +29,7 @@ printf '%s  %s\n' "$KERNEL_SHA256" "$WORK/downloads/vmlinuz-virt" | sha256sum --
 # Ubuntu 18.04 supplies glibc 2.27 in a domain-local directory. Nothing is
 # installed into the Plesk host and its system loader is never replaced.
 docker run --rm --platform linux/amd64 \
+  -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
   -v "$WORK/glibc:/out" \
   ubuntu:18.04@sha256:152dc042452c496007f07ca9127571cb9c29697f42acbfad72324b2bb2e43c98 \
   bash -euo pipefail -c '
@@ -38,6 +39,7 @@ docker run --rm --platform linux/amd64 \
     apt-get download libc6 libgcc1 >/dev/null
     for package in /tmp/libc6_*.deb /tmp/libgcc1_*.deb; do dpkg-deb -x "$package" /out; done
     test -f /out/lib/x86_64-linux-gnu/ld-2.27.so
+    chown -R "$HOST_UID:$HOST_GID" /out
     chmod -R a+rX /out
   '
 
