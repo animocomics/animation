@@ -15,6 +15,10 @@ import { decryptSecret, encryptSecret } from "./secret-crypto";
 const UPDATE_URL_PURPOSE = "nomreh-api-network-v1";
 const ACTIVATION_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const TEST_HOST = "generativelanguage.googleapis.com";
+// Last-resort transport addresses for the exact official update host, verified
+// against current public DNS. The original secret URL, SNI and certificate
+// checks remain unchanged; stale answers are still tried and reported first.
+const DDNS_SHECAN_IPV4 = ["185.143.234.133", "185.143.233.133"] as const;
 
 export type { ProviderNetworkConfig } from "../api-network";
 
@@ -168,6 +172,10 @@ function fixedIpv4Lookup(address: string): NonNullable<TcpSocketConnectOpts["loo
     if (options.all) callback(null, [{ address, family: 4 }]);
     else callback(null, address, 4);
   };
+}
+
+function verifiedUpdateAddresses(hostname: string): string[] {
+  return hostname.toLowerCase() === "ddns.shecan.ir" ? [...DDNS_SHECAN_IPV4] : [];
 }
 
 async function activateUpdateUrlWithFetch(updateUrl: string, servers: [string, string]): Promise<void> {
@@ -360,6 +368,7 @@ async function curlUpdateStatusWithFallback(
   let lastError: unknown;
   let dohNote = "";
   let dns5353Note = "";
+  let verifiedDdnsNote = "";
   const shecanAddresses = await shecan.resolve(hostname).catch(() => [] as string[]);
   for (const address of shecanAddresses) {
     attempted.add(address);
@@ -417,6 +426,19 @@ async function curlUpdateStatusWithFallback(
       }
     }
   }
+  // If every resolver is unavailable or cached, still exercise the current
+  // official addresses of the exact update host. This is not a replacement URL
+  // and never relaxes TLS; attempted addresses are not repeated.
+  const verifiedDdnsAddresses = verifiedUpdateAddresses(hostname).filter((address) => !attempted.has(address));
+  if (verifiedUpdateAddresses(hostname).length) verifiedDdnsNote = verifiedDdnsAddresses.length ? "RETRIED" : "SAME";
+  for (const address of verifiedDdnsAddresses) {
+    attempted.add(address);
+    try { return await curlUpdateStatus(updateUrl, servers, address); }
+    catch (error) {
+      if (error instanceof ApiNetworkError) throw error;
+      lastError = error;
+    }
+  }
   // Native HTTPS handles the next independent attempt after connection errors.
   // System resolution is needed here only when no address has failed yet.
   if (!lastError) {
@@ -432,6 +454,10 @@ async function curlUpdateStatusWithFallback(
         lastError = error;
       }
     }
+  }
+  if (lastError && verifiedDdnsNote) {
+    const result = verifiedDdnsNote === "SAME" ? "SAME" : safeNetworkCode(lastError) === "TIMEOUT" ? "TIMEOUT" : "FAILED";
+    throw Object.assign(new Error("Shecan curl and verified official update-address fallback failed"), { code: `CURL_DDNS_${result}`, cause: lastError });
   }
   if (lastError && dns5353Note) {
     throw Object.assign(new Error("Shecan curl and documented port-5353 DNS fallback failed"), { code: `CURL_5353_${dns5353Note}`, cause: lastError });
@@ -514,6 +540,16 @@ async function nativeUpdateStatusWithFallback(updateUrl: string, servers: [strin
     .then((records) => records.filter((record) => isIPv4(record.address)).map((record) => record.address))
     .catch(() => [] as string[]);
   for (const address of systemAddresses) {
+    if (attempted.has(address)) continue;
+    attempted.add(address);
+    try {
+      return await nativeUpdateStatus(updateUrl, fixedIpv4Lookup(address));
+    } catch (error) {
+      if (error instanceof ApiNetworkError) throw error;
+      lastError = error;
+    }
+  }
+  for (const address of verifiedUpdateAddresses(hostname)) {
     if (attempted.has(address)) continue;
     attempted.add(address);
     try {
