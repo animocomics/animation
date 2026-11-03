@@ -1,6 +1,6 @@
 name: Plesk Nomreh read-only memory snapshot
 
-# Read-only check also validates the Plesk-origin-only browser restriction.
+# Read-only check gates on multi-hop redirect origin enforcement.
 
 on:
   push:

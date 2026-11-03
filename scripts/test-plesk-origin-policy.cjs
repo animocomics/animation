@@ -14,6 +14,7 @@ async function main() {
   const otherOrigin = await listen(other);
   const panel = http.createServer((req, res) => {
     if (req.url === "/external-redirect") { res.writeHead(302, { location: `${otherOrigin}/leak` }); return res.end(); }
+    if (req.url === "/chained-redirect") { res.writeHead(302, { location: "/external-redirect" }); return res.end(); }
     if (req.url === "/internal-redirect") { res.writeHead(302, { location: "/ok" }); return res.end(); }
     if (req.url === "/subresource") { res.writeHead(200, { "content-type": "text/html" }); return res.end(`<img src="${otherOrigin}/leak">`); }
     res.end("panel");
@@ -28,6 +29,7 @@ async function main() {
     assert.equal(await page.locator("body").innerText(), "panel");
     await page.goto(`${panelOrigin}/subresource`, { waitUntil: "load" });
     await page.goto(`${panelOrigin}/external-redirect`).catch(() => undefined);
+    await page.goto(`${panelOrigin}/chained-redirect`).catch(() => undefined);
     await page.goto(`${otherOrigin}/leak`).catch(() => undefined);
     assert.equal(leaked, 0, "the non-panel server must receive no requests, including redirects");
     console.log("PLESK_ORIGIN_POLICY_PASS");
