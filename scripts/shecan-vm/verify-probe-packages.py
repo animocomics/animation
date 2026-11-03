@@ -54,7 +54,7 @@ def verify(directory):
             seen.add(name)
             total += item.file_size
             if total > MAX_BASE or item.file_size > MAX_BASE:
-                raise ValueError('Base expands beyond its safety budget')
+                raise ValueError(f'Base expands beyond its safety budget: partial_bytes={total}, file_bytes={item.file_size}, entry={relative}')
             mode = item.external_attr >> 16
             with archive.open(item) as contents:
                 hasher = hashlib.sha256()
