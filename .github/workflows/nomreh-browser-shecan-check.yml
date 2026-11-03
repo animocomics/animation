@@ -1,8 +1,8 @@
 name: Nomreh real-browser Shecan and provider check
 
-# Application source under test: c780a64de740df509ba7a152632d52be41a2693c
-# Hosted source verified by SHA-256 in extraction run 41546736280 and restarted in run 41547465491.
-# Test the documented DNS 5353 path; test stored Gemini only after Shecan is verified active.
+# Application source under test: 0eaa658f17e26f040b3e0481c358f03e8cebcf4f
+# Hosted source verified by SHA-256 in extraction run 41550844958 and restarted in run 41551557714.
+# Test official Pro DoH with its pinned transport plus system fallback, then the documented DNS 5353 path; test stored Gemini only after Shecan is verified active.
 
 on:
   push:
