@@ -1,8 +1,8 @@
 name: Nomreh real-browser Shecan and provider check
 
-# Application source under test: cfcf7abf8b2afbcb3a9fac2d6301353e145e31bf
-# Hosted source verified by SHA-256 in extraction run 41579786162 and restarted in run 41580341222.
-# Test scoped DNS/53, Pro DoH, DoT/853, DNS/5353, literal direct curl, verified DDNS addresses, official nddns, SNI proxy nodes and shecan.ir/ip; test stored Gemini only after Shecan is verified active.
+# Application source under test: 148ba13b1baa9f6e687f5e51a5a28307363ffa4d
+# Hosted source verified by SHA-256 in extraction run 41584152680; app runtime restarted in run 41582273458.
+# Read-only final inspection retains documented DNS/DDNS/nddns methods and excludes the unverified SNI proxy fallback. Activation run 41580613143 is the latest real network attempt.
 
 on:
   push:
