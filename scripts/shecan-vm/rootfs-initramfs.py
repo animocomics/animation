@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Pack an Alpine rootfs and a scoped /init as a reproducible gzip initramfs."""
+"""Pack an Alpine rootfs and a scoped /init as a reproducible XZ initramfs."""
 
-import gzip
+import lzma
 import os
 import stat
 import sys
@@ -57,7 +57,7 @@ def main():
     archive = b"".join(entry(index + 1, *item) for index, item in enumerate(entries))
     archive += entry(0, TRAILER, 0)
     with open(output_path, "wb") as output:
-        output.write(gzip.compress(archive, compresslevel=9, mtime=0))
+        output.write(lzma.compress(archive, format=lzma.FORMAT_XZ, check=lzma.CHECK_CRC32, preset=6))
     print(f"initramfs entries={len(entries) + 1} uncompressed_bytes={len(archive)} compressed_bytes={os.path.getsize(output_path)}")
 
 

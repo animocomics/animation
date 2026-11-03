@@ -29,7 +29,13 @@ while IFS= read -r -d '' binary; do
     strip --strip-unneeded "$binary"
   fi
 done < <(find "$WORK/full/nomreh-vm/gui/qemu/bin" "$WORK/full/nomreh-vm/gui/qemu/lib" -type f -print0)
-echo 'QEMU/glibc size after stripping:'
+# This x86-64 guest boots a Linux kernel directly through SeaBIOS. Firmware
+# for other architectures and UEFI is unused; the local boot below is a gate.
+QEMU_SHARE="$WORK/full/nomreh-vm/gui/qemu/share/qemu"
+rm -f "$QEMU_SHARE"/edk2-* "$QEMU_SHARE"/openbios-* \
+  "$QEMU_SHARE/slof.bin" "$QEMU_SHARE/skiboot.lid"
+rm -rf "$WORK/full/nomreh-vm/gui/qemu/share/doc"
+echo 'QEMU/glibc size after stripping and scoped firmware removal:'
 du -sh "$WORK/full/nomreh-vm/gui/qemu" "$WORK/full/nomreh-vm/gui/glibc"
 echo 'Largest QEMU files:'
 du -ah "$WORK/full/nomreh-vm/gui/qemu" | sort -h | tail -25
@@ -54,6 +60,10 @@ docker run --rm --platform linux/amd64 \
       busybox musl gcompat libc6-compat ca-certificates \
       webkit2gtk-4.1 gtk+3.0 dbus tinyproxy font-noto-arabic >/dev/null
     rm -rf /out/var/cache/apk/* /out/usr/share/man
+    # WebKit compositing/DMABUF are disabled for Xvnc. These large software
+    # rasterizer components are not loaded in that mode; the boot gate proves it.
+    rm -f /out/usr/lib/libLLVM.so.* /out/usr/lib/libgallium-*.so
+    rm -rf /out/usr/lib/dri
     chown -R "$HOST_UID:$HOST_GID" /out
     chmod -R a+rX /out
     chmod 0755 /out/usr/local/bin/nomreh-gui-probe
