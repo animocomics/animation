@@ -15,6 +15,9 @@ const sessions = new Map();
 const reverseSockets = [];
 const reverseWaiters = [];
 let reverseServer = null;
+let reverseAccepted = 0;
+let reverseRejected = 0;
+let reverseLastRejection = "NONE";
 
 function cookieHash(request) {
   return crypto.createHash("sha256").update(String(request.headers.cookie || "")).digest("hex");
@@ -124,10 +127,19 @@ function configuredReversePort() {
 function ensureReverseServer(port) {
   if (reverseServer) return;
   const server = net.createServer((socket) => {
-    if (!["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(String(socket.remoteAddress || ""))) {
+    const peer = String(socket.remoteAddress || "");
+    const loopback = ["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(peer);
+    // QEMU SLIRP normally presents a loopback peer, but some host stacks
+    // preserve the isolated guest address. This listener remains bound to
+    // 127.0.0.1; only the documented guest address is an additional peer.
+    const isolatedGuest = ["10.0.2.15", "::ffff:10.0.2.15"].includes(peer);
+    if (!loopback && !isolatedGuest) {
+      reverseRejected += 1;
+      reverseLastRejection = peer ? "OTHER_PEER" : "UNKNOWN_PEER";
       socket.destroy();
       return;
     }
+    reverseAccepted += 1;
     socket.setNoDelay(true);
     socket.pause();
     socket.on("error", () => undefined);
@@ -170,7 +182,7 @@ function reverseDiagnostics(port) {
     const command = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8");
     guestFlag = command.includes(`nomreh_vnc_reverse=${port}`) ? "GUEST_FLAG_OK" : "GUEST_FLAG_MISSING";
   } catch { guestFlag = "GUEST_UNKNOWN"; }
-  return `${listener}_${guestFlag}_Q${Math.min(reverseSockets.length, 9)}`;
+  return `${listener}_${guestFlag}_Q${Math.min(reverseSockets.length, 9)}_A${Math.min(reverseAccepted, 99)}_R${Math.min(reverseRejected, 99)}_${reverseLastRejection}`;
 }
 
 function takeReverseSocket(port) {
