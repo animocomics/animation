@@ -47,22 +47,28 @@ done
       echo NOMREH_LOCAL_DISPLAY_RELAY_READY > /dev/console
       # The host connects to a private Unix socket and sends one byte before
       # the guest connects to its loopback-only VNC server. No NIC is present.
+      # Keep the virtio port open across the handshake and RFB relay. Closing
+      # its only guest descriptor can disconnect the host-side socket.
+      exec 3<>/dev/vport0p1
       handshake=0
       for attempt in $(seq 1 90); do
         : > /tmp/display-handshake
-        /bin/busybox timeout 1 /bin/busybox dd if=/dev/vport0p1 of=/tmp/display-handshake bs=1 count=1 2>/dev/null || true
+        /bin/busybox timeout 1 /bin/busybox dd of=/tmp/display-handshake bs=1 count=1 <&3 2>/dev/null || true
         if [ -s /tmp/display-handshake ]; then handshake=1; break; fi
         sleep 1
       done
       if [ "$handshake" -eq 1 ]; then
         echo NOMREH_LOCAL_DISPLAY_RELAY_STARTED > /dev/console
-        /bin/busybox timeout 50 socat -d -d OPEN:/dev/vport0p1,rdwr TCP:127.0.0.1:5900 > /var/log/relay.log 2>&1
+        /bin/busybox timeout 50 socat -d -d STDIO TCP:127.0.0.1:5900 <&3 >&3 2>/var/log/relay.log
         relay_status=$?
         echo "NOMREH_LOCAL_DISPLAY_RELAY_EXIT $relay_status" > /dev/console
         if grep -qi 'Permission denied' /var/log/relay.log; then echo NOMREH_LOCAL_DISPLAY_DIAGNOSTIC permission > /dev/console; fi
         if grep -qi 'No such file' /var/log/relay.log; then echo NOMREH_LOCAL_DISPLAY_DIAGNOSTIC missing > /dev/console; fi
         if grep -qi 'Connection refused' /var/log/relay.log; then echo NOMREH_LOCAL_DISPLAY_DIAGNOSTIC connection_refused > /dev/console; fi
         if grep -qi 'Inappropriate ioctl' /var/log/relay.log; then echo NOMREH_LOCAL_DISPLAY_DIAGNOSTIC ioctl > /dev/console; fi
+        if grep -qi 'unknown option' /var/log/relay.log; then echo NOMREH_LOCAL_DISPLAY_DIAGNOSTIC unknown_option > /dev/console; fi
+        if grep -qi 'Input/output error' /var/log/relay.log; then echo NOMREH_LOCAL_DISPLAY_DIAGNOSTIC io_error > /dev/console; fi
+        if grep -qi 'Invalid argument' /var/log/relay.log; then echo NOMREH_LOCAL_DISPLAY_DIAGNOSTIC invalid_argument > /dev/console; fi
       else
         echo NOMREH_LOCAL_DISPLAY_ERROR handshake > /dev/console
       fi
