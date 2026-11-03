@@ -507,6 +507,66 @@ async function logout() {
   }
 }
 
+async function officialRuntimeReadiness(page, validateOfficialRuntime) {
+  const networkResponse = await context.request.get(`${ORIGIN}/api/admin/api-network`);
+  const networkPayload = await networkResponse.json();
+  if (!networkResponse.ok() || !networkPayload.status) throw new Error("The Shecan status API was not available to the authenticated admin.");
+  lines.push(`- Shecan enabled: ${networkPayload.status.enabled ? "yes" : "no"}.`, `- Shecan plan: ${networkPayload.status.plan}; transport: ${clean(networkPayload.status.transport)}; encrypted update link stored: ${networkPayload.status.hasUpdateUrl ? "yes" : "no"}.`, `- Last Shecan test state: ${clean(networkPayload.status.lastTestStatus)}.`);
+  const runtimeResponse = await context.request.get(`${ORIGIN}/api/admin/shecan-runtime`);
+  const runtimePayload = await runtimeResponse.json().catch(() => ({}));
+  if (!runtimeResponse.ok() || typeof runtimePayload.runtime?.installed !== "boolean") throw new Error("The authenticated official-runtime status API was not operational.");
+  lines.push(`- Official runtime installed: ${runtimePayload.runtime.installed ? "yes" : "no"}; running: ${runtimePayload.runtime.running ? "yes" : "no"}; app-ready: ${runtimePayload.runtime.appReady ? "yes" : "no"}.`);
+  if (validateOfficialRuntime) {
+    if (!runtimePayload.runtime.installed) throw new Error("The official runtime is not installed; live admin framebuffer validation cannot start.");
+    if (!runtimePayload.runtime.appReady) {
+      const startResponse = await context.request.post(`${ORIGIN}/api/admin/shecan-runtime`, { data: { action: "start" } });
+      if (![200, 202].includes(startResponse.status())) throw new Error(`The isolated official runtime start returned HTTP ${startResponse.status()}.`);
+    }
+    const deadline = Date.now() + 360_000;
+    let currentRuntime = runtimePayload.runtime;
+    while (Date.now() < deadline && (!currentRuntime.appReady || !currentRuntime.brokerReady)) {
+      await page.waitForTimeout(2500);
+      const response = await context.request.get(`${ORIGIN}/api/admin/shecan-runtime`);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok() || !payload.runtime) throw new Error("Official runtime status was lost during startup.");
+      currentRuntime = payload.runtime;
+      if (currentRuntime.phase === "error") throw new Error(`The official runtime entered its sanitized error state: ${clean(currentRuntime.message)}`);
+    }
+    if (!currentRuntime.appReady || !currentRuntime.brokerReady) throw new Error("The official runtime did not become app/broker ready within six minutes.");
+    lines.push("- The isolated official guest reported its real app and loopback AI broker ready. No login, OTP, update-link, or provider request was submitted.");
+    await page.goto(`${ORIGIN}/admin`, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.locator(".official-shecan-screen.connected").waitFor({ state: "visible", timeout: 120_000 });
+    const canvas = page.locator(".official-shecan-vnc canvas").first();
+    await canvas.waitFor({ state: "visible", timeout: 30_000 });
+    await page.waitForTimeout(2500);
+    const frame = await canvas.evaluate(async (element) => {
+      const canvasElement = element;
+      const context2d = canvasElement.getContext("2d");
+      if (!context2d) throw new Error("The live VNC canvas has no readable 2D framebuffer.");
+      const width = canvasElement.width;
+      const height = canvasElement.height;
+      const pixels = context2d.getImageData(0, 0, width, height).data;
+      const colors = new Set();
+      let minimum = 255;
+      let maximum = 0;
+      for (let index = 0; index < pixels.length; index += 4) {
+        const red = pixels[index];
+        const green = pixels[index + 1];
+        const blue = pixels[index + 2];
+        if (colors.size < 4096) colors.add((red << 16) | (green << 8) | blue);
+        const luminance = Math.round((red + green + blue) / 3);
+        minimum = Math.min(minimum, luminance);
+        maximum = Math.max(maximum, luminance);
+      }
+      const digest = await crypto.subtle.digest("SHA-256", pixels);
+      const hash = Array.from(new Uint8Array(digest)).map((value) => value.toString(16).padStart(2, "0")).join("");
+      return { width, height, colors: colors.size, luminanceRange: maximum - minimum, hash };
+    });
+    if (frame.width < 800 || frame.height < 600 || frame.colors < 16 || frame.luminanceRange < 24) throw new Error(`The live admin VNC framebuffer did not pass diversity checks: ${JSON.stringify(frame)}`);
+    lines.push(`- Authenticated admin noVNC framebuffer passed: ${frame.width}x${frame.height}; colors=${frame.colors}; luminance-range=${frame.luminanceRange}; SHA-256=${frame.hash}.`);
+  }
+}
+
 async function main() {
   browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
   context = await browser.newContext({ ignoreHTTPSErrors: false, viewport: { width: 1440, height: 1000 } });
@@ -594,6 +654,15 @@ async function main() {
   const usersPayload = await usersResponse.json();
   if (!usersResponse.ok() || !Array.isArray(usersPayload.users)) throw new Error("The admin-only account API was not available to the authenticated admin.");
   lines.push(`- Admin-only account management API: HTTP ${usersResponse.status()}; ${usersPayload.users.length} account(s) visible without exposing their details.`);
+
+  if (process.env.NOMREH_OFFICIAL_ONLY === "1") {
+    await officialRuntimeReadiness(page, true);
+    await page.getByText("برنامهٔ رسمی شکن در محیط جداگانه", { exact: true }).waitFor({ state: "visible" });
+    await page.getByText("لینک به‌روزرسان و روش دستی", { exact: false }).waitFor({ state: "visible" });
+    if (await page.locator("#shecan-account-identifier, #shecan-otp-code").count()) throw new Error("The rejected substitute OTP form is still present in the admin UI.");
+    lines.push("- The authenticated admin displayed the genuine official application and preserved the manual-link fallback; no substitute OTP form was present.", "- Official-only validation complete. No provider request, Shecan login/OTP, update link, AI activation, or grading job was submitted.", "");
+    return;
+  }
 
   const providerResponse = await context.request.get(`${ORIGIN}/api/provider`);
   const providerPayload = await providerResponse.json();
@@ -758,64 +827,8 @@ async function main() {
   if (!modelOptions.includes("glm-5.3-flash")) throw new Error("GLM 5.3 Flash was not available in the actual admin model catalog.");
   lines.push("- Z.AI model catalog includes glm-5.3-flash. No provider setting was saved.");
 
-  const networkResponse = await context.request.get(`${ORIGIN}/api/admin/api-network`);
-  const networkPayload = await networkResponse.json();
-  if (!networkResponse.ok() || !networkPayload.status) throw new Error("The Shecan status API was not available to the authenticated admin.");
-  lines.push(`- Shecan enabled: ${networkPayload.status.enabled ? "yes" : "no"}.`, `- Shecan plan: ${networkPayload.status.plan}; transport: ${clean(networkPayload.status.transport)}; encrypted update link stored: ${networkPayload.status.hasUpdateUrl ? "yes" : "no"}.`, `- Last Shecan test state: ${clean(networkPayload.status.lastTestStatus)}.`);
-  const runtimeResponse = await context.request.get(`${ORIGIN}/api/admin/shecan-runtime`);
-  const runtimePayload = await runtimeResponse.json().catch(() => ({}));
-  if (!runtimeResponse.ok() || typeof runtimePayload.runtime?.installed !== "boolean") throw new Error("The authenticated official-runtime status API was not operational.");
-  lines.push(`- Official runtime installed: ${runtimePayload.runtime.installed ? "yes" : "no"}; running: ${runtimePayload.runtime.running ? "yes" : "no"}; app-ready: ${runtimePayload.runtime.appReady ? "yes" : "no"}.`);
   const validateOfficialRuntime = process.env.NOMREH_VALIDATE_OFFICIAL_RUNTIME === "1";
-  if (validateOfficialRuntime) {
-    if (!runtimePayload.runtime.installed) throw new Error("The official runtime is not installed; live admin framebuffer validation cannot start.");
-    if (!runtimePayload.runtime.appReady) {
-      const startResponse = await context.request.post(`${ORIGIN}/api/admin/shecan-runtime`, { data: { action: "start" } });
-      if (![200, 202].includes(startResponse.status())) throw new Error(`The isolated official runtime start returned HTTP ${startResponse.status()}.`);
-    }
-    const deadline = Date.now() + 360_000;
-    let currentRuntime = runtimePayload.runtime;
-    while (Date.now() < deadline && (!currentRuntime.appReady || !currentRuntime.brokerReady)) {
-      await page.waitForTimeout(2500);
-      const response = await context.request.get(`${ORIGIN}/api/admin/shecan-runtime`);
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok() || !payload.runtime) throw new Error("Official runtime status was lost during startup.");
-      currentRuntime = payload.runtime;
-      if (currentRuntime.phase === "error") throw new Error(`The official runtime entered its sanitized error state: ${clean(currentRuntime.message)}`);
-    }
-    if (!currentRuntime.appReady || !currentRuntime.brokerReady) throw new Error("The official runtime did not become app/broker ready within six minutes.");
-    lines.push("- The isolated official guest reported its real app and loopback AI broker ready. No login, OTP, update-link, or provider request was submitted.");
-    await page.goto(`${ORIGIN}/admin`, { waitUntil: "domcontentloaded", timeout: 30000 });
-    await page.locator(".official-shecan-screen.connected").waitFor({ state: "visible", timeout: 120_000 });
-    const canvas = page.locator(".official-shecan-vnc canvas").first();
-    await canvas.waitFor({ state: "visible", timeout: 30_000 });
-    await page.waitForTimeout(2500);
-    const frame = await canvas.evaluate(async (element) => {
-      const canvasElement = element;
-      const context2d = canvasElement.getContext("2d");
-      if (!context2d) throw new Error("The live VNC canvas has no readable 2D framebuffer.");
-      const width = canvasElement.width;
-      const height = canvasElement.height;
-      const pixels = context2d.getImageData(0, 0, width, height).data;
-      const colors = new Set();
-      let minimum = 255;
-      let maximum = 0;
-      for (let index = 0; index < pixels.length; index += 4) {
-        const red = pixels[index];
-        const green = pixels[index + 1];
-        const blue = pixels[index + 2];
-        if (colors.size < 4096) colors.add((red << 16) | (green << 8) | blue);
-        const luminance = Math.round((red + green + blue) / 3);
-        minimum = Math.min(minimum, luminance);
-        maximum = Math.max(maximum, luminance);
-      }
-      const digest = await crypto.subtle.digest("SHA-256", pixels);
-      const hash = Array.from(new Uint8Array(digest)).map((value) => value.toString(16).padStart(2, "0")).join("");
-      return { width, height, colors: colors.size, luminanceRange: maximum - minimum, hash };
-    });
-    if (frame.width < 800 || frame.height < 600 || frame.colors < 16 || frame.luminanceRange < 24) throw new Error(`The live admin VNC framebuffer did not pass diversity checks: ${JSON.stringify(frame)}`);
-    lines.push(`- Authenticated admin noVNC framebuffer passed: ${frame.width}x${frame.height}; colors=${frame.colors}; luminance-range=${frame.luminanceRange}; SHA-256=${frame.hash}.`);
-  }
+  await officialRuntimeReadiness(page, validateOfficialRuntime);
   await page.getByText("برنامهٔ رسمی شکن در محیط جداگانه", { exact: true }).waitFor({ state: "visible" });
   await page.getByText("لینک به‌روزرسان و روش دستی", { exact: false }).waitFor({ state: "visible" });
   if (await page.locator("#shecan-account-identifier, #shecan-otp-code").count()) throw new Error("The rejected substitute OTP form is still present in the admin UI.");

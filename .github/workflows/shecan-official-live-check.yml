@@ -1,0 +1,59 @@
+name: Validate the official Shecan app in live Nomreh admin
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+
+concurrency:
+  group: shecan-official-live-check
+  cancel-in-progress: false
+
+jobs:
+  official-live-admin:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare an isolated temporary browser
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/nomreh-official-e2e"
+          cd "$RUNNER_TEMP/nomreh-official-e2e"
+          npm init -y > /dev/null
+          npm install --ignore-scripts --no-audit --no-fund playwright@1.64.1
+          npx playwright install --with-deps chromium
+      - name: Start the isolated guest and verify the authenticated real noVNC canvas
+        id: readiness
+        env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+          NOMREH_ADMIN_USERNAME: ${{ secrets.NOMREH_ADMIN_USERNAME }}
+          NOMREH_ADMIN_PASSWORD: ${{ secrets.NOMREH_ADMIN_PASSWORD }}
+          NOMREH_ALLOW_DEMO_ACCOUNTS: "1"
+          NOMREH_OFFICIAL_ONLY: "1"
+          NOMREH_VALIDATE_OFFICIAL_RUNTIME: "1"
+          NOMREH_E2E_OUTPUT: ${{ runner.temp }}/nomreh-official-live.md
+          NODE_PATH: ${{ runner.temp }}/nomreh-official-e2e/node_modules
+        run: node scripts/nomreh-admin-readiness.cjs
+      - name: Publish sanitized live official-app evidence
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          READINESS_OUTCOME: ${{ steps.readiness.outcome }}
+        run: |
+          set -euo pipefail
+          conclusion=failure
+          summary='The live official-app check did not produce a report; no live success was claimed.'
+          if [ "$READINESS_OUTCOME" = success ]; then conclusion=success; fi
+          if [ -f "$RUNNER_TEMP/nomreh-official-live.md" ]; then summary="$(cat "$RUNNER_TEMP/nomreh-official-live.md")"; fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name="Official Shecan live admin console" \
+            -f head_sha="$GITHUB_SHA" \
+            -f status=completed \
+            -f conclusion="$conclusion" \
+            -f 'output[title]=Authenticated real official-application framebuffer on Plesk' \
+            --raw-field "output[summary]=${summary}" > /dev/null
