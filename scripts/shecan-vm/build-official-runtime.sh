@@ -145,7 +145,7 @@ fi
 set +e
 echo NOMREH_VNC_SMOKE_LAUNCHING
 VNC_SMOKE_TRACE=1 VNC_READ_TIMEOUT_MS=5000 VNC_SMOKE_ATTEMPTS=60 \
-  node "$SOURCE_ROOT/scripts/shecan-vm/vnc-smoke.cjs" 15900 "$WORK/official-framebuffer.ppm" > "$WORK/vnc-smoke.log" 2>&1 &
+  python3 "$SOURCE_ROOT/scripts/shecan-vm/vnc-smoke.py" 15900 "$WORK/official-framebuffer.ppm" > "$WORK/vnc-smoke.log" 2>&1 &
 VNC_PID=$!
 set -e
 echo "NOMREH_VNC_SMOKE_STARTED pid=$VNC_PID"

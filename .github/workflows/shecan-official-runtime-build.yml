@@ -12,7 +12,7 @@ on:
       - scripts/shecan-vm/rootfs-initramfs.py
       - scripts/shecan-vm/extract-alpine-modules.py
       - scripts/shecan-vm/tinyproxy-nomreh.conf
-      - scripts/shecan-vm/vnc-smoke.cjs
+      - scripts/shecan-vm/vnc-smoke.py
   workflow_dispatch:
 
 permissions:
