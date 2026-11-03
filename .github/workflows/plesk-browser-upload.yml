@@ -54,14 +54,18 @@ jobs:
         if: steps.config.outputs.configured == 'true'
         run: |
           set -euo pipefail
-          source_sha=7f49e0fa01d57b5ec6040931c63ce5287292b6c9
-          archive="$RUNNER_TEMP/nomreh-deploy-official-shecan-v34.zip"
-          expected='app/api/admin/api-network/route.ts app/api/admin/shecan-runtime/route.ts app/features.css components/admin-panel.tsx components/official-shecan-console.tsx lib/api-network.ts lib/server/api-network.ts lib/server/db.ts lib/server/provider-network.ts lib/server/shecan-runtime.ts lib/types.ts package-lock.json package.json scripts/next-server.cjs scripts/plesk-space.cjs scripts/shecan-vnc-websocket.cjs types/novnc.d.ts'
+          source_sha=e6ca4a8135817c20a79868d4f024019d8e3b2402
+          archive="$RUNNER_TEMP/nomreh-deploy-offline-vnc-v35.zip"
+          expected='package-lock.json package.json vendor/novnc-novnc-1.7.0.tgz vendor/ws-8.22.1.tgz'
           git archive --format=zip --output="$archive" "$source_sha" $expected
           for required in $expected; do
             unzip -Z1 "$archive" | grep -Fx "$required" > /dev/null
           done
-          test "$(unzip -Z1 "$archive" | grep -vc '/$')" -eq 17
+          test "$(unzip -Z1 "$archive" | grep -vc '/$')" -eq 4
+          test "$(git show "$source_sha:vendor/ws-8.22.1.tgz" | sha256sum | cut -d' ' -f1)" = a5cdb19c7090b816ffc109b6d928d352aa2bce73e38f73bd9678d484a62d2f75
+          test "$(git show "$source_sha:vendor/novnc-novnc-1.7.0.tgz" | sha256sum | cut -d' ' -f1)" = 32689f18d6abe96bc6530828a6bd0b9ae33bda07c083a6575ed255b5a8f2e903
+          git show "$source_sha:package.json" | grep -F '"ws": "file:vendor/ws-8.22.1.tgz"' > /dev/null
+          git show "$source_sha:package.json" | grep -F '"@novnc/novnc": "file:vendor/novnc-novnc-1.7.0.tgz"' > /dev/null
           git show "$source_sha:scripts/plesk-node22.cjs" | grep -F 'Nomreh Passenger-aware launcher is active for this build.' > /dev/null
           git show "$source_sha:scripts/plesk-node22.cjs" | grep -F 'return [mainFile];' > /dev/null
           git show "$source_sha:scripts/plesk-node22.cjs" | grep -F 'syncPublicStatic();' > /dev/null
@@ -104,8 +108,8 @@ jobs:
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
           PLESK_BROWSER_ACTION: upload
-          PLESK_ARCHIVE_NAME: nomreh-deploy-official-shecan-v34.zip
-          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-official-shecan-v34.zip
+          PLESK_ARCHIVE_NAME: nomreh-deploy-offline-vnc-v35.zip
+          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-offline-vnc-v35.zip
           PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-plesk-upload.md
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
         run: node scripts/plesk-browser-diagnostics.cjs
