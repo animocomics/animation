@@ -1,0 +1,152 @@
+name: Inspect official Shecan phone and OTP panel
+
+on:
+  push:
+    branches: [arena/f4b832aa-animation]
+    paths:
+      - .github/workflows/shecan-official-panel-inspect.yml
+
+permissions:
+  contents: read
+  checks: write
+
+concurrency:
+  group: shecan-official-panel-inspect
+  cancel-in-progress: false
+
+jobs:
+  inspect-public-panel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Read only the public official authentication page
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/shecan-panel"
+          cd "$RUNNER_TEMP/shecan-panel"
+          curl --silent --show-error --fail --location --max-time 45 \
+            --user-agent "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/142.0 Safari/537.36" \
+            --cookie cookies.txt --cookie-jar cookies.txt \
+            --dump-header auth-headers.txt --output auth.html \
+            'https://my.shecan.ir/panel/auth?back_url=https%3A%2F%2Fmy.shecan.ir%2Fmy%2Fpage'
+          python - <<'PY'
+          from html.parser import HTMLParser
+          from pathlib import Path
+          from urllib.parse import urljoin, urlsplit
+          import re
+
+          class Inventory(HTMLParser):
+              def __init__(self):
+                  super().__init__()
+                  self.forms = []
+                  self.inputs = []
+                  self.scripts = []
+                  self.buttons = []
+                  self.in_button = False
+              def handle_starttag(self, tag, attrs):
+                  values = dict(attrs)
+                  if tag == 'form':
+                      self.forms.append({key: values.get(key, '') for key in ['action', 'method', 'id', 'name']})
+                  elif tag == 'input':
+                      self.inputs.append({key: values.get(key, '') for key in ['name', 'type', 'id', 'autocomplete', 'placeholder']})
+                  elif tag == 'script' and values.get('src'):
+                      self.scripts.append(urljoin('https://my.shecan.ir/panel/auth', values['src']))
+                  elif tag == 'button':
+                      self.in_button = True
+              def handle_endtag(self, tag):
+                  if tag == 'button':
+                      self.in_button = False
+              def handle_data(self, data):
+                  if self.in_button and data.strip():
+                      self.buttons.append(data.strip()[:100])
+
+          parser = Inventory()
+          parser.feed(Path('auth.html').read_text(errors='replace'))
+          output = ['# Official Shecan public panel authentication inspection', '',
+                    'No identifier, phone number, credential, OTP, or SMS request was supplied.', '',
+                    '## Response security metadata']
+          for line in Path('auth-headers.txt').read_text(errors='replace').splitlines():
+              if line.startswith('HTTP/') or re.match(r'(?i)^(x-frame-options|content-security-policy|content-security-policy-report-only|referrer-policy|permissions-policy|cross-origin-|x-content-type-options)', line):
+                  output.append(line[:4000])
+              elif line.lower().startswith('set-cookie:'):
+                  cookie = line.split(':', 1)[1].strip()
+                  output.append('set-cookie: ' + cookie.split('=', 1)[0] + '=[value withheld]')
+          output += ['', '## Public forms and inputs', f'Forms: {parser.forms}', f'Inputs: {parser.inputs}',
+                     f'Buttons: {parser.buttons}', '', '## Static script inventory']
+          allowed = []
+          for script in dict.fromkeys(parser.scripts):
+              parsed = urlsplit(script)
+              if parsed.scheme == 'https' and parsed.hostname == 'my.shecan.ir':
+                  allowed.append(script)
+                  output.append(script)
+          Path('scripts.txt').write_text('\n'.join(allowed[:24]))
+          Path('inventory.md').write_text('\n'.join(output))
+          PY
+          : > script-index.txt
+          index=0
+          while IFS= read -r url; do
+            [ -n "$url" ] || continue
+            index=$((index + 1))
+            printf -v name 'script-%02d.js' "$index"
+            if curl --silent --show-error --fail --location --max-time 45 --max-filesize 25000000 \
+              --user-agent "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/142.0 Safari/537.36" \
+              --output "$name" "$url"; then
+              printf '%s %s %s bytes\n' "$name" "$url" "$(stat -c %s "$name")" >> script-index.txt
+            fi
+          done < scripts.txt
+
+      - name: Extract only sanitized public OTP protocol evidence
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/shecan-panel"
+          python - <<'PY'
+          from pathlib import Path
+          import os, re
+          output = [Path('inventory.md').read_text(), '', '## Static script downloads', Path('script-index.txt').read_text(),
+                    '', '## Public authentication and OTP source context']
+          keyword = re.compile(r'(?i)(one[ -]?time|\botp\b|\bsms\b|verification|verify|auth(?:entication)?|شماره همراه|کد تایید|کد تأیید|کد یکبار|یک.bar مصرف)')
+          seen = set()
+          for path in sorted(Path('.').glob('script-*.js')):
+              text = path.read_text(errors='replace')
+              count = 0
+              for match in keyword.finditer(text):
+                  start = max(0, match.start() - 240)
+                  end = min(len(text), match.end() + 520)
+                  snippet = re.sub(r'\s+', ' ', text[start:end]).strip()
+                  if len(snippet) < 20 or snippet in seen:
+                      continue
+                  seen.add(snippet)
+                  snippet = re.sub(r'([?&](?:token|key|secret|password|code)=)[^&\s]+', r'\1[redacted]', snippet, flags=re.I)
+                  if re.search(r'(?i)(BEGIN (?:RSA |EC )?PRIVATE KEY|AIza[0-9A-Za-z_-]{8,})', snippet):
+                      continue
+                  output.append(f'{path} OFFSET {match.start()}: {snippet[:850]}')
+                  count += 1
+                  if count >= 45:
+                      break
+          output += ['', 'Static source evidence only; no login, OTP, activation, or network setting was performed.']
+          Path(os.environ['RUNNER_TEMP'] + '/shecan-panel-report.md').write_text('\n'.join(output)[:59000])
+          PY
+
+      - name: Publish the sanitized public panel report
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -s "$RUNNER_TEMP/shecan-panel-report.md"
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          payload = {
+              'name': 'Official Shecan phone and OTP panel inspection',
+              'head_sha': os.environ['GITHUB_SHA'],
+              'status': 'completed',
+              'conclusion': 'success',
+              'output': {
+                  'title': 'Official Shecan phone and OTP public source',
+                  'summary': Path(os.environ['RUNNER_TEMP'] + '/shecan-panel-report.md').read_text()[:60000],
+              },
+          }
+          Path(os.environ['RUNNER_TEMP'] + '/shecan-panel-check.json').write_text(json.dumps(payload))
+          PY
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" --input "$RUNNER_TEMP/shecan-panel-check.json" > /dev/null
