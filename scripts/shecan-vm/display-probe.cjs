@@ -25,6 +25,7 @@ async function main() {
   vm.on("exit", () => { exited = true; });
   for (const output of [vm.stdout, vm.stderr]) output.on("data", (data) => { vmLog = (vmLog + data.toString()).slice(-40000); });
   let browser, server;
+  const counts = { upgrades: 0, targetConnected: 0, received: 0, sent: 0, targetErrors: 0, targetClosed: 0, pageErrors: 0, scriptFailures: 0 };
   const wss = new WebSocketServer({ noServer: true });
   try {
     const deadline = Date.now() + 180000;
@@ -53,13 +54,14 @@ async function main() {
     });
     server.on("upgrade", (request, connection, head) => {
       if (request.url !== "/vnc") return connection.destroy();
+      counts.upgrades += 1;
       wss.handleUpgrade(request, connection, head, (ws) => {
         const target = net.createConnection(socketPath);
-        target.on("connect", () => target.write(Buffer.from([0x4e])));
-        target.on("data", (data) => { if (ws.readyState === ws.OPEN) ws.send(data, { binary: true }); });
-        target.on("error", () => ws.close());
-        target.on("close", () => ws.close());
-        ws.on("message", (data) => target.write(data));
+        target.on("connect", () => { counts.targetConnected += 1; target.write(Buffer.from([0x4e])); });
+        target.on("data", (data) => { counts.received += data.length; if (ws.readyState === ws.OPEN) ws.send(data, { binary: true }); });
+        target.on("error", () => { counts.targetErrors += 1; ws.close(); });
+        target.on("close", () => { counts.targetClosed += 1; ws.close(); });
+        ws.on("message", (data) => { counts.sent += data.length; target.write(data); });
         ws.on("error", () => target.destroy());
         ws.on("close", () => target.destroy());
       });
@@ -67,6 +69,8 @@ async function main() {
     await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
     browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
     const page = await browser.newPage({ viewport: { width: 1200, height: 850 } });
+    page.on("pageerror", () => { counts.pageErrors += 1; });
+    page.on("requestfailed", () => { counts.scriptFailures += 1; });
     await page.goto(`http://127.0.0.1:${server.address().port}/`, { waitUntil: "load" });
     await page.waitForFunction(() => window.probeConnected === true, null, { timeout: 45000 });
     // Require real framebuffer pixels, not merely a WebSocket handshake.
@@ -86,6 +90,7 @@ async function main() {
     console.log("NOMREH_NOVNC_LOCAL_PASS");
   } finally {
     if (browser) await browser.close();
+    for (const [label, count] of Object.entries(counts)) console.log(`NOMREH_NOVNC_DIAGNOSTIC ${label}=${count}`);
     for (const client of wss.clients) client.terminate();
     wss.close();
     if (server) await new Promise((resolve) => server.close(resolve));

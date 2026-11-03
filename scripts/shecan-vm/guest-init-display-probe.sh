@@ -49,7 +49,13 @@ done
       # the guest connects to its loopback-only VNC server. No NIC is present.
       if /bin/busybox timeout 90 /bin/busybox dd if=/dev/vport0p1 of=/dev/null bs=1 count=1 2>/dev/null; then
         echo NOMREH_LOCAL_DISPLAY_RELAY_STARTED > /dev/console
-        /bin/busybox timeout 50 socat OPEN:/dev/vport0p1,rdwr TCP:127.0.0.1:5900 > /dev/null 2>&1 || true
+        /bin/busybox timeout 50 socat -d -d OPEN:/dev/vport0p1,rdwr TCP:127.0.0.1:5900 > /var/log/relay.log 2>&1
+        relay_status=$?
+        echo "NOMREH_LOCAL_DISPLAY_RELAY_EXIT $relay_status" > /dev/console
+        if grep -qi 'Permission denied' /var/log/relay.log; then echo NOMREH_LOCAL_DISPLAY_DIAGNOSTIC permission > /dev/console; fi
+        if grep -qi 'No such file' /var/log/relay.log; then echo NOMREH_LOCAL_DISPLAY_DIAGNOSTIC missing > /dev/console; fi
+        if grep -qi 'Connection refused' /var/log/relay.log; then echo NOMREH_LOCAL_DISPLAY_DIAGNOSTIC connection_refused > /dev/console; fi
+        if grep -qi 'Inappropriate ioctl' /var/log/relay.log; then echo NOMREH_LOCAL_DISPLAY_DIAGNOSTIC ioctl > /dev/console; fi
       else
         echo NOMREH_LOCAL_DISPLAY_ERROR handshake > /dev/console
       fi
