@@ -165,22 +165,46 @@ jobs:
           print('\nNo user credential was supplied; no app was executed; no host or DNS setting was contacted or changed.')
           PY
 
-      - name: Prepare the official public extension protocol source report
+      - name: Prepare the official CLI authentication source report
         if: always()
         run: |
           set -euo pipefail
           cd "$RUNNER_TEMP/shecan-app-inspect"
-          {
-            printf '# Official Shecan Chrome extension public protocol source\n\n'
-            printf 'No credential was supplied and no code was executed. This is the public extension JavaScript for static protocol inspection.\n\n'
-            for file in chrome-extension/manifest.json chrome-extension/panelkey.js chrome-extension/background.js chrome-extension/popup.js chrome-extension/detect.js chrome-extension/options.js chrome-extension/flow/stat.js; do
-              if [ -f "$file" ]; then
-                printf '\n## FILE: %s\n\n' "$file"
-                cat "$file"
-                printf '\n'
-              fi
-            done
-          } > "$RUNNER_TEMP/shecan-extension-source.md"
+          python - <<'PY'
+          from pathlib import Path
+          import os, re
+          output = ['# Official Shecan CLI authentication source', '', 'No credential was supplied and no executable was run.', '']
+          script = Path('windows-extracted/console-setup.ps1')
+          if script.exists():
+              output += ['## FILE: console-setup.ps1', '', script.read_text(errors='replace')]
+          needles = [b'/api/auth/login', b'shecanApiKey', b'X-Redmine-API-Key', b'api_key', b'apiKey', b'access_token', b'refresh_token']
+          seen = set()
+          for name in ['windows-extracted/shecan-cli.exe', 'windows-extracted/shecan-desktop.exe']:
+              path = Path(name)
+              if not path.exists():
+                  continue
+              data = path.read_bytes()
+              output += ['', f'## Static string context: {name}', '']
+              count = 0
+              for needle in needles:
+                  start = 0
+                  while count < 12:
+                      offset = data.find(needle, start)
+                      if offset < 0:
+                          break
+                      start = offset + len(needle)
+                      key = (name, offset // 500)
+                      if key in seen:
+                          continue
+                      seen.add(key)
+                      raw = data[max(0, offset - 350):offset + 850]
+                      text = ''.join(chr(byte) if 32 <= byte < 127 else '\n' for byte in raw)
+                      text = re.sub(r'\n{2,}', '\n', text)
+                      text = re.sub(r'([?&](?:token|key|secret|password|code)=)[^&\s]+', r'\1[redacted]', text, flags=re.I)
+                      output += [f'OFFSET {offset}:', text, '']
+                      count += 1
+          Path(os.environ['RUNNER_TEMP'] + '/shecan-cli-source.md').write_text('\n'.join(output)[:59000])
+          PY
 
       - name: Publish the sanitized inspection report
         if: always()
@@ -193,7 +217,7 @@ jobs:
           python - <<'PY'
           import json, os
           from pathlib import Path
-          text = Path(os.environ['RUNNER_TEMP'] + '/shecan-extension-source.md').read_text()[:60000]
+          text = Path(os.environ['RUNNER_TEMP'] + '/shecan-cli-source.md').read_text()[:60000]
           conclusion = 'success' if os.environ.get('INSPECT_OUTCOME') == 'success' else 'failure'
           payload = {
               'name': 'Official Shecan app authentication inspection',
