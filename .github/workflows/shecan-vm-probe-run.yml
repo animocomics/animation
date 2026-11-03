@@ -1,5 +1,7 @@
 name: Run harmless Shecan VM probe on Plesk
 
+# Timeout reports retain only sanitized QEMU/loader diagnostics, never credentials.
+
 on:
   push:
     branches: [arena/f4b832aa-animation]

@@ -561,15 +561,21 @@ async function main() {
           await executeButton.click({ timeout: 8000 });
           const startedAt = Date.now();
           let probeLines = [];
+          let safeConsoleLines = [];
           while (Date.now() - startedAt < 145_000) {
             await page.waitForTimeout(1000);
             const consoleOutput = await outputElement.innerText().catch(() => "");
+            safeConsoleLines = [...new Set(consoleOutput.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && /NOMREH_VM|qemu|BIOS|glibc|loader|error|failed|not found|permission|invalid|timeout|timed out|terminated|killed|exit|TCG|KVM|cannot|could not|unable/i.test(line) && !/secret|token|password|credential|api.key|authorization|cookie/i.test(line)))].slice(-24);
             const failure = consoleOutput.split(/\r?\n/).find((line) => /NOMREH_VM_PROBE_ERROR|npm ERR!|Command failed|exited with status [1-9]|No such file|Permission denied|undefined symbol|version `GLIBC_|could not|unable to/i.test(line));
             if (failure) throw new Error(`The harmless Plesk VM probe could not run: ${sanitize(failure.slice(0, 300))}`);
             probeLines = [...new Set(consoleOutput.split(/\r?\n/).map((line) => line.trim()).filter((line) => /^NOMREH_VM_PROBE_(?:BEGIN|KERNEL|ARCH|NO_NETWORK|SHECAN_INCLUDED|PASS)/.test(line)))];
             if (probeLines.some((line) => line === "NOMREH_VM_PROBE_PASS")) break;
           }
-          if (!probeLines.some((line) => line === "NOMREH_VM_PROBE_PASS")) throw new Error("The harmless Plesk VM did not print PASS within the bounded interval. No app execution or connectivity success is claimed.");
+          if (!probeLines.some((line) => line === "NOMREH_VM_PROBE_PASS")) {
+            for (const line of safeConsoleLines) lines.push(`- VM console diagnostic: ${sanitize(line.slice(0, 350))}`);
+            if (!safeConsoleLines.length) lines.push("- VM console diagnostic: Plesk exposed no matching output lines from the bounded command.");
+            throw new Error("The harmless Plesk VM did not print PASS within the bounded interval. No app execution or connectivity success is claimed.");
+          }
           if (!probeLines.includes("NOMREH_VM_PROBE_NO_NETWORK yes") || !probeLines.includes("NOMREH_VM_PROBE_SHECAN_INCLUDED no")) throw new Error("The harmless VM safety markers were incomplete. No app execution or connectivity success is claimed.");
           for (const line of probeLines.slice(0, 20)) lines.push(`- Harmless VM: ${sanitize(line.slice(0, 250))}`);
           lines.push("- The real QEMU/kernel/glibc bundle booted on Plesk and the guest reported PASS. This proves only the networkless compatibility probe, not Shecan execution, remote display, login, activation, connectivity, or AI routing.", "");
