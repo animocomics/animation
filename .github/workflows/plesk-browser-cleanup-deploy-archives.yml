@@ -2,6 +2,7 @@ name: Plesk Nomreh safe deployment-archive cleanup
 
 # Preserve the currently verified cumulative v32 archive. Delete only exact,
 # redundant nomreh-deploy…zip files in Nomreh's application root.
+# The v5 runtime and v44 HTTP delta are already extracted and verified; their ZIPs are disposable.
 
 on:
   push:
