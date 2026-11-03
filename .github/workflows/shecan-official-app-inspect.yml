@@ -165,25 +165,89 @@ jobs:
           print('\nNo user credential was supplied; no app was executed; no host or DNS setting was contacted or changed.')
           PY
 
-      - name: Probe official SNI proxy candidates without credentials or API keys
+      - name: Probe every official proxy and inspect local-only Linux evidence without credentials
         if: always()
         run: |
           set -uo pipefail
           cd "$RUNNER_TEMP/shecan-app-inspect"
-          : > "$RUNNER_TEMP/shecan-sni-report.md"
-          echo '# Official Shecan SNI-only probes; no credential, update token, or API key' >> "$RUNNER_TEMP/shecan-sni-report.md"
+          report="$RUNNER_TEMP/shecan-sni-report.md"
+          raw="$RUNNER_TEMP/shecan-sni-raw.txt"
+          : > "$report"
+          : > "$raw"
+          echo '# Official Shecan full SNI matrix and Linux local-mode evidence; no credentials or API keys' >> "$report"
+          echo '## Static Linux inventory; binaries were not executed' >> "$report"
+          find linux-extracted -type f -perm /111 -printf '%p %s bytes\n' 2>/dev/null | head -80 >> "$report" || true
+          python - <<'PY' >> "$report"
+          from pathlib import Path
+          needles = [b'127.0.0.1', b'localhost', b'socks5', b'tun2socks', b'shecan.service', b'nxtdns', b'administrator', b'root']
+          for path in Path('linux-extracted').rglob('*'):
+              if not path.is_file() or path.stat().st_size > 120_000_000:
+                  continue
+              if not any(word in path.name.lower() for word in ['shecan', 'nxtdns', 'service']):
+                  continue
+              try:
+                  data = path.read_bytes()
+              except OSError:
+                  continue
+              found = [needle.decode() for needle in needles if needle in data]
+              if found:
+                  print(f'{path}: literal presence only: {", ".join(found)}')
+          print('Literal presence is not evidence of a supported userspace/local-proxy mode.')
+          PY
+          echo '## Direct baselines' >> "$report"
           probe_sni() {
             local url="$1" host="$2" address="$3"
-            local http exit_code
+            local http exit_code log
+            log="$(mktemp)"
             exit_code=0
-            http="$(curl --silent --show-error --output /dev/null --connect-timeout 4 --max-time 7 --resolve "$host:443:$address" --write-out '%{http_code}' "$url" 2> /tmp/shecan-sni-curl.log)" || exit_code=$?
-            echo "$host via $address: curl=$exit_code HTTP=$http $(tail -n 1 /tmp/shecan-sni-curl.log | sed -E 's#https?://[^ ]+#[url]#g')" >> "$RUNNER_TEMP/shecan-sni-report.md"
+            http="$(curl --silent --show-error --output /dev/null --connect-timeout 4 --max-time 7 --resolve "$host:443:$address" --write-out '%{http_code}' "$url" 2> "$log")" || exit_code=$?
+            printf '%s via %s: curl=%s HTTP=%s %s\n' "$host" "$address" "$exit_code" "$http" "$(tail -n 1 "$log" | sed -E 's#https?://[^ ]+#[url]#g')" >> "$RUNNER_TEMP/shecan-sni-raw.txt"
+            rm -f "$log"
           }
-          for address in 144.76.1.88 94.130.70.160 65.109.34.234 5.202.75.100 88.218.19.178; do
-            probe_sni "https://my.shecan.ir/my/account.json" my.shecan.ir "$address"
-            probe_sni "https://ddns.shecan.ir/" ddns.shecan.ir "$address"
-            probe_sni "https://generativelanguage.googleapis.com/v1beta/models" generativelanguage.googleapis.com "$address"
+          export -f probe_sni
+          for host in my.shecan.ir ddns.shecan.ir nddns.shecan.ir generativelanguage.googleapis.com; do
+            case "$host" in
+              my.shecan.ir) path='/my/account.json' ;;
+              generativelanguage.googleapis.com) path='/v1beta/models' ;;
+              *) path='/' ;;
+            esac
+            exit_code=0
+            http="$(curl --silent --show-error --output /dev/null --connect-timeout 4 --max-time 7 --write-out '%{http_code}' "https://$host$path" 2> /tmp/shecan-direct-curl.log)" || exit_code=$?
+            echo "$host direct: curl=$exit_code HTTP=$http $(tail -n 1 /tmp/shecan-direct-curl.log | sed -E 's#https?://[^ ]+#[url]#g')" >> "$report"
           done
+          python - <<'PY' > "$RUNNER_TEMP/shecan-probe-matrix.txt"
+          nodes = [
+              ('de1.check.shecan.ir', ['144.76.1.88']),
+              ('de5.check.shecan.ir', ['50.7.177.110', '50.7.177.12']),
+              ('de7.check.shecan.ir', ['94.130.13.19']),
+              ('de8.check.shecan.ir', ['94.130.50.12']),
+              ('de10.check.shecan.ir', ['138.201.54.122']),
+              ('de11.check.shecan.ir', ['94.130.70.160']),
+              ('de12.check.shecan.ir', ['94.130.33.41']),
+              ('fi2.check.shecan.ir', ['65.109.34.234']),
+              ('uk3.check.shecan.ir', ['82.39.133.108']),
+              ('us1.check.shecan.ir', ['63.141.252.203']),
+              ('us3.check.shecan.ir', ['142.54.178.211']),
+              ('mahan.check.shecan.ir', ['5.202.75.100', '5.202.75.165', '5.202.75.166', '5.202.75.168', '5.202.75.176', '5.202.75.177', '5.202.75.179', '5.202.75.180', '5.202.75.181', '5.202.75.185', '5.202.75.186', '5.202.75.187', '5.202.75.190', '5.202.75.191', '5.202.75.192']),
+              ('fi31.check.shecan.ir', ['95.216.69.37']),
+              ('ie1-superproxy.check.shecan.ir', ['50.7.4.242']),
+              ('mizban.check.shecan.ir', ['88.218.19.178', '88.218.19.179', '88.218.19.180', '88.218.19.181', '88.218.19.182']),
+          ]
+          targets = [
+              ('my.shecan.ir', '/my/account.json'),
+              ('ddns.shecan.ir', '/'),
+              ('nddns.shecan.ir', '/'),
+              ('generativelanguage.googleapis.com', '/v1beta/models'),
+          ]
+          for domain, addresses in nodes:
+              for address in addresses:
+                  print(f'https://{domain}/ {domain} {address}')
+                  for host, path in targets:
+                      print(f'https://{host}{path} {host} {address}')
+          PY
+          xargs -n 3 -P 10 bash -c 'probe_sni "$1" "$2" "$3"' _ < "$RUNNER_TEMP/shecan-probe-matrix.txt"
+          echo '## Full certificate-validating SNI matrix from GitHub; this is not Plesk evidence' >> "$report"
+          sort "$raw" >> "$report"
 
       - name: Prepare the official CLI authentication source report
         if: always()
