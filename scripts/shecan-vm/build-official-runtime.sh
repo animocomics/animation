@@ -74,8 +74,10 @@ docker run --rm --platform linux/amd64 \
       --repository https://dl-cdn.alpinelinux.org/alpine/v3.24/main \
       --repository https://dl-cdn.alpinelinux.org/alpine/v3.24/community \
       --keys-dir /etc/apk/keys \
-      busybox musl gcompat libc6-compat ca-certificates openresolv \
+      alpine-baselayout busybox musl gcompat libc6-compat ca-certificates openresolv \
       webkit2gtk-4.1 gtk+3.0 dbus tinyproxy font-noto-arabic >/dev/null
+    test -f /out/etc/passwd
+    grep -E '^root:[^:]*:0:0:' /out/etc/passwd >/dev/null
     rm -rf /out/var/cache/apk/* /out/usr/share/man
     chown -R "$HOST_UID:$HOST_GID" /out
     chmod -R a+rX /out
