@@ -1,6 +1,6 @@
 name: Plesk Nomreh read-only memory snapshot
 
-# Inline probe avoids shell-dependent backslash processing and checks cgroup v1/v2.
+# Read-only check also validates the Plesk-origin-only browser restriction.
 
 on:
   push:

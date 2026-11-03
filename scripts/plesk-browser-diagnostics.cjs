@@ -119,7 +119,16 @@ async function main() {
   let browser;
   try {
     browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
+    // The certificate exception is only authorized for the configured Plesk
+    // origin. Reject redirects, subresources and requests to every other origin
+    // in this isolated browser context before they can bypass TLS validation.
     const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1680, height: 1050 } });
+    await context.route("**/*", async (route) => {
+      let origin = "";
+      try { origin = new URL(route.request().url()).origin; } catch { /* reject malformed URLs */ }
+      if (origin !== panel) return route.abort();
+      return route.continue();
+    });
     const page = await context.newPage();
     page.setDefaultTimeout(15000);
     let loginPageLoaded = false;
@@ -150,6 +159,7 @@ async function main() {
       'input[type="password"]',
     ]);
     if (!username || !password) throw new Error("The Plesk login form was not found; no credentials were submitted.");
+    if (new URL(page.url()).origin !== panel) throw new Error("The login page left the configured Plesk origin; no credentials were submitted.");
 
     await username.fill(process.env.PLESK_API_USERNAME || "");
     await password.fill(process.env.PLESK_API_PASSWORD || "");
