@@ -124,6 +124,9 @@ function attachShecanVncWebSocket(server, applicationPort) {
     }
 
     wss.handleUpgrade(request, socket, head, (websocket) => {
+      // Authorization above paused the client socket. Resume both directions
+      // only after the same-origin admin check and loopback VNC connection.
+      socket.resume();
       target.resume();
       websocket.on("message", (data, isBinary) => {
         if (!isBinary || websocket.readyState !== WebSocket.OPEN) return;

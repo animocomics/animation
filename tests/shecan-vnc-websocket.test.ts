@@ -23,8 +23,10 @@ function closeServer(server: http.Server | net.Server): Promise<void> {
 test("VNC WebSocket requires same-origin admin authorization and only bridges the loopback guest", async () => {
   const oldPort = process.env.NOMREH_VNC_PORT;
   const targetSockets = new Set<net.Socket>();
+  const targetFrames: Buffer[] = [];
   const target = net.createServer((socket) => {
     targetSockets.add(socket);
+    socket.on("data", (chunk) => targetFrames.push(chunk));
     socket.on("close", () => targetSockets.delete(socket));
     socket.write("RFB 003.008\n");
   });
@@ -43,7 +45,7 @@ test("VNC WebSocket requires same-origin admin authorization and only bridges th
   attachShecanVncWebSocket(application, applicationPort);
   const url = `ws://127.0.0.1:${applicationPort}${UPGRADE_PATH}`;
   const origin = `http://127.0.0.1:${applicationPort}`;
-  type TestSocket = { terminate: () => void };
+  type TestSocket = { terminate: () => void; send: (data: Buffer) => void };
   let valid: TestSocket | undefined;
   const frames: Buffer[] = [];
   try {
@@ -60,6 +62,10 @@ test("VNC WebSocket requires same-origin admin authorization and only bridges th
     const deadline = Date.now() + 5000;
     while (!frames.length && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(frames[0]?.toString("ascii"), "RFB 003.008\n");
+    valid.send(Buffer.from("RFB 003.008\n", "ascii"));
+    const replyDeadline = Date.now() + 5000;
+    while (Buffer.concat(targetFrames).length < 12 && Date.now() < replyDeadline) await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(Buffer.concat(targetFrames).subarray(0, 12).toString("ascii"), "RFB 003.008\n");
   } finally {
     if (valid) valid.terminate();
     for (const socket of targetSockets) socket.destroy();
