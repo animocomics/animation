@@ -80,9 +80,9 @@ function labelValues(text, labels) {
 }
 
 async function main() {
-  if (!["diagnose", "upload", "extract", "build", "status", "disk", "os-info", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
+  if (!["diagnose", "upload", "extract", "build", "status", "disk", "os-info", "account-network", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
   const panel = normalizePanelUrl(process.env.PLESK_PANEL_URL || "");
-  const readOnly = ACTION === "diagnose" || ACTION === "status";
+  const readOnly = ACTION === "diagnose" || ACTION === "status" || ACTION === "account-network";
   const actionDescription = ACTION === "upload"
     ? "Controlled action: upload one validated application archive to Nomreh only. No extraction, build, restart, or settings change is attempted."
     : ACTION === "extract"
@@ -447,7 +447,7 @@ async function main() {
         if (statusResult.error) lines.push(`- Status read error: ${sanitize(statusResult.error)}`);
         lines.push("- Read-only status request; no command, restart, or setting change was attempted.", "");
       }
-      if (["diagnose", "build", "status", "disk", "os-info"].includes(ACTION) && nomrehConsoleLink && await nomrehConsoleLink.count()) {
+      if (["diagnose", "build", "status", "disk", "os-info", "account-network"].includes(ACTION) && nomrehConsoleLink && await nomrehConsoleLink.count()) {
         const consoleResponsePromise = page.waitForResponse((item) => item.url().includes("/modules/nodejs/index.php/domain/console") && item.request().isNavigationRequest(), { timeout: 15000 }).catch(() => null);
         await nomrehConsoleLink.click({ timeout: 8000 }).catch(() => undefined);
         const consoleResponse = await consoleResponsePromise;
@@ -511,6 +511,35 @@ async function main() {
           if (!osLines.length) throw new Error("Plesk did not expose an OS release identity within 60 seconds. No file or setting was changed.");
           for (const line of osLines.slice(0, 10)) lines.push(`- OS release: ${sanitize(line.slice(0, 220))}`);
           lines.push("- Read-only OS identification completed; no DNS, file, build, restart, or settings change was attempted.", "");
+          actionCompleted = true;
+        }
+        if (ACTION === "account-network") {
+          if (!consoleBody.includes(`Node.js on ${DOMAIN}`) || !consoleBody.includes("/nomreh.arounidea.com")) {
+            throw new Error("The Node command console is not scoped to Nomreh. The credential-free Shecan account network probe was not started.");
+          }
+          const commandInput = page.getByPlaceholder(/Pick a script or command/i).first();
+          const executeButton = page.locator("button[title='Execute command'], button[aria-label='Execute command']").first();
+          const outputElement = page.locator("pre.pul-console-output").first();
+          if (!await commandInput.count() || !await executeButton.count() || !await outputElement.count()) throw new Error("The Nomreh command controls were not found. The credential-free Shecan account network probe was not started.");
+          const probeSource = "(async()=>{const dns=require('dns').promises;const https=require('https');const host='my.shecan.ir';function probe(hostname){return new Promise(resolve=>{const req=https.request({hostname,servername:host,port:443,path:'/my/account.json',method:'GET',headers:{Host:host,Accept:'application/json',Connection:'close'},rejectUnauthorized:true,timeout:7000},res=>{res.resume();resolve('HTTP_'+res.statusCode)});req.on('timeout',()=>req.destroy(new Error('TIMEOUT')));req.on('error',error=>resolve(error.code||error.message||'ERROR'));req.end()})}let addresses=[];try{const found=await dns.lookup(host,{all:true,verbatim:true});addresses=found.map(item=>item.address)}catch(error){console.log('SHECAN_ACCOUNT_DNS_LOOKUP '+(error.code||'ERROR'))}for(const family of [4,6]){try{const found=await dns['resolve'+family](host);addresses=addresses.concat(found)}catch(error){}}addresses=[...new Set(addresses)].slice(0,8);console.log('SHECAN_ACCOUNT_ADDRESSES '+(addresses.join('/')||'NONE'));console.log('SHECAN_ACCOUNT_DIRECT '+await probe(host));for(const address of addresses){console.log('SHECAN_ACCOUNT_PINNED '+address+' '+await probe(address))}console.log('SHECAN_ACCOUNT_NETWORK_COMPLETE')})().catch(error=>{console.log('SHECAN_ACCOUNT_FATAL '+(error.code||'ERROR'));console.log('SHECAN_ACCOUNT_NETWORK_COMPLETE')});";
+          const command = `exec -- node -e ${JSON.stringify(probeSource)}`;
+          lines.push("## Controlled read-only Shecan account network probe", "", "- Only public DNS answers and HTTPS status/error codes for my.shecan.ir/my/account.json are read. No identifier, OTP, credential, request body, cookie, response body, DNS setting, file, or AI routing setting is changed.", "");
+          await commandInput.fill(command);
+          if (await commandInput.inputValue() !== command) throw new Error("Plesk did not retain the exact credential-free network probe. Nothing was executed.");
+          await executeButton.click({ timeout: 8000 });
+          const startedAt = Date.now();
+          let probeLines = [];
+          while (Date.now() - startedAt < 100_000) {
+            await page.waitForTimeout(1000);
+            const consoleOutput = await outputElement.innerText().catch(() => "");
+            const failure = consoleOutput.split(/\r?\n/).find((line) => /npm ERR!|Command failed|permission denied|node: not found|command not found/i.test(line));
+            if (failure) throw new Error(`The credential-free Shecan account network probe could not run: ${sanitize(failure.slice(0, 250))}`);
+            probeLines = [...new Set(consoleOutput.split(/\r?\n/).map((line) => line.trim()).filter((line) => /^SHECAN_ACCOUNT_(?:ADDRESSES|DIRECT|PINNED|DNS_LOOKUP|FATAL|NETWORK_COMPLETE)/.test(line)))];
+            if (probeLines.some((line) => line.startsWith("SHECAN_ACCOUNT_NETWORK_COMPLETE"))) break;
+          }
+          if (!probeLines.some((line) => line.startsWith("SHECAN_ACCOUNT_NETWORK_COMPLETE"))) throw new Error("The credential-free Shecan account network probe did not complete within 100 seconds. No network or file setting was changed.");
+          for (const line of probeLines.slice(0, 24)) lines.push(`- Account network: ${sanitize(line.slice(0, 350))}`);
+          lines.push("- Read-only account network probe completed; no DNS, file, build, restart, OTP, login, or settings change was attempted.", "");
           actionCompleted = true;
         }
         if (ACTION === "disk") {
@@ -1625,7 +1654,7 @@ async function main() {
         lines.push("## Read-only Nomreh domain logs", "", "- Nomreh's scoped Logs tool was not exposed on the domain card; no alternate domain or log path was accessed.", "");
       }
     }
-    if (["upload", "extract", "build", "status", "disk", "os-info", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Review the reported host state before further action; no live-success claim was made.`);
+    if (["upload", "extract", "build", "status", "disk", "os-info", "account-network", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Review the reported host state before further action; no live-success claim was made.`);
     lines.push("## Result", "", ACTION === "upload"
       ? "The validated application archive was uploaded to Nomreh. Extraction, dependency installation, build, and Node.js enablement remain pending."
       : ACTION === "extract"
@@ -1638,7 +1667,9 @@ async function main() {
               ? "The read-only Nomreh disk report completed. No build, deletion, restart, or settings change was attempted."
               : ACTION === "os-info"
                 ? "The read-only operating-system identity was reported. No DNS, file, build, deletion, restart, or settings change was attempted."
-                : ACTION === "fix-node-version"
+                : ACTION === "account-network"
+                  ? "The credential-free Shecan account address and HTTPS probe completed. No DNS, file, OTP, login, build, restart, or settings change was attempted."
+                  : ACTION === "fix-node-version"
                 ? "Nomreh's Node override fix completed with the original contents preserved. No build or restart was attempted; read-only command verification remains pending."
                 : ACTION === "update-package"
                   ? "Nomreh's validated package.json npm launcher fix was uploaded and verified. No build or restart was attempted; disk verification remains pending."

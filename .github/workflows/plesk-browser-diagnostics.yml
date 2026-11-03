@@ -48,14 +48,14 @@ jobs:
           npm install --ignore-scripts --no-audit --no-fund playwright@1.64.1
           npx playwright install --with-deps chromium
 
-      - name: Read only the Nomreh host operating-system identity
+      - name: Probe only the official Shecan account service from Nomreh without credentials
         id: diagnose
         if: steps.config.outputs.configured == 'true'
         env:
           PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
-          PLESK_BROWSER_ACTION: os-info
+          PLESK_BROWSER_ACTION: account-network
           PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-plesk-browser-diagnostics.md
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
         run: node scripts/plesk-browser-diagnostics.cjs
