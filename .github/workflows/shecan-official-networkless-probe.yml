@@ -1,5 +1,7 @@
 name: Probe official Shecan desktop in a networkless VM
 
+# Official public download uses a temporary cookie jar, with no user credentials.
+
 on:
   push:
     branches: [arena/ccbdcb6e-animation]

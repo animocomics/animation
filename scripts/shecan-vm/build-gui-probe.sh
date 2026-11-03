@@ -84,6 +84,8 @@ if [[ "$OFFICIAL_PROBE" == 1 ]]; then
   # The package is obtained directly over HTTPS from the official release
   # endpoint. Record hashes; no unpinned package is uploaded to Plesk.
   curl --fail --location --silent --show-error --retry 3 --retry-all-errors \
+    --user-agent 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/142.0 Safari/537.36' \
+    --cookie "$WORK/official.cookies" --cookie-jar "$WORK/official.cookies" \
     --output "$WORK/shecan.rpm" \
     'https://dl.shecan.ir/download/linux/amd64?version=v3.0.30&format=rpm'
   file "$WORK/shecan.rpm"
