@@ -29,7 +29,7 @@ jobs:
             local artifact="$1"
             local url="$2"
             echo "Official $artifact URL: $url" | tee -a download-report.txt
-            if curl --silent --show-error --fail --location --max-time 120 --output "$artifact" --write-out "HTTP %{http_code}; final origin $(printf '%s' "$url" | sed -E 's#(https?://[^/]+).*#\1#')\n" "$url" 2> "$artifact.curl.log" | tee -a download-report.txt; then
+            if curl --silent --show-error --fail --location --max-time 120 --user-agent "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/142.0 Safari/537.36" --cookie "$artifact.cookies" --cookie-jar "$artifact.cookies" --output "$artifact" --write-out "HTTP %{http_code}; final origin $(printf '%s' "$url" | sed -E 's#(https?://[^/]+).*#\1#')\n" "$url" 2> "$artifact.curl.log" | tee -a download-report.txt; then
               echo "Official $artifact package downloaded." | tee -a download-report.txt
               file "$artifact"
               stat -c "$artifact bytes=%s" "$artifact"
@@ -43,6 +43,7 @@ jobs:
           download_official windows.bin "https://dl.shecan.ir/download/windows/amd64?version=v3.0.30"
           download_official linux.rpm "https://dl.shecan.ir/download/linux/amd64?version=v3.0.30&format=rpm"
           download_official shecan.apk "https://dl.shecan.ir/download/android/universal?version=v3.0.30"
+          download_official shecan-chrome-extension.zip "https://gitlab.shcn.ir/h.sadeghynejad/shecan-chrome-extension-public/-/releases/permalink/latest/downloads/shecan-chrome-extension.zip"
 
       - name: Statically extract the official Windows package without executing it
         run: |
@@ -79,6 +80,15 @@ jobs:
           unzip -q -o shecan.apk -d android-app || true
           find android-app -maxdepth 4 -type f \( -name '*.bundle' -o -name '*.so' -o -name 'AndroidManifest.xml' -o -name 'resources.arsc' -o -name '*.json' \) -printf '%p %s bytes\n' | head -100 || true
 
+      - name: Statically extract the official public Chrome extension without executing it
+        run: |
+          set -uo pipefail
+          cd "$RUNNER_TEMP/shecan-app-inspect"
+          if [ ! -f shecan-chrome-extension.zip ]; then exit 0; fi
+          mkdir -p chrome-extension
+          unzip -q -o shecan-chrome-extension.zip -d chrome-extension || true
+          find chrome-extension -maxdepth 5 -type f \( -name '*.js' -o -name '*.json' -o -name '*.html' \) -printf '%p %s bytes\n' | head -100 || true
+
       - name: Report only sanitized public endpoints and authentication-related strings
         id: inspect-report
         run: |
@@ -94,7 +104,7 @@ jobs:
               print('## Official download results')
               print(download_report.read_text())
           print('## Official package inventory')
-          for name in ['windows.bin', 'shecan.apk']:
+          for name in ['windows.bin', 'linux.rpm', 'shecan.apk', 'shecan-chrome-extension.zip']:
               path = Path(name)
               if not path.exists():
                   print(f'{name}: not downloaded')
@@ -102,7 +112,7 @@ jobs:
               data = path.read_bytes()[:100]
               printable = ''.join(chr(byte) if 32 <= byte < 127 else '.' for byte in data)
               print(f'{name}: {path.stat().st_size} bytes; first bytes {printable}')
-          roots = [Path('windows-app'), Path('windows-extracted'), Path('linux-extracted'), Path('android-app')]
+          roots = [Path('windows-app'), Path('windows-extracted'), Path('linux-extracted'), Path('android-app'), Path('chrome-extension')]
           for root in roots:
               files = [path for path in root.rglob('*') if path.is_file()] if root.exists() else []
               print(f'{root}: {len(files)} extracted files')
