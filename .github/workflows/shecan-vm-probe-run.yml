@@ -2,6 +2,7 @@ name: Run harmless Shecan VM probe on Plesk
 
 # Timeout reports retain only sanitized QEMU/loader diagnostics, never credentials.
 # Node spawnSync avoids npm package resolution and inherits the harmless VM console.
+# The echoed command is excluded from marker and failure matching.
 
 on:
   push:

@@ -566,10 +566,11 @@ async function main() {
           while (Date.now() - startedAt < 145_000) {
             await page.waitForTimeout(1000);
             const consoleOutput = await outputElement.innerText().catch(() => "");
-            safeConsoleLines = [...new Set(consoleOutput.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && /NOMREH_VM|qemu|BIOS|glibc|loader|error|failed|not found|permission|invalid|timeout|timed out|terminated|killed|exit|TCG|KVM|cannot|could not|unable/i.test(line) && !/secret|token|password|credential|api.key|authorization|cookie/i.test(line)))].slice(-24);
-            const failure = consoleOutput.split(/\r?\n/).find((line) => /NOMREH_VM_PROBE_ERROR|npm ERR!|Command failed|exited with status [1-9]|No such file|Permission denied|undefined symbol|version `GLIBC_|could not|unable to/i.test(line));
+            const consoleLines = consoleOutput.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !/^# npm exec --/.test(line));
+            safeConsoleLines = [...new Set(consoleLines.filter((line) => /NOMREH_VM|qemu|BIOS|glibc|loader|error|failed|not found|permission|invalid|timeout|timed out|terminated|killed|exit|TCG|KVM|cannot|could not|unable/i.test(line) && !/secret|token|password|credential|api.key|authorization|cookie/i.test(line)))].slice(-24);
+            const failure = consoleLines.find((line) => /NOMREH_VM_PROBE_ERROR|npm ERR!|Command failed|exited with status [1-9]|No such file|Permission denied|undefined symbol|version `GLIBC_|could not|unable to/i.test(line));
             if (failure) throw new Error(`The harmless Plesk VM probe could not run: ${sanitize(failure.slice(0, 300))}`);
-            probeLines = [...new Set(consoleOutput.split(/\r?\n/).map((line) => line.trim()).filter((line) => /^NOMREH_VM_PROBE_(?:BEGIN|KERNEL|ARCH|NO_NETWORK|SHECAN_INCLUDED|PASS)/.test(line)))];
+            probeLines = [...new Set(consoleLines.filter((line) => /^NOMREH_VM_PROBE_(?:BEGIN|KERNEL|ARCH|NO_NETWORK|SHECAN_INCLUDED|PASS)/.test(line)))];
             if (probeLines.some((line) => line === "NOMREH_VM_PROBE_PASS")) break;
           }
           if (!probeLines.some((line) => line === "NOMREH_VM_PROBE_PASS")) {
