@@ -44,15 +44,17 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          extract_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41586651661" --jq '.status + " " + .conclusion')"
+          extract_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41597189035" --jq '.status + " " + .conclusion')"
           test "$extract_state" = "completed success"
           grep -F 'Nomreh Passenger-aware launcher is active for this build.' scripts/plesk-node22.cjs > /dev/null
           grep -F 'return [mainFile];' scripts/plesk-node22.cjs > /dev/null
           grep -F 'syncPublicStatic();' scripts/plesk-node22.cjs > /dev/null
+          grep -F '"--include=dev", "--omit=optional"' scripts/plesk-node22.cjs > /dev/null
+          grep -F 'webpackBuildWorker: false' next.config.mjs > /dev/null
 
       - name: Confirm the validated npm launcher fix
         if: steps.config.outputs.configured == 'true'
-        run: echo "abafaf85f46b391dcbd9f675a5b1eb959555870eae8667290c6ab8216190d9c0  package.json" | sha256sum --check -
+        run: echo "58a4d71aad3db540436ab746a8c0c4ae2f67d4970406a99d2f25dd7dfe295455  package.json" | sha256sum --check -
 
       - name: Confirm the validated obsolete-artifact exclusions
         if: steps.config.outputs.configured == 'true'
