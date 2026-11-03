@@ -1517,10 +1517,15 @@ async function main() {
               if (ACTION === "runtime-extract") {
                 const isolatedEntries = await page.locator("a:visible").evaluateAll((anchors) => anchors.map((anchor) => (anchor.textContent || "").trim()));
                 if (!isolatedEntries.includes("nomreh-vm")) throw new Error("The isolated nomreh-vm directory was not visible after extraction. No VM was started.");
-                const vmEntry = page.locator("a:visible").filter({ hasText: /^nomreh-vm$/ }).last();
+                const vmText = page.getByText("nomreh-vm", { exact: true }).last();
+                const vmRow = vmText.locator("xpath=ancestor::*[.//input[@type='checkbox']][1]");
+                const vmEntry = vmRow.locator("a").first();
+                if (!await vmEntry.count()) throw new Error("The extracted nomreh-vm row was not available for scoped verification. No VM was started.");
                 await vmEntry.click({ timeout: 8000 });
                 await page.waitForTimeout(1800);
-                const probeEntry = page.locator("a:visible").filter({ hasText: /^probe$/ }).last();
+                const probeText = page.getByText("probe", { exact: true }).last();
+                const probeRow = probeText.locator("xpath=ancestor::*[.//input[@type='checkbox']][1]");
+                const probeEntry = probeRow.locator("a").first();
                 if (!await probeEntry.count()) throw new Error("The isolated nomreh-vm/probe directory was not visible after extraction. No VM was started.");
                 await probeEntry.click({ timeout: 8000 });
                 await page.waitForTimeout(1800);

@@ -1,5 +1,7 @@
 name: Extract harmless Shecan VM probe
 
+# Verification uses the extracted row itself, avoiding the unrelated File Manager tree.
+
 on:
   push:
     branches: [arena/f4b832aa-animation]
