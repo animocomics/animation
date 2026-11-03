@@ -59,7 +59,7 @@ async function main() {
         const target = net.createConnection(socketPath);
         target.on("connect", () => { counts.targetConnected += 1; target.write(Buffer.from([0x4e])); });
         target.on("data", (data) => { counts.received += data.length; if (ws.readyState === ws.OPEN) ws.send(data, { binary: true }); });
-        target.on("error", () => { counts.targetErrors += 1; ws.close(); });
+        target.on("error", (error) => { counts.targetErrors += 1; console.log(`NOMREH_NOVNC_SOCKET_ERROR ${["ENOENT", "ECONNREFUSED", "EACCES", "ECONNRESET"].includes(error.code) ? error.code : "OTHER"}`); ws.close(); });
         target.on("close", () => { counts.targetClosed += 1; ws.close(); });
         ws.on("message", (data) => { counts.sent += data.length; target.write(data); });
         ws.on("error", () => target.destroy());

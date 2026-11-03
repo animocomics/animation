@@ -47,7 +47,14 @@ done
       echo NOMREH_LOCAL_DISPLAY_RELAY_READY > /dev/console
       # The host connects to a private Unix socket and sends one byte before
       # the guest connects to its loopback-only VNC server. No NIC is present.
-      if /bin/busybox timeout 90 /bin/busybox dd if=/dev/vport0p1 of=/dev/null bs=1 count=1 2>/dev/null; then
+      handshake=0
+      for attempt in $(seq 1 90); do
+        : > /tmp/display-handshake
+        /bin/busybox timeout 1 /bin/busybox dd if=/dev/vport0p1 of=/tmp/display-handshake bs=1 count=1 2>/dev/null || true
+        if [ -s /tmp/display-handshake ]; then handshake=1; break; fi
+        sleep 1
+      done
+      if [ "$handshake" -eq 1 ]; then
         echo NOMREH_LOCAL_DISPLAY_RELAY_STARTED > /dev/console
         /bin/busybox timeout 50 socat -d -d OPEN:/dev/vport0p1,rdwr TCP:127.0.0.1:5900 > /var/log/relay.log 2>&1
         relay_status=$?
