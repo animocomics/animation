@@ -9,3 +9,4 @@ mode=activate
 previous-diagnostic=41573110282
 read-only-evidence=41578595070
 quick-retest=official-nddns-and-scoped-sni-v29
+browser-navigation-retry=after-live-login-https-ok-no-settings-touched
