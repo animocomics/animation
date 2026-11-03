@@ -10,7 +10,10 @@ const { spawnSync } = require("node:child_process");
 const APP_ROOT = path.resolve(__dirname, "..");
 const DATA_DIR = path.resolve(APP_ROOT, process.env.NOMREH_DATA_DIR || "../nomreh-data");
 const SUBSCRIPTION_ROOT = path.dirname(APP_ROOT);
-const SUBSCRIPTION_LIMIT_KIB = 4 * 1024 * 1024;
+// The user increased the shared subscription allowance to 4,500 decimal MB.
+// Use a conservative decimal-byte threshold while reporting actual du MiB.
+const SUBSCRIPTION_LIMIT_KIB = (4500 * 1000 * 1000) / 1024;
+const SUBSCRIPTION_LIMIT_LABEL = "4500 MB";
 
 function formatMiB(kibibytes) {
   return `${(kibibytes / 1024).toFixed(1)} MiB`;
@@ -78,9 +81,9 @@ console.log(`All domains in current subscription total: ${subscription.text}`);
 if (typeof subscription.kibibytes === "number") {
   const remaining = SUBSCRIPTION_LIMIT_KIB - subscription.kibibytes;
   if (remaining >= 0) {
-    console.log(`4 GiB current-subscription budget remaining: ${formatMiB(remaining)}`);
+    console.log(`${SUBSCRIPTION_LIMIT_LABEL} current-subscription budget remaining: ${formatMiB(remaining)}`);
   } else {
-    console.log(`4 GiB current-subscription budget EXCEEDED by: ${formatMiB(-remaining)}`);
+    console.log(`${SUBSCRIPTION_LIMIT_LABEL} current-subscription budget EXCEEDED by: ${formatMiB(-remaining)}`);
   }
 }
 

@@ -11,7 +11,7 @@ function measuredKiB(target: string): number {
   return Number(result.stdout.trim().split(/\s+/, 1)[0]);
 }
 
-test("Plesk disk report totals every domain in only the current subscription and shows the 4 GiB budget", () => {
+test("Plesk disk report totals every domain in only the current subscription and shows the 4500 MB budget", () => {
   const temporary = mkdtempSync(path.join(tmpdir(), "nomreh-subscription-space-"));
   try {
     const vhosts = path.join(temporary, "vhosts");
@@ -32,7 +32,7 @@ test("Plesk disk report totals every domain in only the current subscription and
     const match = result.stdout.match(/All domains in current subscription total:\s+([0-9.]+) MiB/);
     assert.ok(match, result.stdout);
     assert.equal(Number(match[1]), Number((measuredKiB(subscription) / 1024).toFixed(1)));
-    assert.match(result.stdout, /4 GiB current-subscription budget remaining:/);
+    assert.match(result.stdout, /4500 MB current-subscription budget remaining:/);
     assert.doesNotMatch(result.stdout, /budget EXCEEDED/);
     assert.match(result.stdout, /Report complete\. No files were changed or deleted\./);
   } finally {
