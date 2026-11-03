@@ -80,7 +80,7 @@ function labelValues(text, labels) {
 }
 
 async function main() {
-  if (!["diagnose", "upload", "extract", "build", "status", "disk", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
+  if (!["diagnose", "upload", "extract", "build", "status", "disk", "os-info", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
   const panel = normalizePanelUrl(process.env.PLESK_PANEL_URL || "");
   const readOnly = ACTION === "diagnose" || ACTION === "status";
   const actionDescription = ACTION === "upload"
@@ -89,7 +89,9 @@ async function main() {
       ? "Controlled action: extract the validated archive inside the Nomreh application root only. Persistent data, uploads, environment files, build, restart, and settings changes are not touched."
       : ACTION === "disk"
         ? "Controlled read-only action: run Nomreh's disk report only. No build, deletion, restart, or settings change is attempted."
-        : ACTION === "fix-node-version"
+        : ACTION === "os-info"
+          ? "Controlled read-only action: read only the operating-system release identity through Nomreh's Plesk console. No file, DNS, build, deletion, restart, or settings change is attempted."
+          : ACTION === "fix-node-version"
           ? "Controlled action: preserve Nomreh's Node override backups and pin its untracked .node-version file only to a verified installed nodenv version. No application source, persistent data, build, restart, or other domain is touched."
           : ACTION === "update-package"
             ? "Controlled action: preserve Nomreh's current package.json as package.json.pre-npm-node-fix and upload only the hash-validated replacement. No other application file, persistent data, build, restart, or other domain is touched."
@@ -445,7 +447,7 @@ async function main() {
         if (statusResult.error) lines.push(`- Status read error: ${sanitize(statusResult.error)}`);
         lines.push("- Read-only status request; no command, restart, or setting change was attempted.", "");
       }
-      if (["diagnose", "build", "status", "disk"].includes(ACTION) && nomrehConsoleLink && await nomrehConsoleLink.count()) {
+      if (["diagnose", "build", "status", "disk", "os-info"].includes(ACTION) && nomrehConsoleLink && await nomrehConsoleLink.count()) {
         const consoleResponsePromise = page.waitForResponse((item) => item.url().includes("/modules/nodejs/index.php/domain/console") && item.request().isNavigationRequest(), { timeout: 15000 }).catch(() => null);
         await nomrehConsoleLink.click({ timeout: 8000 }).catch(() => undefined);
         const consoleResponse = await consoleResponsePromise;
@@ -482,6 +484,34 @@ async function main() {
             for (const line of safeOutput) lines.push(`- Existing output: ${sanitize(line.slice(0, 400))}`);
           }
           lines.push("- Inspection only: no command was entered or executed.", "");
+        }
+        if (ACTION === "os-info") {
+          if (!consoleBody.includes(`Node.js on ${DOMAIN}`) || !consoleBody.includes("/nomreh.arounidea.com")) {
+            throw new Error("The Node command console is not scoped to Nomreh. The read-only OS identification was not started.");
+          }
+          const commandInput = page.getByPlaceholder(/Pick a script or command/i).first();
+          const executeButton = page.locator("button[title='Execute command'], button[aria-label='Execute command']").first();
+          const outputElement = page.locator("pre.pul-console-output").first();
+          if (!await commandInput.count() || !await executeButton.count() || !await outputElement.count()) throw new Error("The Nomreh command controls were not found. The read-only OS identification was not started.");
+          const command = "exec -- node -p \"require('fs').readFileSync('/etc/os-release','utf8')\"";
+          lines.push("## Controlled read-only operating-system identification", "", "- Reading only /etc/os-release; no file or setting is changed.", "");
+          await commandInput.fill(command);
+          if (await commandInput.inputValue() !== command) throw new Error("Plesk did not retain the exact read-only OS command. Nothing was executed.");
+          await executeButton.click({ timeout: 8000 });
+          const startedAt = Date.now();
+          let osLines = [];
+          while (Date.now() - startedAt < 60_000) {
+            await page.waitForTimeout(1000);
+            const consoleOutput = await outputElement.innerText().catch(() => "");
+            const failure = consoleOutput.split(/\r?\n/).find((line) => /npm ERR!|Command failed|permission denied|node: not found|command not found/i.test(line));
+            if (failure) throw new Error(`The read-only OS identification could not run: ${sanitize(failure.slice(0, 250))}`);
+            osLines = [...new Set(consoleOutput.split(/\r?\n/).map((line) => line.trim()).filter((line) => /^(PRETTY_NAME|NAME|VERSION|VERSION_ID|ID|ID_LIKE)=/.test(line)))];
+            if (osLines.some((line) => line.startsWith("PRETTY_NAME=")) || (osLines.some((line) => line.startsWith("NAME=")) && osLines.some((line) => line.startsWith("VERSION=")))) break;
+          }
+          if (!osLines.length) throw new Error("Plesk did not expose an OS release identity within 60 seconds. No file or setting was changed.");
+          for (const line of osLines.slice(0, 10)) lines.push(`- OS release: ${sanitize(line.slice(0, 220))}`);
+          lines.push("- Read-only OS identification completed; no DNS, file, build, restart, or settings change was attempted.", "");
+          actionCompleted = true;
         }
         if (ACTION === "disk") {
           if (!consoleBody.includes(`Node.js on ${DOMAIN}`) || !consoleBody.includes("/nomreh.arounidea.com")) {
@@ -1595,7 +1625,7 @@ async function main() {
         lines.push("## Read-only Nomreh domain logs", "", "- Nomreh's scoped Logs tool was not exposed on the domain card; no alternate domain or log path was accessed.", "");
       }
     }
-    if (["upload", "extract", "build", "status", "disk", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Review the reported host state before further action; no live-success claim was made.`);
+    if (["upload", "extract", "build", "status", "disk", "os-info", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Review the reported host state before further action; no live-success claim was made.`);
     lines.push("## Result", "", ACTION === "upload"
       ? "The validated application archive was uploaded to Nomreh. Extraction, dependency installation, build, and Node.js enablement remain pending."
       : ACTION === "extract"
@@ -1606,7 +1636,9 @@ async function main() {
             ? "The read-only Nomreh console and persistent-data inspection completed. No command, build, deletion, restart, or settings change was attempted."
             : ACTION === "disk"
               ? "The read-only Nomreh disk report completed. No build, deletion, restart, or settings change was attempted."
-              : ACTION === "fix-node-version"
+              : ACTION === "os-info"
+                ? "The read-only operating-system identity was reported. No DNS, file, build, deletion, restart, or settings change was attempted."
+                : ACTION === "fix-node-version"
                 ? "Nomreh's Node override fix completed with the original contents preserved. No build or restart was attempted; read-only command verification remains pending."
                 : ACTION === "update-package"
                   ? "Nomreh's validated package.json npm launcher fix was uploaded and verified. No build or restart was attempted; disk verification remains pending."
