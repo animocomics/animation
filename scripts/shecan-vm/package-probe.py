@@ -15,6 +15,7 @@ import stat
 import zipfile
 
 MAX_ARCHIVE = 90 * 1024 * 1024
+MAX_BASE_EXPANDED = 150 * 1024 * 1024
 DEFAULT_PART = 75 * 1024 * 1024
 PREFIX = 'nomreh-vm/gui'
 
@@ -74,6 +75,8 @@ def pack(runtime, destination, part_size=DEFAULT_PART):
     if base.stat().st_size > MAX_ARCHIVE:
         raise ValueError('Base archive exceeds the upload limit')
     with zipfile.ZipFile(base) as archive:
+        if sum(item.file_size for item in archive.infolist()) > MAX_BASE_EXPANDED:
+            raise ValueError('Base archive expands beyond the safety limit')
         if archive.testzip() is not None:
             raise ValueError('Base archive verification failed')
 

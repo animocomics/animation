@@ -52,10 +52,14 @@ fi
 unzip -q "$WORK/base.zip" -d "$WORK/full"
 mv "$WORK/full/nomreh-vm/probe" "$WORK/full/nomreh-vm/gui"
 rm -f "$WORK/full/nomreh-vm/gui/guest/initramfs-probe" "$WORK/full/nomreh-vm/gui/run-probe.sh"
-# Strip only disposable QEMU copies; preserve bundled notices and firmware.
+# Strip only disposable QEMU copies; preserve bundled license notices. The
+# test boots a Linux kernel directly through SeaBIOS, so unused UEFI and
+# non-x86 firmware are excluded; the actual local boot remains a gate.
 while IFS= read -r -d '' binary; do
   if readelf -h "$binary" >/dev/null 2>&1; then strip --strip-unneeded "$binary"; fi
 done < <(find "$WORK/full/nomreh-vm/gui/qemu/bin" "$WORK/full/nomreh-vm/gui/qemu/lib" -type f -print0)
+QEMU_SHARE="$WORK/full/nomreh-vm/gui/qemu/share/qemu"
+rm -f "$QEMU_SHARE"/edk2-* "$QEMU_SHARE"/openbios-* "$QEMU_SHARE/slof.bin" "$QEMU_SHARE/skiboot.lid"
 cat > "$WORK/full/nomreh-vm/gui/THIRD_PARTY.md" <<'PROVENANCE'
 # Local offline official desktop diagnostic
 

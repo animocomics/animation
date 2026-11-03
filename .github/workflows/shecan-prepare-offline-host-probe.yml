@@ -1,5 +1,7 @@
 name: Prepare bounded official desktop host probe
 
+# Retain notices while excluding unused firmware from this direct-boot probe.
+
 on:
   push:
     branches: [arena/ccbdcb6e-animation]
