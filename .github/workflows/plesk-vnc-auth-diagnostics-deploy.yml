@@ -29,7 +29,7 @@ jobs:
           git archive --format=zip --output="$archive" "$GITHUB_SHA" scripts/shecan-vnc-http.cjs scripts/shecan-vnc-websocket.cjs
           test "$(unzip -Z1 "$archive" | grep -vc '/$')" -eq 2
           unzip -Z1 "$archive" | grep -Fx 'scripts/shecan-vnc-http.cjs' > /dev/null
-          grep -F 'const contentClass' scripts/shecan-vnc-websocket.cjs > /dev/null
+          grep -F 'const { DatabaseSync }' scripts/shecan-vnc-websocket.cjs > /dev/null
           grep -F 'function originError(request)' scripts/shecan-vnc-http.cjs > /dev/null
           grep -F 'AUTH_UNCLASSIFIED' scripts/shecan-vnc-http.cjs > /dev/null
           grep -F 'AUTH_STORAGE' scripts/shecan-vnc-websocket.cjs > /dev/null
