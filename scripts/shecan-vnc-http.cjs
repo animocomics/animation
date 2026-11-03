@@ -185,6 +185,11 @@ function reverseDiagnostics(port) {
   return `${listener}_${guestFlag}_Q${Math.min(reverseSockets.length, 9)}_A${Math.min(reverseAccepted, 99)}_R${Math.min(reverseRejected, 99)}_${reverseLastRejection}`;
 }
 
+function reverseTimeoutMs() {
+  const configured = Number(process.env.NOMREH_VNC_REVERSE_TIMEOUT_MS || 20000);
+  return Number.isFinite(configured) ? Math.max(100, Math.min(120000, configured)) : 20000;
+}
+
 function takeReverseSocket(port) {
   ensureReverseServer(port);
   if (reverseSockets.length) return Promise.resolve(reverseSockets.shift());
@@ -194,9 +199,36 @@ function takeReverseSocket(port) {
       const index = reverseWaiters.indexOf(waiter);
       if (index >= 0) reverseWaiters.splice(index, 1);
       reject(Object.assign(new Error("Reverse VNC connection timed out"), { statusCode: 503, vncCode: `VNC_REVERSE_TIMEOUT_${reverseDiagnostics(port)}` }));
-    }, 20000);
+    }, reverseTimeoutMs());
     reverseWaiters.push(waiter);
   });
+}
+
+async function connectDirectVnc(request) {
+  const port = Number(process.env.NOMREH_VNC_PORT || 15900);
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) throw Object.assign(new Error("Invalid VNC port"), { statusCode: 503 });
+  request.nomrehVncStage = "VNC_CONNECT";
+  const socket = net.createConnection({ host: "127.0.0.1", port });
+  socket.setNoDelay(true);
+  await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => finish(new Error("VNC connection timeout")), 8000);
+    function finish(error) {
+      clearTimeout(timer);
+      socket.off("connect", onConnect);
+      socket.off("error", onError);
+      if (error) reject(error); else resolve();
+    }
+    const onConnect = () => finish();
+    const onError = (error) => finish(error);
+    socket.once("connect", onConnect);
+    socket.once("error", onError);
+  }).catch((error) => {
+    socket.destroy();
+    const rawCode = error.message === "VNC connection timeout" ? "TIMEOUT" : String(error.code || "UNKNOWN");
+    const code = /^[A-Z0-9_]+$/.test(rawCode) ? rawCode : "UNKNOWN";
+    throw Object.assign(new Error("VNC is unavailable"), { statusCode: 503, vncCode: `VNC_CONNECT_${code}_${listenerState(port)}`, cause: error });
+  });
+  return socket;
 }
 
 function listenerState(port) {
@@ -243,31 +275,17 @@ async function createSession(request, response, applicationPort) {
   let socket;
   if (reversePort) {
     request.nomrehVncStage = "VNC_REVERSE";
-    socket = await takeReverseSocket(reversePort);
+    try {
+      socket = await takeReverseSocket(reversePort);
+    } catch (error) {
+      // The production guest also exposes its real Xvnc through QEMU's
+      // loopback-only hostfwd. Use it only when the reverse connection never
+      // arrived; protocol errors on an established reverse session stay fatal.
+      if (!String(error?.vncCode || "").startsWith("VNC_REVERSE_TIMEOUT_")) throw error;
+      socket = await connectDirectVnc(request);
+    }
   } else {
-    const port = Number(process.env.NOMREH_VNC_PORT || 15900);
-    if (!Number.isInteger(port) || port < 1024 || port > 65535) throw Object.assign(new Error("Invalid VNC port"), { statusCode: 503 });
-    request.nomrehVncStage = "VNC_CONNECT";
-    socket = net.createConnection({ host: "127.0.0.1", port });
-    socket.setNoDelay(true);
-    await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => finish(new Error("VNC connection timeout")), 8000);
-      function finish(error) {
-        clearTimeout(timer);
-        socket.off("connect", onConnect);
-        socket.off("error", onError);
-        if (error) reject(error); else resolve();
-      }
-      const onConnect = () => finish();
-      const onError = (error) => finish(error);
-      socket.once("connect", onConnect);
-      socket.once("error", onError);
-    }).catch((error) => {
-      socket.destroy();
-      const rawCode = error.message === "VNC connection timeout" ? "TIMEOUT" : String(error.code || "UNKNOWN");
-      const code = /^[A-Z0-9_]+$/.test(rawCode) ? rawCode : "UNKNOWN";
-      throw Object.assign(new Error("VNC is unavailable"), { statusCode: 503, vncCode: `VNC_CONNECT_${code}_${listenerState(port)}`, cause: error });
-    });
+    socket = await connectDirectVnc(request);
   }
   socket.pause();
   request.nomrehVncStage = "SESSION_CREATE";

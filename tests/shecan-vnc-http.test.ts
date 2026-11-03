@@ -91,3 +91,56 @@ test("authenticated HTTP raw channel accepts reverse VNC and bridges both direct
     restoreAuth();
   }
 });
+
+test("reverse timeout falls back to the authenticated loopback hostfwd channel", async () => {
+  const oldReversePort = process.env.NOMREH_VNC_REVERSE_PORT;
+  const oldVncPort = process.env.NOMREH_VNC_PORT;
+  const oldTimeout = process.env.NOMREH_VNC_REVERSE_TIMEOUT_MS;
+  const restoreAuth = createVncAuthFixture();
+  const directSockets = new Set<net.Socket>();
+  const direct = net.createServer((socket) => {
+    directSockets.add(socket);
+    socket.on("close", () => directSockets.delete(socket));
+    socket.write("RFB 003.008\n");
+  });
+  const directPort = await listen(direct);
+  const reservation = net.createServer();
+  const reversePort = await listen(reservation);
+  await new Promise<void>((resolve) => reservation.close(() => resolve()));
+  process.env.NOMREH_VNC_REVERSE_PORT = String(reversePort);
+  process.env.NOMREH_VNC_PORT = String(directPort);
+  process.env.NOMREH_VNC_REVERSE_TIMEOUT_MS = "100";
+  const application = http.createServer((request, response) => {
+    if (handleShecanVncHttp(request, response, applicationPort)) return;
+    response.writeHead(404);
+    response.end();
+  });
+  const applicationPort = await listen(application);
+  const endpoint = `http://127.0.0.1:${applicationPort}${HTTP_CHANNEL_PATH}`;
+  const origin = `http://127.0.0.1:${applicationPort}`;
+  const headers = { Origin: origin, Cookie: "nomreh_session=valid-admin", "X-Nomreh-VNC-Client": "1" };
+  let session = "";
+  try {
+    startShecanVncReverseServer();
+    const created = await fetch(endpoint, { method: "POST", headers });
+    assert.equal(created.status, 200);
+    session = (await created.json() as { session?: string }).session || "";
+    assert.match(session, /^[a-f0-9]{32}$/);
+    const initial = await fetch(endpoint, { method: "POST", headers: { ...headers, "X-Nomreh-VNC-Session": session, "Content-Type": "application/octet-stream" }, body: Buffer.alloc(0) });
+    assert.equal(initial.status, 200);
+    assert.equal(Buffer.from(await initial.arrayBuffer()).toString("ascii"), "RFB 003.008\n");
+  } finally {
+    closeShecanVncHttpSessions();
+    for (const socket of directSockets) socket.destroy();
+    application.closeAllConnections();
+    await new Promise<void>((resolve) => application.close(() => resolve()));
+    await new Promise<void>((resolve) => direct.close(() => resolve()));
+    if (oldReversePort === undefined) delete process.env.NOMREH_VNC_REVERSE_PORT;
+    else process.env.NOMREH_VNC_REVERSE_PORT = oldReversePort;
+    if (oldVncPort === undefined) delete process.env.NOMREH_VNC_PORT;
+    else process.env.NOMREH_VNC_PORT = oldVncPort;
+    if (oldTimeout === undefined) delete process.env.NOMREH_VNC_REVERSE_TIMEOUT_MS;
+    else process.env.NOMREH_VNC_REVERSE_TIMEOUT_MS = oldTimeout;
+    restoreAuth();
+  }
+});
