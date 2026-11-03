@@ -80,12 +80,12 @@ export WEBKIT_DISABLE_DMABUF_RENDERER=1
 export WEBKIT_DISABLE_COMPOSITING_MODE=1
 export GOTRACEBACK=single
 
-openbox --sm-disable > /var/log/openbox.log 2>&1 &
-OPENBOX_PID=$!
+twm > /var/log/twm.log 2>&1 &
+WM_PID=$!
 sleep 1
-if ! kill -0 "$OPENBOX_PID" 2>/dev/null; then
-  echo NOMREH_OFFICIAL_GUEST_ERROR OPENBOX > /dev/console
-  head -40 /var/log/openbox.log > /dev/console 2>&1 || true
+if ! kill -0 "$WM_PID" 2>/dev/null; then
+  echo NOMREH_OFFICIAL_GUEST_ERROR WINDOW_MANAGER > /dev/console
+  head -40 /var/log/twm.log > /dev/console 2>&1 || true
   poweroff -f
   while true; do sleep 60; done
 fi
@@ -140,7 +140,7 @@ if grep -q 'nomreh_probe=1' /proc/cmdline; then
   head -60 /var/log/xvnc.log > /dev/console 2>&1 || true
   echo NOMREH_OFFICIAL_PROBE_LOG_END > /dev/console
   kill "$APP_PID" 2>/dev/null || true
-  kill "$OPENBOX_PID" 2>/dev/null || true
+  kill "$WM_PID" 2>/dev/null || true
   kill "$XVNC_PID" 2>/dev/null || true
   if [ -n "$DBUS_SYSTEM_BUS_PID" ]; then kill "$DBUS_SYSTEM_BUS_PID" 2>/dev/null || true; fi
   sync
