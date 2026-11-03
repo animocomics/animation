@@ -38,9 +38,9 @@ docker run --rm --platform linux/amd64 \
     rm -rf /out/var/lib/apt/lists/* /out/var/cache/apt/* \
       /out/usr/share/doc/* /out/usr/share/man/* /out/usr/share/locale/*
     echo NOMREH_DEBIAN_CLEANUP_READY
-    ls -l /out/usr/bin/dbus-run-session /out/usr/sbin/tinyproxy /out/sbin/poweroff
+    ls -l /out/usr/bin/dbus-run-session /out/usr/bin/tinyproxy /out/sbin/poweroff
     test -x /out/usr/bin/dbus-run-session
-    test -x /out/usr/sbin/tinyproxy
+    test -x /out/usr/bin/tinyproxy
     echo NOMREH_DEBIAN_COMMANDS_READY
     chown -R "$HOST_UID:$HOST_GID" /out
     chmod -R a+rX /out
