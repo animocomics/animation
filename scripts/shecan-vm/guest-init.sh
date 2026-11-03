@@ -2,6 +2,7 @@
 # PID 1 for the harmless, networkless graphical VM probe.
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
+mkdir -p /proc /sys /dev
 mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys

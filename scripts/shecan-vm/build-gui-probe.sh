@@ -60,10 +60,8 @@ docker run --rm --platform linux/amd64 \
       busybox musl gcompat libc6-compat ca-certificates \
       webkit2gtk-4.1 gtk+3.0 dbus tinyproxy font-noto-arabic >/dev/null
     rm -rf /out/var/cache/apk/* /out/usr/share/man
-    # WebKit compositing/DMABUF are disabled for Xvnc. These large software
-    # rasterizer components are not loaded in that mode; the boot gate proves it.
-    rm -f /out/usr/lib/libLLVM.so.* /out/usr/lib/libgallium-*.so
-    rm -rf /out/usr/lib/dri
+    # Keep Mesa/LLVM: Alpine libGL/libEGL link to libgallium directly even
+    # when WebKit compositing and DMABUF are disabled.
     chown -R "$HOST_UID:$HOST_GID" /out
     chmod -R a+rX /out
     chmod 0755 /out/usr/local/bin/nomreh-gui-probe
