@@ -78,6 +78,7 @@ docker run --rm --platform linux/amd64 -v "$WORK/rootfs:/out" debian:12-slim \
     if ldd /usr/local/bin/shecan-desktop | grep -q "not found"; then exit 1; fi
     test -x /usr/bin/dbus-run-session
     test -x /usr/bin/tinyproxy
+    test -x /usr/bin/vncconfig
   '
 
 du -sh "$WORK/full/nomreh-vm/official/qemu" "$WORK/full/nomreh-vm/official/glibc" "$WORK/rootfs"
@@ -140,12 +141,13 @@ if ((app_ready != 1)); then
   cat "$WORK/official-guest.log"
   exit 1
 fi
-# Do not open early host-forward connections before Xvnc and the official app
-# exist. Each framebuffer attempt now starts against the real running guest.
+# Require the actual reverse-VNC path used by the Plesk console, not only the
+# host-forward path that timed out on that shared host. The guest must initiate
+# a loopback connection to this listener and render the genuine official app.
 set +e
 echo NOMREH_VNC_SMOKE_LAUNCHING
-VNC_SMOKE_TRACE=1 VNC_READ_TIMEOUT_MS=5000 VNC_SMOKE_ATTEMPTS=60 \
-  python3 "$SOURCE_ROOT/scripts/shecan-vm/vnc-smoke.py" 15900 "$WORK/official-framebuffer.ppm" > "$WORK/vnc-smoke.log" 2>&1 &
+VNC_SMOKE_REVERSE=1 VNC_SMOKE_TRACE=1 VNC_READ_TIMEOUT_MS=5000 VNC_SMOKE_ATTEMPTS=60 \
+  python3 "$SOURCE_ROOT/scripts/shecan-vm/vnc-smoke.py" 15500 "$WORK/official-framebuffer.ppm" > "$WORK/vnc-smoke.log" 2>&1 &
 VNC_PID=$!
 set -e
 echo "NOMREH_VNC_SMOKE_STARTED pid=$VNC_PID"

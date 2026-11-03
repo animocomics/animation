@@ -27,7 +27,7 @@ NIC='user,model=virtio-net-pci'
 APPEND='console=ttyS0 rdinit=/init panic=1 quiet'
 if [ -n "$VNC_PORT" ]; then
   NIC="$NIC,hostfwd=tcp:127.0.0.1:$VNC_PORT-:5900"
-  APPEND="$APPEND nomreh_vnc=hostfwd"
+  APPEND="$APPEND nomreh_vnc=hostfwd nomreh_vnc_reverse=15500"
 fi
 if [ -n "$PROXY_PORT" ]; then
   NIC="$NIC,hostfwd=tcp:127.0.0.1:$PROXY_PORT-:8888"

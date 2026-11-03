@@ -3,6 +3,7 @@
 import hashlib
 import os
 import socket
+from contextlib import contextmanager
 import struct
 import sys
 import time
@@ -27,8 +28,26 @@ def receive_exactly(connection, length):
     return bytes(data)
 
 
-def capture(port, output_path, read_timeout):
-    with socket.create_connection(("127.0.0.1", port), timeout=4) as connection:
+@contextmanager
+def vnc_connection(port, read_timeout, reverse):
+    if not reverse:
+        with socket.create_connection(("127.0.0.1", port), timeout=4) as connection:
+            yield connection
+        return
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(("127.0.0.1", port))
+        listener.listen(4)
+        listener.settimeout(20)
+        connection, address = listener.accept()
+        with connection:
+            if address[0] != "127.0.0.1":
+                raise RuntimeError("Reverse VNC connection was not loopback")
+            yield connection
+
+
+def capture(port, output_path, read_timeout, reverse):
+    with vnc_connection(port, read_timeout, reverse) as connection:
         connection.settimeout(read_timeout)
         trace("connected")
         version = receive_exactly(connection, 12)
@@ -113,15 +132,16 @@ def main():
     output_path = sys.argv[2] if len(sys.argv) > 2 else ""
     attempts = int(os.environ.get("VNC_SMOKE_ATTEMPTS", "60"))
     read_timeout = int(os.environ.get("VNC_READ_TIMEOUT_MS", "15000")) / 1000
+    reverse = os.environ.get("VNC_SMOKE_REVERSE") == "1"
     if not 1024 <= port <= 65535:
         raise RuntimeError("Invalid VNC port")
-    trace(f"client-begin port={port} attempts={attempts} read_timeout_ms={int(read_timeout * 1000)}")
+    trace(f"client-begin port={port} attempts={attempts} reverse={reverse} read_timeout_ms={int(read_timeout * 1000)}")
     last_error = None
     for attempt in range(1, attempts + 1):
         if attempt == 1 or attempt % 5 == 0:
             log(f"NOMREH_VNC_ATTEMPT_BEGIN {attempt}")
         try:
-            width, height, colors, minimum, maximum, digest, size = capture(port, output_path, read_timeout)
+            width, height, colors, minimum, maximum, digest, size = capture(port, output_path, read_timeout, reverse)
             if colors < 16 or maximum - minimum < 24:
                 last_error = RuntimeError(f"framebuffer still uniform (colors={colors})")
                 if attempt == 1 or attempt % 5 == 0:

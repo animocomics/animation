@@ -44,7 +44,7 @@ echo NOMREH_OFFICIAL_GUEST_NETWORK_CONFIGURED > /dev/console
 vnc_localhost='-localhost'
 if grep -q 'nomreh_vnc=hostfwd' /proc/cmdline; then vnc_localhost=''; fi
 /usr/local/bin/Xvnc :0 -geometry 1200x800 -depth 24 \
-  -SecurityTypes None -NeverShared $vnc_localhost \
+  -SecurityTypes None -AlwaysShared $vnc_localhost \
   > /var/log/xvnc.log 2>&1 &
 XVNC_PID=$!
 xvnc_ready=0
@@ -79,6 +79,18 @@ export LP_NUM_THREADS=1
 export WEBKIT_DISABLE_DMABUF_RENDERER=1
 export WEBKIT_DISABLE_COMPOSITING_MODE=1
 export GOTRACEBACK=single
+
+REVERSE_PID=''
+if grep -q 'nomreh_vnc_reverse=15500' /proc/cmdline; then
+  (
+    while kill -0 "$XVNC_PID" 2>/dev/null; do
+      timeout 8s vncconfig -display :0 -connect 10.0.2.2:15500 > /dev/null 2>&1 || true
+      sleep 5
+    done
+  ) &
+  REVERSE_PID=$!
+  echo NOMREH_OFFICIAL_VNC_REVERSE_REQUESTED > /dev/console
+fi
 
 if grep -q 'nomreh_proxy=1' /proc/cmdline; then
   tinyproxy -d -c /etc/tinyproxy-nomreh.conf > /var/log/tinyproxy-nomreh.log 2>&1 &
@@ -131,6 +143,7 @@ if grep -q 'nomreh_probe=1' /proc/cmdline; then
   head -60 /var/log/xvnc.log > /dev/console 2>&1 || true
   echo NOMREH_OFFICIAL_PROBE_LOG_END > /dev/console
   kill "$APP_PID" 2>/dev/null || true
+  if [ -n "$REVERSE_PID" ]; then kill "$REVERSE_PID" 2>/dev/null || true; fi
   kill "$XVNC_PID" 2>/dev/null || true
   if [ -n "$DBUS_SYSTEM_BUS_PID" ]; then kill "$DBUS_SYSTEM_BUS_PID" 2>/dev/null || true; fi
   sync
