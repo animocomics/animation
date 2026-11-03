@@ -54,6 +54,14 @@ function createDatabase(): DatabaseConnection {
       dns_secondary TEXT NOT NULL,
       enabled INTEGER NOT NULL DEFAULT 0,
       encrypted_update_url TEXT NOT NULL DEFAULT '',
+      update_url_source TEXT NOT NULL DEFAULT 'manual',
+      encrypted_account_key TEXT NOT NULL DEFAULT '',
+      account_login TEXT NOT NULL DEFAULT '',
+      account_name TEXT NOT NULL DEFAULT '',
+      account_authenticated_at TEXT,
+      selected_order_id INTEGER,
+      selected_order_label TEXT NOT NULL DEFAULT '',
+      selected_order_due TEXT NOT NULL DEFAULT '',
       last_test_status TEXT NOT NULL DEFAULT 'idle',
       last_test_message TEXT NOT NULL DEFAULT '',
       last_tested_at TEXT,
@@ -84,6 +92,21 @@ function createDatabase(): DatabaseConnection {
     CREATE INDEX IF NOT EXISTS idx_ai_jobs_user ON ai_jobs(user_id);
     CREATE INDEX IF NOT EXISTS idx_ai_jobs_created ON ai_jobs(created_at);
   `);
+  const networkColumns = database.prepare("PRAGMA table_info(api_network_settings)").all() as Array<{ name: string }>;
+  const networkColumnNames = new Set(networkColumns.map((column) => column.name));
+  const networkMigrations: Array<[string, string]> = [
+    ["update_url_source", "TEXT NOT NULL DEFAULT 'manual'"],
+    ["encrypted_account_key", "TEXT NOT NULL DEFAULT ''"],
+    ["account_login", "TEXT NOT NULL DEFAULT ''"],
+    ["account_name", "TEXT NOT NULL DEFAULT ''"],
+    ["account_authenticated_at", "TEXT"],
+    ["selected_order_id", "INTEGER"],
+    ["selected_order_label", "TEXT NOT NULL DEFAULT ''"],
+    ["selected_order_due", "TEXT NOT NULL DEFAULT ''"],
+  ];
+  for (const [name, definition] of networkMigrations) {
+    if (!networkColumnNames.has(name)) database.exec(`ALTER TABLE api_network_settings ADD COLUMN ${name} ${definition}`);
+  }
   const workspaceColumns = database.prepare("PRAGMA table_info(workspaces)").all() as Array<{ name: string }>;
   if (!workspaceColumns.some((column) => column.name === "revision")) {
     database.exec("ALTER TABLE workspaces ADD COLUMN revision INTEGER NOT NULL DEFAULT 0");

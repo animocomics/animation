@@ -1,19 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { CheckCircle2, Eye, EyeOff, Globe2, Link2, LoaderCircle, LockKeyhole, Power, RefreshCw, ShieldCheck, TriangleAlert } from "lucide-react";
+import { type FormEvent, useEffect, useState } from "react";
+import { CheckCircle2, Eye, EyeOff, Globe2, KeyRound, Link2, LoaderCircle, LockKeyhole, LogIn, LogOut, Power, RefreshCw, ShieldCheck, TriangleAlert, UserRound } from "lucide-react";
 import { SHECAN_DNS } from "../lib/api-network";
 import { useApp } from "../lib/app-context";
 import { readJsonResponse } from "../lib/http-response";
-import type { ApiNetworkPublicStatus } from "../lib/types";
+import type { ApiNetworkPublicStatus, ShecanOrderPublic } from "../lib/types";
 import { faDate, faNumber } from "../lib/utils";
 
 type ApiNetworkPayload = {
   status?: ApiNetworkPublicStatus;
+  orders?: ShecanOrderPublic[];
   error?: string;
   pending?: boolean;
   jobError?: string;
+  accountProbe?: { reachable: boolean; httpStatus: number };
 };
+
+type AccountBusy = "login" | "probe" | "refresh" | "select" | "logout" | null;
 
 async function resolveNetworkJob(initial: ApiNetworkPayload, onPayload: (payload: ApiNetworkPayload) => void): Promise<ApiNetworkPayload> {
   let current = initial;
@@ -36,15 +40,23 @@ export function ApiNetworkConnection() {
   const [servers, setServers] = useState<[string, string]>([...SHECAN_DNS.free]);
   const [updateUrl, setUpdateUrl] = useState("");
   const [showUpdateUrl, setShowUpdateUrl] = useState(false);
+  const [identifier, setIdentifier] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [orders, setOrders] = useState<ShecanOrderPublic[]>([]);
+  const [selectedOrderId, setSelectedOrderId] = useState(0);
+  const [accountBusy, setAccountBusy] = useState<AccountBusy>(null);
   const [busy, setBusy] = useState<"loading" | "enabling" | "disabling" | null>("loading");
   const [error, setError] = useState("");
   const [dirty, setDirty] = useState(false);
 
   function applyPayload(payload: ApiNetworkPayload) {
+    if (payload.orders) setOrders(payload.orders);
     if (!payload.status) return;
     setStatus(payload.status);
     setPlan(payload.status.plan);
     setServers(payload.status.servers);
+    setSelectedOrderId(payload.status.selectedOrderId || 0);
   }
 
   useEffect(() => {
@@ -65,6 +77,89 @@ export function ApiNetworkConnection() {
     setUpdateUrl("");
     setDirty(true);
     setError("");
+  }
+
+  async function accountRequest(body: object, method: "POST" | "DELETE" = "POST"): Promise<ApiNetworkPayload> {
+    const response = await fetch("/api/admin/shecan-account", {
+      method,
+      headers: method === "POST" ? { "Content-Type": "application/json" } : undefined,
+      body: method === "POST" ? JSON.stringify(body) : undefined,
+      cache: "no-store",
+    });
+    const payload = await readJsonResponse<ApiNetworkPayload>(response, "عملیات حساب شکن");
+    applyPayload(payload);
+    if (!response.ok) throw new Error(payload.error || "عملیات حساب شکن ناموفق بود.");
+    return payload;
+  }
+
+  async function probeAccountService() {
+    setAccountBusy("probe");
+    setError("");
+    try {
+      const payload = await accountRequest({ action: "probe" });
+      if (!payload.accountProbe?.reachable) throw new Error("پاسخ سرویس ورود شکن تأیید نشد.");
+      notify({ title: "دسترسی به سرویس ورود شکن تأیید شد", description: "سرور نمره پاسخ رسمی شکن را دریافت کرد؛ این آزمایش بدون نام کاربری، رمز یا کلید انجام شد.", variant: "success" });
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "دسترسی به سرویس ورود شکن برقرار نشد."); }
+    finally { setAccountBusy(null); }
+  }
+
+  async function login(event: FormEvent) {
+    event.preventDefault();
+    setAccountBusy("login");
+    setError("");
+    try {
+      const payload = await accountRequest({ action: "login", identifier, password });
+      setPassword("");
+      setShowPassword(false);
+      setUpdateUrl("");
+      setDirty(false);
+      notify({
+        title: "ورود به حساب شکن انجام شد",
+        description: payload.status?.selectedOrderId
+          ? `سرویس «${payload.status.selectedOrderLabel || "انتخاب‌شده"}» آماده است؛ اکنون آزمایش و فعال‌سازی را بزنید. رمز ذخیره نشد.`
+          : "رمز ذخیره نشد؛ یک سرویس فعال را از فهرست انتخاب کنید.",
+        variant: "success",
+      });
+    } catch (reason) {
+      setPassword("");
+      setError(reason instanceof Error ? reason.message : "ورود به حساب شکن انجام نشد.");
+    } finally { setAccountBusy(null); }
+  }
+
+  async function refreshOrders() {
+    setAccountBusy("refresh");
+    setError("");
+    try {
+      await accountRequest({ action: "refresh" });
+      notify({ title: "فهرست سرویس‌های شکن به‌روزرسانی شد", variant: "success" });
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "فهرست سرویس‌ها خوانده نشد."); }
+    finally { setAccountBusy(null); }
+  }
+
+  async function selectOrder() {
+    if (!selectedOrderId) return;
+    setAccountBusy("select");
+    setError("");
+    try {
+      const payload = await accountRequest({ action: "select", orderId: selectedOrderId });
+      setUpdateUrl("");
+      setDirty(false);
+      notify({ title: "سرویس شکن انتخاب شد", description: `${payload.status?.selectedOrderLabel || "سرویس"} آمادهٔ ثبت IP و آزمایش است.`, variant: "success" });
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "انتخاب سرویس انجام نشد."); }
+    finally { setAccountBusy(null); }
+  }
+
+  async function logout() {
+    setAccountBusy("logout");
+    setError("");
+    try {
+      await accountRequest({}, "DELETE");
+      setOrders([]);
+      setSelectedOrderId(0);
+      setPassword("");
+      notify({ title: "کلید حساب شکن حذف شد", description: "لینک ذخیره‌شده و وضعیت فعلی اتصال AI تغییری نکرد.", variant: "success" });
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "خروج از حساب شکن انجام نشد."); }
+    finally { setAccountBusy(null); }
   }
 
   async function save(enabled: boolean) {
@@ -98,7 +193,7 @@ export function ApiNetworkConnection() {
     } finally { setBusy(null); }
   }
 
-  const isBusy = busy !== null;
+  const isBusy = busy !== null || accountBusy !== null;
   const enabled = Boolean(status?.enabled);
 
   return <div className="api-network-connection">
@@ -116,13 +211,32 @@ export function ApiNetworkConnection() {
 
     <div className="api-network-plan" role="radiogroup" aria-label="نوع اشتراک شکن">
       <button type="button" role="radio" aria-checked={plan === "free"} className={plan === "free" ? "selected" : ""} onClick={() => selectPlan("free")} disabled={isBusy}><strong>شکن رایگان</strong><span>DNS رسمی، بدون لینک اشتراک</span><small dir="ltr">{SHECAN_DNS.free.join(" · ")}</small></button>
-      <button type="button" role="radio" aria-checked={plan === "pro"} className={plan === "pro" ? "selected" : ""} onClick={() => selectPlan("pro")} disabled={isBusy}><strong>شکن حرفه‌ای</strong><span>ثبت IP با لینک اختصاصی سفارش</span><small dir="ltr">{SHECAN_DNS.pro.join(" · ")}</small></button>
+      <button type="button" role="radio" aria-checked={plan === "pro"} className={plan === "pro" ? "selected" : ""} onClick={() => selectPlan("pro")} disabled={isBusy}><strong>شکن حرفه‌ای</strong><span>ورود به حساب یا لینک اختصاصی سفارش</span><small dir="ltr">{SHECAN_DNS.pro.join(" · ")}</small></button>
     </div>
 
+    {plan === "pro" && <section className="shecan-account-panel" aria-labelledby="shecan-account-title">
+      <div className="shecan-account-heading">
+        <span><UserRound size={19} /></span>
+        <div><h4 id="shecan-account-title">ورود به حساب شکن</h4><p>همان روش اپ رسمی؛ دریافت سرویس و ساخت لینک ثبت IP بدون کپی‌کردن توکن.</p></div>
+        {status?.hasAccountKey && <span className="status-badge success"><CheckCircle2 size={12} /> حساب متصل</span>}
+      </div>
+
+      {!status?.hasAccountKey ? <form className="shecan-login-form" onSubmit={login}>
+        <div className="form-field"><label htmlFor="shecan-account-identifier">نام کاربری، ایمیل یا شمارهٔ شکن</label><div className="input-with-icon"><UserRound size={17} /><input id="shecan-account-identifier" className="input" dir="ltr" required autoComplete="username" spellCheck={false} value={identifier} onChange={(event) => setIdentifier(event.target.value)} placeholder="همان اطلاعات ورود به اپ شکن" /></div></div>
+        <div className="form-field"><label htmlFor="shecan-account-password">رمز عبور شکن</label><div className="input-with-icon input-with-action"><LockKeyhole size={17} /><input id="shecan-account-password" className="input" dir="ltr" type={showPassword ? "text" : "password"} required autoComplete="current-password" spellCheck={false} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="رمز ذخیره نمی‌شود" /><button className="input-action" type="button" onClick={() => setShowPassword((value) => !value)} aria-label={showPassword ? "پنهان‌کردن رمز شکن" : "نمایش رمز شکن"}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div></div>
+        <div className="shecan-login-submit"><button className="btn btn-secondary" type="submit" disabled={isBusy}>{accountBusy === "login" ? <LoaderCircle className="spin-icon" size={16} /> : <LogIn size={16} />}{accountBusy === "login" ? "در حال ورود امن…" : "ورود و دریافت سرویس‌ها"}</button><button className="btn btn-ghost" type="button" onClick={() => void probeAccountService()} disabled={isBusy}>{accountBusy === "probe" ? <LoaderCircle className="spin-icon" size={15} /> : <Globe2 size={15} />}{accountBusy === "probe" ? "در حال آزمایش…" : "آزمایش مسیر ورود"}</button><span><ShieldCheck size={12} /> رمز فقط با HTTPS مستقیم به شکن می‌رود و در نمره ذخیره نمی‌شود.</span></div>
+      </form> : <div className="shecan-account-connected">
+        <div className="shecan-account-identity"><span><KeyRound size={17} /></span><div><strong>{status.accountName || "حساب شکن"}</strong><small dir="ltr">{status.accountLogin || "حساب تأییدشده"}</small></div><p>کلید حساب رمزنگاری شده است؛ رمز عبور نزد نمره نیست.</p></div>
+        <div className="shecan-account-actions"><button className="btn btn-ghost btn-sm" type="button" onClick={() => void refreshOrders()} disabled={isBusy}>{accountBusy === "refresh" ? <LoaderCircle className="spin-icon" size={14} /> : <RefreshCw size={14} />}به‌روزرسانی سرویس‌ها</button><button className="btn btn-ghost btn-sm" type="button" onClick={() => void logout()} disabled={isBusy}>{accountBusy === "logout" ? <LoaderCircle className="spin-icon" size={14} /> : <LogOut size={14} />}خروج و حذف کلید</button></div>
+        {status.selectedOrderLabel && <div className="shecan-selected-order"><CheckCircle2 size={15} /><div><strong>{status.selectedOrderLabel}</strong><span>{status.selectedOrderId ? `سفارش ${faNumber(status.selectedOrderId)}` : ""}{status.selectedOrderDue ? ` · اعتبار تا ${faDate(`${status.selectedOrderDue}T12:00:00`, { year: "numeric", month: "long", day: "numeric" })}` : ""}</span></div></div>}
+        {orders.length > 0 && <div className="shecan-order-picker"><div className="form-field"><label htmlFor="shecan-order-select">سرویس مورد استفاده برای ثبت IP سرور</label><select id="shecan-order-select" className="select" value={selectedOrderId || ""} onChange={(event) => setSelectedOrderId(Number(event.target.value))} disabled={isBusy}><option value="" disabled>یک سرویس را انتخاب کنید</option>{orders.map((order) => <option key={order.id} value={order.id}>{[order.product, order.tier].filter(Boolean).join(" · ")} — {order.active ? "فعال" : order.statusName || "غیرفعال"}{order.hasUpdateToken ? "" : " — بدون توکن ثبت IP"}</option>)}</select></div><button className="btn btn-secondary" type="button" onClick={() => void selectOrder()} disabled={isBusy || !selectedOrderId}>{accountBusy === "select" ? <LoaderCircle className="spin-icon" size={15} /> : <CheckCircle2 size={15} />}{accountBusy === "select" ? "در حال انتخاب…" : "انتخاب این سرویس"}</button></div>}
+      </div>}
+    </section>}
+
     {plan === "pro" && <div className="form-field api-network-update-field">
-      <label htmlFor="shecan-update-url">لینک به‌روزرسان اشتراک <small>اختیاری، برای ثبت خودکار IP سرور</small></label>
+      <label htmlFor="shecan-update-url">لینک به‌روزرسان اشتراک <small>{status?.updateUrlSource === "account" ? "از حساب شکن ساخته و رمزنگاری شده است" : "روش قبلی؛ بدون ورود به حساب"}</small></label>
       <div className="input-with-icon input-with-action"><Link2 size={17} /><input id="shecan-update-url" dir="ltr" className="input api-key-input" type={showUpdateUrl ? "text" : "password"} value={updateUrl} onChange={(event) => { setUpdateUrl(event.target.value); setDirty(true); }} autoComplete="off" spellCheck={false} placeholder={status?.hasUpdateUrl ? "لینک رمزنگاری‌شده ذخیره است؛ برای حفظ آن خالی بگذارید" : "لینک کامل به‌روزرسان از صفحهٔ سفارش شکن"} /><button className="input-action" type="button" onClick={() => setShowUpdateUrl((value) => !value)} aria-label={showUpdateUrl ? "پنهان‌کردن لینک" : "نمایش لینک"}>{showUpdateUrl ? <EyeOff size={17} /> : <Eye size={17} />}</button></div>
-      <span className="form-hint"><LockKeyhole size={11} /> این لینک محرمانه با AES-256-GCM ذخیره می‌شود. رمز حساب شکن لازم نیست. لینک در <a href="https://my.shecan.ir/panel" target="_blank" rel="noreferrer">پنل شکن ← سفارش ← اطلاعات سرویس</a> قرار دارد.</span>
+      <span className="form-hint"><LockKeyhole size={11} /> لینک با AES-256-GCM ذخیره می‌شود. با ورود به حساب نیازی به کپی آن نیست؛ مسیر دستی در <a href="https://my.shecan.ir/panel" target="_blank" rel="noreferrer">پنل شکن ← سفارش ← اطلاعات سرویس</a> هم حفظ شده است.</span>
     </div>}
 
     <details className="api-network-dns-details">
@@ -139,6 +253,6 @@ export function ApiNetworkConnection() {
       {enabled && <button className="btn btn-secondary" type="button" onClick={() => void save(false)} disabled={isBusy}>{busy === "disabling" ? <LoaderCircle className="spin-icon" size={16} /> : <Power size={16} />}غیرفعال‌کردن شکن</button>}
       <a className="api-network-help" href="https://shecan.ir/tutorials/tutorials-pro/" target="_blank" rel="noreferrer">راهنمای رسمی شکن</a>
     </div>
-    <p className="api-network-footnote">فعال‌سازی فقط پس از پاسخ معتبر DNS و Google انجام می‌شود. ثبت IP و توقف یک‌دقیقه‌ای در پس‌زمینه ادامه می‌یابد و وضعیت همین‌جا تا پایان به‌روزرسانی می‌شود. این تست بدون API Key است؛ صحت کلید و مدل را با دکمهٔ «آزمایش اتصال» در بخش بالا بسنجید.</p>
+    <p className="api-network-footnote">فعال‌سازی فقط پس از پاسخ معتبر DNS و Google انجام می‌شود. ثبت IP و توقف یک‌دقیقه‌ای در پس‌زمینه ادامه می‌یابد و وضعیت همین‌جا به‌روزرسانی می‌شود. رمز شکن ذخیره نمی‌شود؛ تست شبکه بدون API Key است و صحت کلید و مدل را با دکمهٔ «آزمایش اتصال» در بخش بالا بسنجید.</p>
   </div>;
 }

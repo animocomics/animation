@@ -30,6 +30,14 @@ interface ApiNetworkRow {
   dns_secondary: string;
   enabled: number;
   encrypted_update_url: string;
+  update_url_source: "manual" | "account";
+  encrypted_account_key: string;
+  account_login: string;
+  account_name: string;
+  account_authenticated_at?: string;
+  selected_order_id?: number;
+  selected_order_label: string;
+  selected_order_due: string;
   last_test_status: "idle" | "success" | "error";
   last_test_message: string;
   last_tested_at?: string;
@@ -87,6 +95,8 @@ export async function getApiNetworkStatus(): Promise<ApiNetworkPublicStatus> {
     plan: "free",
     servers: [...SHECAN_DNS.free],
     hasUpdateUrl: false,
+    updateUrlSource: "none",
+    hasAccountKey: false,
     lastTestStatus: "idle",
     lastTestMessage: "شکن خاموش است؛ درخواست‌های AI مستقیم به سرویس‌دهنده ارسال می‌شوند.",
   };
@@ -96,6 +106,14 @@ export async function getApiNetworkStatus(): Promise<ApiNetworkPublicStatus> {
     plan: row.plan,
     servers: [row.dns_primary, row.dns_secondary],
     hasUpdateUrl: Boolean(row.encrypted_update_url),
+    updateUrlSource: row.encrypted_update_url ? row.update_url_source : "none",
+    hasAccountKey: Boolean(row.encrypted_account_key),
+    accountLogin: row.account_login || undefined,
+    accountName: row.account_name || undefined,
+    accountAuthenticatedAt: row.account_authenticated_at || undefined,
+    selectedOrderId: row.selected_order_id || undefined,
+    selectedOrderLabel: row.selected_order_label || undefined,
+    selectedOrderDue: row.selected_order_due || undefined,
     lastTestStatus: row.last_test_status,
     lastTestMessage: row.last_test_message,
     lastTestedAt: row.last_tested_at || undefined,
@@ -752,6 +770,10 @@ export async function saveAndTestApiNetwork(
       last_test_message=excluded.last_test_message, last_tested_at=excluded.last_tested_at,
       last_test_latency_ms=excluded.last_test_latency_ms, last_activated_at=excluded.last_activated_at,
       updated_at=excluded.updated_at, updated_by=excluded.updated_by`).run(...values);
+  if (suppliedUpdateUrl) {
+    (await import("./db")).getDb().prepare(`UPDATE api_network_settings
+      SET update_url_source='manual', selected_order_id=NULL, selected_order_label='', selected_order_due='' WHERE id=1`).run();
+  }
   if (!enabled) closeProviderNetwork();
   if (failure) {
     if (failure instanceof ApiNetworkError || failure instanceof ProviderNetworkError) throw failure;

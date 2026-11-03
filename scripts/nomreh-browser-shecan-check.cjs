@@ -79,7 +79,7 @@ async function login(page) {
 function networkLine(prefix, result) {
   const status = payloadOf(result)?.status;
   if (!status) return `${prefix}: HTTP ${result.status}; ${summarize(result)}.`;
-  return `${prefix}: HTTP ${result.status}; configured ${status.configured ? "yes" : "no"}; enabled ${status.enabled ? "yes" : "no"}; plan ${clean(status.plan)}; DNS ${clean((status.servers || []).join(" / "))}; update link stored ${status.hasUpdateUrl ? "yes" : "no"}; last test ${clean(status.lastTestStatus)}; message ${clean(status.lastTestMessage)}.`;
+  return `${prefix}: HTTP ${result.status}; configured ${status.configured ? "yes" : "no"}; enabled ${status.enabled ? "yes" : "no"}; plan ${clean(status.plan)}; DNS ${clean((status.servers || []).join(" / "))}; update link stored ${status.hasUpdateUrl ? "yes" : "no"}; update source ${clean(status.updateUrlSource || "unknown")}; account key stored ${status.hasAccountKey ? "yes" : "no"}; last test ${clean(status.lastTestStatus)}; message ${clean(status.lastTestMessage)}.`;
 }
 
 async function usage(page) {
@@ -104,6 +104,12 @@ async function run() {
   } catch { /* The server performs the authoritative validation; never print the secret. */ }
   lines.push(`- Supplied SHECAN endpoint host only (path and token withheld): ${clean(suppliedHost)}.`);
   const beforeUsage = await usage(page);
+  const accountPanel = page.locator(".shecan-account-panel");
+  const accountLoginInput = page.locator("#shecan-account-identifier");
+  lines.push(`- Real admin Shecan account environment: panel ${await accountPanel.count() ? "present" : "missing"}; username/password form ${await accountLoginInput.count() ? "present" : "not shown (an account may already be connected)"}.`);
+  const accountProbe = await api(page, "/api/admin/shecan-account", { action: "probe" });
+  const probePayload = payloadOf(accountProbe)?.accountProbe;
+  lines.push(`- Real Plesk-to-Shecan account-service probe (no Shecan credentials): HTTP ${accountProbe.status}; ${probePayload?.reachable ? `official account service answered with upstream HTTP ${clean(probePayload.httpStatus)}` : summarize(accountProbe)}.`);
   if (READ_ONLY) {
     lines.push("- Read-only stored-result inspection: no activation, provider test, or configuration mutation was requested.");
     lines.push(`- Nomreh-recorded AI usage: jobs ${beforeUsage.jobs}; input tokens ${beforeUsage.input}; output tokens ${beforeUsage.output}; failed ${beforeUsage.failures}.`);
