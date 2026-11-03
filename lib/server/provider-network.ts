@@ -5,6 +5,7 @@ import type { TcpSocketConnectOpts } from "node:net";
 import { Agent } from "undici";
 import type { ProviderNetworkConfig } from "../api-network";
 import { resolveShecanDoh, type ShecanDohRecord } from "./shecan-doh";
+import { resolveShecanDot } from "./shecan-dot";
 import { resolveShecanDns5353 } from "./shecan-dns5353";
 
 const PROVIDER_HOSTNAMES = new Set([
@@ -54,6 +55,20 @@ export class ProviderNetworkError extends Error {
   }
 }
 
+async function resolveOfficialEncryptedDns(hostname: string): Promise<ShecanDohRecord[]> {
+  try {
+    const records = await resolveShecanDoh(hostname);
+    if (records.some((record) => isIPv4(record.address))) return records;
+  } catch { /* DoT remains an independent official encrypted transport. */ }
+  try { return await resolveShecanDot(hostname); }
+  catch (dotError) {
+    throw Object.assign(new Error("Shecan DoH and DoT did not return usable addresses"), {
+      code: "ENCRYPTED_DNS_FAILED",
+      cause: dotError,
+    });
+  }
+}
+
 function asErrnoError(error: unknown): NodeJS.ErrnoException {
   if (error instanceof Error) return error as NodeJS.ErrnoException;
   return new Error("DNS resolution failed");
@@ -70,8 +85,8 @@ export function createShecanLookup(
   const dnsResolver = resolver || new Resolver();
   dnsResolver.setServers?.(servers);
   // Injected test resolvers stay fully deterministic. On the real host, the
-  // official Pro DoH endpoint is a scoped fallback when outbound UDP/53 is blocked.
-  const officialDohFallback = dohResolver || (!resolver ? resolveShecanDoh : undefined);
+  // official Pro DoH/DoT endpoints are scoped fallbacks when UDP/53 is blocked.
+  const officialEncryptedFallback = dohResolver || (!resolver ? resolveOfficialEncryptedDns : undefined);
   const cache = new Map<string, { records: ResolveRecord[]; expiresAt: number }>();
 
   async function resolve(hostname: string): Promise<string[]> {
@@ -81,15 +96,15 @@ export function createShecanLookup(
     try {
       records = await dnsResolver.resolve4(hostname, { ttl: true });
     } catch (udpError) {
-      if (!officialDohFallback) {
+      if (!officialEncryptedFallback) {
         throw new ProviderNetworkError("DNS شکن پاسخ نداد؛ آدرس‌های DNS و اجازهٔ ارتباط خروجی هاست را بررسی کنید.", "dns", { cause: udpError });
       }
     }
-    if (officialDohFallback && !records.some((record) => isIPv4(record.address))) {
+    if (officialEncryptedFallback && !records.some((record) => isIPv4(record.address))) {
       try {
-        records = await officialDohFallback(hostname);
-      } catch (dohError) {
-        throw new ProviderNetworkError("DNS شکن از مسیر UDP و DoH رسمی Pro پاسخ نداد؛ ارتباط خروجی هاست را بررسی کنید.", "dns", { cause: dohError });
+        records = await officialEncryptedFallback(hostname);
+      } catch (encryptedError) {
+        throw new ProviderNetworkError("DNS شکن از مسیرهای UDP، DoH و DoT رسمی Pro پاسخ نداد؛ ارتباط خروجی هاست را بررسی کنید.", "dns", { cause: encryptedError });
       }
     }
     records = records.filter((record) => isIPv4(record.address));

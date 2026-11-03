@@ -537,6 +537,7 @@ test("curl timeout uses a fresh documented DNS 5353 address after a stale DoH an
           assert.deepEqual(servers, ["198.51.100.42", "198.51.100.43"]);
           return [{ address: "185.143.233.133", ttl: 180 }];
         },
+        dotResolver: async () => [],
       },
     );
     assert.equal(status.enabled, true);
@@ -614,7 +615,7 @@ test("curl fallback tries verified current ddns addresses without replacing the 
     const status = await saveAndTestApiNetwork(
       { enabled: true, plan: "pro", servers: ["198.51.100.44", "198.51.100.45"], updateUrl },
       admin.id,
-      { activationSettleMs: 0, dns5353Resolver: async () => [] },
+      { activationSettleMs: 0, dns5353Resolver: async () => [], dotResolver: async () => [] },
     );
     assert.equal(status.enabled, true);
     assert.equal(configs.length, 3);
@@ -755,6 +756,75 @@ test("failed Google validation saves an actionable error and never enables Sheca
     assert.match(status.lastTestMessage, /یک دقیقه/);
   } finally {
     globalThis.fetch = originalFetch;
+    Resolver.prototype.resolve4 = originalResolve;
+  }
+});
+
+test("all official activation fallbacks report separate results and direct curl keeps the exact secret URL out of errors", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalRequest = https.request;
+  const originalSpawn = childProcess.spawn;
+  const originalResolve = Resolver.prototype.resolve4;
+  const updateUrl = "https://ddns.shecan.ir/update/test-complete-method-matrix";
+  const configs: string[] = [];
+  Resolver.prototype.resolve4 = (async () => { throw Object.assign(new Error("mock UDP timeout"), { code: "ETIMEOUT" }); }) as unknown as typeof Resolver.prototype.resolve4;
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input);
+    if (url === "https://ddns.shecan.ir") return new Response(null, { status: 404 });
+    if (url === "https://shecan.ir/ip") return new Response(null, { status: 200 });
+    throw Object.assign(new Error("mock update timeout"), { cause: Object.assign(new Error("timeout"), { name: "TimeoutError" }) });
+  }) as typeof fetch;
+  https.request = ((...args: unknown[]) => {
+    const callback = args.find((arg) => typeof arg === "function") as ((response: EventEmitter) => void) | undefined;
+    void callback;
+    const request = new EventEmitter() as EventEmitter & { end: () => void; destroy: (error?: Error) => void };
+    request.end = () => process.nextTick(() => request.emit("error", Object.assign(new Error("mock HTTPS timeout"), { name: "TimeoutError" })));
+    request.destroy = (error?: Error) => { if (error) request.emit("error", error); };
+    return request as unknown as ReturnType<typeof https.request>;
+  }) as typeof https.request;
+  childProcess.spawn = (() => {
+    const child = new EventEmitter() as EventEmitter & {
+      stdout: EventEmitter;
+      stderr: EventEmitter;
+      stdin: EventEmitter & { end: (value: string) => void };
+      kill: () => void;
+    };
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.stdin = Object.assign(new EventEmitter(), { end: (value: string) => {
+      configs.push(value);
+      process.nextTick(() => child.emit("close", 28));
+    } });
+    child.kill = () => undefined;
+    return child as unknown as ReturnType<typeof childProcess.spawn>;
+  }) as typeof childProcess.spawn;
+  try {
+    const { saveAndTestApiNetwork } = await import("../lib/server/api-network");
+    const { getDb } = await import("../lib/server/db");
+    const admin = getDb().prepare("SELECT id FROM users WHERE role='admin' ORDER BY created_at LIMIT 1").get() as { id: string };
+    await assert.rejects(saveAndTestApiNetwork(
+      { enabled: true, plan: "pro", servers: ["198.51.100.50", "198.51.100.51"], updateUrl },
+      admin.id,
+      {
+        activationSettleMs: 0,
+        dotResolver: async () => { throw Object.assign(new Error("mock DoT timeout"), { code: "DOT_DUAL_TIMEOUT" }); },
+        dns5353Resolver: async () => { throw Object.assign(new Error("mock 5353 timeout"), { code: "DNS_5353_TIMEOUT" }); },
+      },
+    ), (error: unknown) => {
+      assert(error instanceof Error);
+      assert.match(error.message, /CURL_DDNS_TIMEOUT/);
+      assert.match(error.message, /DoH=TIMEOUT;DoT=TIMEOUT;DNS5353=TIMEOUT;direct=TIMEOUT;DDNS=RETRIED/);
+      assert.match(error.message, /DDNS=HTTP_404;IP=HTTP_200/);
+      assert(!error.message.includes(updateUrl));
+      return true;
+    });
+    assert.equal(configs.length, 3);
+    assert(!configs[2].includes("resolve ="), "the final attempt must be literal direct curl without --resolve");
+    assert(configs.every((config) => config.includes(`url = "${updateUrl}"`)));
+  } finally {
+    globalThis.fetch = originalFetch;
+    https.request = originalRequest;
+    childProcess.spawn = originalSpawn;
     Resolver.prototype.resolve4 = originalResolve;
   }
 });
