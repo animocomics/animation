@@ -25,12 +25,13 @@ jobs:
       - name: Create and verify the two-file runtime delta
         run: |
           set -euo pipefail
-          archive="$RUNNER_TEMP/nomreh-deploy-vnc-auth-diagnostics-v40.zip"
+          archive="$RUNNER_TEMP/nomreh-deploy-vnc-auth-diagnostics-v41.zip"
           git archive --format=zip --output="$archive" "$GITHUB_SHA" scripts/shecan-vnc-http.cjs scripts/shecan-vnc-websocket.cjs
           test "$(unzip -Z1 "$archive" | grep -vc '/$')" -eq 2
           unzip -Z1 "$archive" | grep -Fx 'scripts/shecan-vnc-http.cjs' > /dev/null
           grep -F 'const contentClass' scripts/shecan-vnc-websocket.cjs > /dev/null
           grep -F 'function originError(request)' scripts/shecan-vnc-http.cjs > /dev/null
+          grep -F 'AUTH_UNCLASSIFIED' scripts/shecan-vnc-http.cjs > /dev/null
           grep -F 'await authorizeUpgrade(request, applicationPort);' scripts/shecan-vnc-http.cjs > /dev/null
           sha256sum "$archive"
       - name: Prepare an isolated temporary browser
@@ -48,8 +49,8 @@ jobs:
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
           PLESK_BROWSER_ACTION: upload
-          PLESK_ARCHIVE_NAME: nomreh-deploy-vnc-auth-diagnostics-v40.zip
-          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-vnc-auth-diagnostics-v40.zip
+          PLESK_ARCHIVE_NAME: nomreh-deploy-vnc-auth-diagnostics-v41.zip
+          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-vnc-auth-diagnostics-v41.zip
           PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-vnc-http-upload.md
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
         run: node scripts/plesk-browser-diagnostics.cjs
@@ -61,7 +62,7 @@ jobs:
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
           PLESK_BROWSER_ACTION: extract
-          PLESK_ARCHIVE_NAME: nomreh-deploy-vnc-auth-diagnostics-v40.zip
+          PLESK_ARCHIVE_NAME: nomreh-deploy-vnc-auth-diagnostics-v41.zip
           PLESK_DELTA_SOURCE: ${{ github.sha }}
           PLESK_DELTA_FILES: scripts/shecan-vnc-http.cjs,scripts/shecan-vnc-websocket.cjs
           PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-vnc-http-extract.md
@@ -78,6 +79,21 @@ jobs:
           PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-vnc-http-restart.md
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
         run: node scripts/plesk-browser-diagnostics.cjs
+      - name: Validate the authenticated official app after this restart
+        id: live
+        if: steps.restart.outcome == 'success'
+        env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+          NOMREH_ADMIN_USERNAME: ${{ secrets.NOMREH_ADMIN_USERNAME }}
+          NOMREH_ADMIN_PASSWORD: ${{ secrets.NOMREH_ADMIN_PASSWORD }}
+          NOMREH_ALLOW_DEMO_ACCOUNTS: "1"
+          NOMREH_OFFICIAL_ONLY: "1"
+          NOMREH_VALIDATE_OFFICIAL_RUNTIME: "1"
+          NOMREH_E2E_OUTPUT: ${{ runner.temp }}/nomreh-vnc-auth-live.md
+          NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
+        run: node scripts/nomreh-admin-readiness.cjs
       - name: Publish the sanitized deployment result
         if: always()
         env:
@@ -85,12 +101,13 @@ jobs:
           UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
           EXTRACT_OUTCOME: ${{ steps.extract.outcome }}
           RESTART_OUTCOME: ${{ steps.restart.outcome }}
+          LIVE_OUTCOME: ${{ steps.live.outcome }}
         run: |
           set -euo pipefail
           conclusion=success
-          if [ "$UPLOAD_OUTCOME" != success ] || [ "$EXTRACT_OUTCOME" != success ] || [ "$RESTART_OUTCOME" != success ]; then conclusion=failure; fi
+          if [ "$UPLOAD_OUTCOME" != success ] || [ "$EXTRACT_OUTCOME" != success ] || [ "$RESTART_OUTCOME" != success ] || [ "$LIVE_OUTCOME" != success ]; then conclusion=failure; fi
           summary='The VNC proxy delta did not produce a report; no live success was claimed.'
-          for report in nomreh-vnc-http-restart.md nomreh-vnc-http-extract.md nomreh-vnc-http-upload.md; do
+          for report in nomreh-vnc-auth-live.md nomreh-vnc-http-restart.md nomreh-vnc-http-extract.md nomreh-vnc-http-upload.md; do
             if [ -f "$RUNNER_TEMP/$report" ]; then summary="$(cat "$RUNNER_TEMP/$report")"; break; fi
           done
           gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
