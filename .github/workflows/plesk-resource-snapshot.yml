@@ -1,5 +1,7 @@
 name: Plesk Nomreh read-only memory snapshot
 
+# The inline resource probe is validated before dispatch.
+
 on:
   push:
     branches: [arena/ccbdcb6e-animation]
