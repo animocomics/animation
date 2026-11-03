@@ -44,7 +44,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          extract_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41568440406" --jq '.status + " " + .conclusion')"
+          extract_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41570297640" --jq '.status + " " + .conclusion')"
           test "$extract_state" = "completed success"
           grep -F 'Nomreh Passenger-aware launcher is active for this build.' scripts/plesk-node22.cjs > /dev/null
           grep -F 'return [mainFile];' scripts/plesk-node22.cjs > /dev/null
