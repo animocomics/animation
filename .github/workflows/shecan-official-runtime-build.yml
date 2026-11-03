@@ -1,0 +1,60 @@
+name: Build and boot official Shecan desktop
+
+on:
+  push:
+    branches: [arena/f4b832aa-animation]
+    paths:
+      - .github/workflows/shecan-official-runtime-build.yml
+      - scripts/shecan-vm/build-official-runtime.sh
+      - scripts/shecan-vm/official-guest-init.sh
+      - scripts/shecan-vm/run-official.sh
+      - scripts/shecan-vm/rootfs-initramfs.py
+      - scripts/shecan-vm/extract-alpine-modules.py
+      - scripts/shecan-vm/tinyproxy-nomreh.conf
+      - scripts/shecan-vm/vnc-smoke.cjs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+
+concurrency:
+  group: shecan-official-runtime-build
+  cancel-in-progress: false
+
+jobs:
+  official-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      SHECAN_RPM_SHA256: 59a300035e25a9dbe0b4e26f44333883bcb26b9e7ab1af5bac88310095f122b2
+      ALPINE_INITRAMFS_SHA256: c990c63e4602aa84b92d7df54fd180cb0e56590d61b71221ba6d60e913d26357
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the official guest and require a real VNC framebuffer
+        id: build
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/nomreh-deploy-shecan-official-v1.zip"
+          bash scripts/shecan-vm/build-official-runtime.sh "$GITHUB_WORKSPACE" "$archive" 2>&1 | tee "$RUNNER_TEMP/shecan-official-build.log"
+          sha256sum "$archive" > "$RUNNER_TEMP/shecan-official.sha256"
+      - name: Publish the sanitized official desktop result
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+        run: |
+          set -euo pipefail
+          conclusion=success
+          title='Official Shecan desktop and real VNC framebuffer passed'
+          if [ "$BUILD_OUTCOME" != success ]; then
+            conclusion=failure
+            title='Official desktop build, boot or framebuffer validation failed'
+          fi
+          summary='No build report was produced; no Plesk action or activation is claimed.'
+          if [ -f "$RUNNER_TEMP/shecan-official-build.log" ]; then summary="$(tail -c 55000 "$RUNNER_TEMP/shecan-official-build.log")"; fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name="Official Shecan desktop runtime" -f head_sha="$GITHUB_SHA" \
+            -f status=completed -f conclusion="$conclusion" \
+            -f "output[title]=${title}" \
+            --raw-field "output[summary]=${summary}" > /dev/null
