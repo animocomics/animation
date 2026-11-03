@@ -32,6 +32,12 @@ docker run --rm --platform linux/amd64 \
       apt-get clean
     "
     echo NOMREH_DEBIAN_PACKAGES_READY
+    # The guest explicitly disables WebKit compositing/DMABUF. Do not carry
+    # hundreds of MiB of hardware DRI drivers and LLVM into the initramfs.
+    du -sh /out/usr/lib/x86_64-linux-gnu/dri /out/usr/lib/x86_64-linux-gnu/libLLVM-15.so.1 2>/dev/null || true
+    rm -rf /out/usr/lib/x86_64-linux-gnu/dri
+    rm -f /out/usr/lib/x86_64-linux-gnu/libLLVM*.so* /out/usr/lib/x86_64-linux-gnu/libgallium*.so*
+    echo NOMREH_DEBIAN_GPU_DRIVERS_PRUNED
     rm -f /out/usr/sbin/policy-rc.d
     ln -sf /bin/busybox /out/sbin/poweroff
     echo NOMREH_DEBIAN_POWEROFF_READY
