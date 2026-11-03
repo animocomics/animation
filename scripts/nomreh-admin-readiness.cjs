@@ -13,7 +13,7 @@ let browser;
 let context;
 let authenticated = false;
 let loggedOut = false;
-const vncDiagnostics = { events: [], sent: 0, received: 0 };
+const vncDiagnostics = { events: [], sent: 0, received: 0, httpExchanges: 0 };
 function recordVncDiagnostic(event) {
   if (vncDiagnostics.events.length < 24) vncDiagnostics.events.push(clean(event));
 }
@@ -543,10 +543,10 @@ async function officialRuntimeReadiness(page, validateOfficialRuntime) {
     if (!connected) {
       const alert = await page.locator(".api-network-error").innerText().catch(() => "");
       const canvasCount = await page.locator(".official-shecan-vnc canvas").count();
-      lines.push(`- noVNC connection diagnostics: events=${vncDiagnostics.events.join(" | ") || "none"}; sent-frames=${vncDiagnostics.sent}; received-frames=${vncDiagnostics.received}; canvases=${canvasCount}; alert=${clean(alert) || "none"}.`);
+      lines.push(`- noVNC connection diagnostics: events=${vncDiagnostics.events.join(" | ") || "none"}; sent-frames=${vncDiagnostics.sent}; received-frames=${vncDiagnostics.received}; HTTP-exchanges=${vncDiagnostics.httpExchanges}; canvases=${canvasCount}; alert=${clean(alert) || "none"}.`);
       throw new Error("The authenticated noVNC console did not reach its connected state.");
     }
-    lines.push(`- noVNC transport counters before pixel validation: sent-frames=${vncDiagnostics.sent}; received-frames=${vncDiagnostics.received}.`);
+    lines.push(`- noVNC transport counters before pixel validation: sent-frames=${vncDiagnostics.sent}; received-frames=${vncDiagnostics.received}; HTTP-exchanges=${vncDiagnostics.httpExchanges}.`);
     const canvas = page.locator(".official-shecan-vnc canvas").first();
     await canvas.waitFor({ state: "visible", timeout: 30_000 });
     await page.waitForTimeout(2500);
@@ -601,8 +601,13 @@ async function main() {
   const loginScriptFailures = [];
   const loginClientErrors = [];
   page.on("response", (response) => {
+    const pathname = new URL(response.url()).pathname;
+    if (pathname === "/api/admin/shecan-runtime/vnc-http") {
+      vncDiagnostics.httpExchanges += 1;
+      if (response.status() >= 400 || vncDiagnostics.httpExchanges === 1) recordVncDiagnostic(`VNC HTTP response ${response.status()}`);
+    }
     if (response.request().resourceType() !== "script") return;
-    if (response.status() >= 400) loginScriptFailures.push(`${new URL(response.url()).pathname} (HTTP ${response.status()})`);
+    if (response.status() >= 400) loginScriptFailures.push(`${pathname} (HTTP ${response.status()})`);
     else loginScriptCount += 1;
   });
   page.on("pageerror", (error) => { if (loginClientErrors.length < 10) loginClientErrors.push(clean(error.message)); });
