@@ -19,10 +19,22 @@ export WEBKIT_DISABLE_DMABUF_RENDERER=1 WEBKIT_DISABLE_COMPOSITING_MODE=1
 # This test has no NIC or persistent disk; QEMU is the isolation boundary.
 export WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1
 # Guest-local loopback is needed for Xvnc; the VM still has no virtual NIC.
-if ! /bin/busybox ip link set lo up || ! /bin/busybox ip addr add 127.0.0.1/8 dev lo; then
-  echo NOMREH_LOCAL_DISPLAY_ERROR loopback > /dev/console
+if ! /bin/busybox ip link set lo up 2>/tmp/loopback-error; then
+  echo NOMREH_LOCAL_DISPLAY_ERROR loopback_link > /dev/console
+  if grep -qi 'not permitted' /tmp/loopback-error; then echo NOMREH_LOCAL_DISPLAY_DIAGNOSTIC net_permission > /dev/console; fi
+  if grep -qi 'not found' /tmp/loopback-error; then echo NOMREH_LOCAL_DISPLAY_DIAGNOSTIC ip_applet_missing > /dev/console; fi
+  if grep -qi 'not supported' /tmp/loopback-error; then echo NOMREH_LOCAL_DISPLAY_DIAGNOSTIC net_unsupported > /dev/console; fi
   /bin/busybox poweroff -f
 fi
+if ! /bin/busybox ip addr show dev lo | grep -q '127[.]0[.]0[.]1/'; then
+  if ! /bin/busybox ip addr add 127.0.0.1/8 dev lo 2>/tmp/loopback-error; then
+    echo NOMREH_LOCAL_DISPLAY_ERROR loopback_address > /dev/console
+    if grep -qi 'not permitted' /tmp/loopback-error; then echo NOMREH_LOCAL_DISPLAY_DIAGNOSTIC net_permission > /dev/console; fi
+    if grep -qi 'not supported' /tmp/loopback-error; then echo NOMREH_LOCAL_DISPLAY_DIAGNOSTIC net_unsupported > /dev/console; fi
+    /bin/busybox poweroff -f
+  fi
+fi
+echo NOMREH_LOCAL_DISPLAY_LOOPBACK_READY > /dev/console
 
 echo NOMREH_OFFICIAL_PROBE_BEGIN > /dev/console
 /usr/local/bin/Xvnc :0 -geometry 1100x760 -depth 24 -SecurityTypes None -localhost -NeverShared > /var/log/xvnc.log 2>&1 &
