@@ -84,8 +84,12 @@ REVERSE_PID=''
 if grep -q 'nomreh_vnc_reverse=15500' /proc/cmdline; then
   (
     while kill -0 "$XVNC_PID" 2>/dev/null; do
-      timeout 8s tigervncconfig -display :0 -connect 10.0.2.2:15500 >> /var/log/vnc-reverse.log 2>&1 || true
-      sleep 5
+      # x11vnc scrapes the genuine X11 desktop and initiates the reverse RFB
+      # connection directly. rfbport=0 prevents any additional listener.
+      x11vnc -display :0 -rfbport 0 -nopw -shared \
+        -no6 -noipv6 -noxdamage -connect_or_exit 10.0.2.2:15500 \
+        >> /var/log/vnc-reverse.log 2>&1 || true
+      sleep 2
     done
   ) &
   REVERSE_PID=$!
