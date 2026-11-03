@@ -84,5 +84,5 @@ else
 fi
 kill "$xvnc" 2>/dev/null || true
 sync
-poweroff -f
+/bin/busybox poweroff -f
 while true; do sleep 60; done

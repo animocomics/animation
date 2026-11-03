@@ -34,7 +34,7 @@ chmod 0755 "$WORK/context/Xvnc"
 cat > "$WORK/context/Dockerfile" <<'DOCKERFILE'
 FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update -qq && apt-get install -y --no-install-recommends libwebkit2gtk-4.1-0 libgtk-3-0 libx11-6 xvfb x11-utils dbus-x11 fonts-noto-core ca-certificates && rm -rf /var/lib/apt/lists/* /usr/share/doc/* /usr/share/man/* /var/cache/apt/archives/*
+RUN apt-get update -qq && apt-get install -y --no-install-recommends libwebkit2gtk-4.1-0 libgtk-3-0 libx11-6 xvfb x11-utils dbus-x11 fonts-noto-core ca-certificates busybox-static && rm -rf /var/lib/apt/lists/* /usr/share/doc/* /usr/share/man/* /var/cache/apt/archives/*
 COPY shecan-desktop shecan-game shecan-nextdns shecan-updater Xvnc /usr/local/bin/
 DOCKERFILE
 docker build -q -t nomreh-official-glibc-vm-probe "$WORK/context"
