@@ -58,6 +58,14 @@ if [ "$xvnc_ready" -ne 1 ]; then
   while true; do sleep 60; done
 fi
 
+mkdir -p /run/dbus
+if ! dbus-daemon --system --fork --address=unix:path=/run/dbus/system_bus_socket --print-pid=1 > /run/dbus-system.pid; then
+  echo NOMREH_OFFICIAL_GUEST_ERROR DBUS_SYSTEM > /dev/console
+  poweroff -f
+  while true; do sleep 60; done
+fi
+DBUS_SYSTEM_BUS_PID=$(cat /run/dbus-system.pid)
+export DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket
 export DISPLAY=:0
 export XDG_RUNTIME_DIR=/run/user/0
 export XDG_CONFIG_HOME=/root/.config
@@ -116,6 +124,7 @@ if grep -q 'nomreh_probe=1' /proc/cmdline; then
   echo NOMREH_OFFICIAL_PROBE_LOG_END > /dev/console
   kill "$APP_PID" 2>/dev/null || true
   kill "$XVNC_PID" 2>/dev/null || true
+  if [ -n "$DBUS_SYSTEM_BUS_PID" ]; then kill "$DBUS_SYSTEM_BUS_PID" 2>/dev/null || true; fi
   sync
   poweroff -f
 fi
