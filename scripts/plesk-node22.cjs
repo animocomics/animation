@@ -486,16 +486,17 @@ async function build() {
     console.log("Building Nomreh with Node 22…");
     progress("Building the Nomreh production application with Next.js");
     // Plesk's legacy libc cannot load Next's native SWC packages. Force the
-    // pinned WASM fallback in the parent and every child instead of repeatedly
-    // attempting incompatible native binaries during the same build.
+    // exact vendored WASM package in the parent and every child. NEXT_TEST_WASM_DIR
+    // makes Next import its wasm.js directly instead of downloading it from npm.
+    const wasmDirectory = path.join(APP_ROOT, "node_modules", "@next", "swc-wasm-nodejs");
+    if (!fs.existsSync(path.join(wasmDirectory, "wasm.js"))) throw new Error("The pinned local Next.js WASM compiler is missing.");
     // Next refuses an existing public/_next directory. Move only Nomreh's
     // generated public directory aside, then restore it for the guarded sync.
     routeStash = stashObsoleteRouteConflicts();
     staticStash = stashPublicStaticForBuild();
     runRuntimeNpm(runtime, ["run", "build"], {
       NEXT_TEST_WASM: "1",
-      // Keep the downloadable WASM compiler in Nomreh's own regenerable build
-      // cache, never in a subscription-wide cache shared with other domains.
+      NEXT_TEST_WASM_DIR: wasmDirectory,
       XDG_CACHE_HOME: path.join(APP_ROOT, ".next", "cache"),
     });
     if (!fs.existsSync(path.join(APP_ROOT, ".next", "BUILD_ID"))) throw new Error("The production build did not create .next/BUILD_ID; nothing was compacted.");
