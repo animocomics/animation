@@ -13,6 +13,10 @@ let browser;
 let context;
 let authenticated = false;
 let loggedOut = false;
+const vncDiagnostics = { events: [], sent: 0, received: 0 };
+function recordVncDiagnostic(event) {
+  if (vncDiagnostics.events.length < 24) vncDiagnostics.events.push(clean(event));
+}
 
 function clean(value) {
   return String(value || "").replace(/[\u0000-\u001f\u007f<>]/g, " ").replace(/https?:\/\/\S+/gi, "[link]").replace(/\s+/g, " ").trim().slice(0, 350);
@@ -535,7 +539,14 @@ async function officialRuntimeReadiness(page, validateOfficialRuntime) {
     if (!currentRuntime.appReady || !currentRuntime.brokerReady) throw new Error("The official runtime did not become app/broker ready within six minutes.");
     lines.push("- The isolated official guest reported its real app and loopback AI broker ready. No login, OTP, update-link, or provider request was submitted.");
     await page.goto(`${ORIGIN}/admin`, { waitUntil: "domcontentloaded", timeout: 30000 });
-    await page.locator(".official-shecan-screen.connected").waitFor({ state: "visible", timeout: 120_000 });
+    const connected = await page.locator(".official-shecan-screen.connected").waitFor({ state: "visible", timeout: 120_000 }).then(() => true).catch(() => false);
+    if (!connected) {
+      const alert = await page.locator(".api-network-error").innerText().catch(() => "");
+      const canvasCount = await page.locator(".official-shecan-vnc canvas").count();
+      lines.push(`- noVNC connection diagnostics: events=${vncDiagnostics.events.join(" | ") || "none"}; sent-frames=${vncDiagnostics.sent}; received-frames=${vncDiagnostics.received}; canvases=${canvasCount}; alert=${clean(alert) || "none"}.`);
+      throw new Error("The authenticated noVNC console did not reach its connected state.");
+    }
+    lines.push(`- noVNC transport counters before pixel validation: sent-frames=${vncDiagnostics.sent}; received-frames=${vncDiagnostics.received}.`);
     const canvas = page.locator(".official-shecan-vnc canvas").first();
     await canvas.waitFor({ state: "visible", timeout: 30_000 });
     await page.waitForTimeout(2500);
@@ -572,6 +583,20 @@ async function main() {
   context = await browser.newContext({ ignoreHTTPSErrors: false, viewport: { width: 1440, height: 1000 } });
   const page = await context.newPage();
   page.setDefaultTimeout(20000);
+  page.on("websocket", (socket) => {
+    if (new URL(socket.url()).pathname !== "/api/admin/shecan-runtime/vnc") return;
+    recordVncDiagnostic("authenticated noVNC WebSocket opened");
+    socket.on("close", () => recordVncDiagnostic("noVNC WebSocket closed"));
+    socket.on("socketerror", (error) => recordVncDiagnostic(`noVNC WebSocket error: ${error}`));
+    socket.on("framesent", () => { vncDiagnostics.sent += 1; });
+    socket.on("framereceived", () => { vncDiagnostics.received += 1; });
+  });
+  page.on("console", (message) => {
+    if (/websocket|novnc|rfb|shecan|failed to load/i.test(message.text())) recordVncDiagnostic(`browser ${message.type()}: ${message.text()}`);
+  });
+  page.on("requestfailed", (request) => {
+    if (/\/api\/admin\/shecan-runtime\/vnc|_next\/static\/chunks/i.test(request.url())) recordVncDiagnostic(`browser request failed: ${new URL(request.url()).pathname}; ${request.failure()?.errorText || "unknown"}`);
+  });
   let loginScriptCount = 0;
   const loginScriptFailures = [];
   const loginClientErrors = [];

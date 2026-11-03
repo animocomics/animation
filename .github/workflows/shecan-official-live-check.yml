@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/shecan-official-live-check.yml
       - scripts/shecan-vnc-websocket.cjs
+      - scripts/nomreh-admin-readiness.cjs
   workflow_dispatch:
 
 permissions:
