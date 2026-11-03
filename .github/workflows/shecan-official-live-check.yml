@@ -1,6 +1,9 @@
 name: Validate the official Shecan app in live Nomreh admin
 
 on:
+  push:
+    branches: [arena/f4b832aa-animation]
+    paths: [.github/workflows/shecan-official-live-check.yml]
   workflow_dispatch:
 
 permissions:
