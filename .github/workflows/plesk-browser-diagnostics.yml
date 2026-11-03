@@ -48,7 +48,7 @@ jobs:
           npm install --ignore-scripts --no-audit --no-fund playwright@1.64.1
           npx playwright install --with-deps chromium
 
-      - name: Probe only the official Shecan account service from Nomreh without credentials
+      - name: Inspect official Shecan app isolation and remote-display capabilities without changes
         id: diagnose
         if: steps.config.outputs.configured == 'true'
         env:
