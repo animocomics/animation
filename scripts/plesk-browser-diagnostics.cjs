@@ -10,6 +10,7 @@ const { chromium } = require("playwright");
 const { normalizePanelUrl, redact } = require("./plesk-api-diagnostics.cjs");
 const { cleanupCandidates } = require("./plesk-deploy-archives.cjs");
 const { restrictToPanelOrigin } = require("./plesk-origin-policy.cjs");
+const { startPanelProxy } = require("./plesk-panel-proxy.cjs");
 
 const DOMAIN = "nomreh.arounidea.com";
 const ACTION = process.env.PLESK_BROWSER_ACTION || "diagnose";
@@ -118,8 +119,10 @@ async function main() {
     : actionDescription, ""];
   let actionCompleted = false;
   let browser;
+  let panelProxy;
   try {
-    browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
+    panelProxy = await startPanelProxy(panel);
+    browser = await chromium.launch({ headless: true, args: ["--no-sandbox"], proxy: { server: panelProxy.address, bypass: "<-loopback>" } });
     // The certificate exception is only authorized for the configured Plesk
     // origin. Reject redirects, subresources and requests to every other origin
     // in this isolated browser context before they can bypass TLS validation.
@@ -1846,6 +1849,7 @@ async function main() {
     throw error;
   } finally {
     if (browser) await browser.close();
+    if (panelProxy) await panelProxy.close();
   }
   const output = sanitize(lines.join("\n"));
   fs.writeFileSync(OUTPUT, output, { mode: 0o600 });

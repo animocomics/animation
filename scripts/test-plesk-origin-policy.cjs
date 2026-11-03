@@ -3,6 +3,7 @@ const http = require("node:http");
 const assert = require("node:assert/strict");
 const { chromium } = require("playwright");
 const { restrictToPanelOrigin } = require("./plesk-origin-policy.cjs");
+const { startPanelProxy } = require("./plesk-panel-proxy.cjs");
 
 async function listen(server) {
   await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
@@ -20,6 +21,19 @@ async function main() {
     res.end("panel");
   });
   const panelOrigin = await listen(panel);
+  const panelUrl = new URL(panelOrigin);
+  const proxy = await startPanelProxy(`https://${panelUrl.host}`);
+  async function tunnel(authority) {
+    return new Promise((resolve, reject) => {
+      const proxyUrl = new URL(proxy.address);
+      const req = http.request({ host: proxyUrl.hostname, port: proxyUrl.port, method: "CONNECT", path: authority });
+      req.on("connect", (res, socket) => { socket.destroy(); resolve(res.statusCode); });
+      req.on("error", reject);
+      req.end();
+    });
+  }
+  assert.equal(await tunnel(panelUrl.host), 200, "the configured panel tunnel must be reachable");
+  assert.equal(await tunnel(new URL(otherOrigin).host), 403, "the proxy must reject a different origin");
   const browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
   try {
     const context = await browser.newContext({ ignoreHTTPSErrors: true, serviceWorkers: "block" });
@@ -35,6 +49,7 @@ async function main() {
     console.log("PLESK_ORIGIN_POLICY_PASS");
   } finally {
     await browser.close();
+    await proxy.close();
     await Promise.all([new Promise((resolve) => panel.close(resolve)), new Promise((resolve) => other.close(resolve))]);
   }
 }
