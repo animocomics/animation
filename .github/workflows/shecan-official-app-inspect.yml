@@ -173,11 +173,8 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           import os, re
-          output = ['# Official Shecan CLI authentication source', '', 'No credential was supplied and no executable was run.', '']
-          script = Path('windows-extracted/console-setup.ps1')
-          if script.exists():
-              output += ['## FILE: console-setup.ps1', '', script.read_text(errors='replace')]
-          needles = [b'/api/auth/login', b'shecanApiKey', b'X-Redmine-API-Key', b'api_key', b'apiKey', b'access_token', b'refresh_token']
+          output = ['# Official Shecan scoped proxy and DDNS source context', '', 'No credential was supplied and no executable was run.', '']
+          needles = [b'nddns.shecan.ir', b'updateIP', b'proxies.json', b'proxies-all.json', b'super_proxy', b'justDns', b'update_link', b'ddns.shecan.ir/update']
           seen = set()
           for name in ['windows-extracted/shecan-cli.exe', 'windows-extracted/shecan-desktop.exe']:
               path = Path(name)
@@ -188,7 +185,7 @@ jobs:
               count = 0
               for needle in needles:
                   start = 0
-                  while count < 12:
+                  while count < 24:
                       offset = data.find(needle, start)
                       if offset < 0:
                           break
@@ -197,7 +194,7 @@ jobs:
                       if key in seen:
                           continue
                       seen.add(key)
-                      raw = data[max(0, offset - 350):offset + 850]
+                      raw = data[max(0, offset - 700):offset + 1800]
                       text = ''.join(chr(byte) if 32 <= byte < 127 else '\n' for byte in raw)
                       text = re.sub(r'\n{2,}', '\n', text)
                       text = re.sub(r'([?&](?:token|key|secret|password|code)=)[^&\s]+', r'\1[redacted]', text, flags=re.I)
