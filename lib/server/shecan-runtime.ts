@@ -17,6 +17,7 @@ export interface OfficialRuntimeStatus {
   running: boolean;
   appReady: boolean;
   brokerReady: boolean;
+  supervisorRunning: boolean;
   phase: "not-installed" | "stopped" | "starting" | "ready" | "error";
   startedAt?: string;
   message: string;
@@ -37,8 +38,40 @@ function stateRoot(): string {
 }
 
 function pidPath(): string { return path.join(stateRoot(), "guest.pid"); }
+function supervisorPidPath(): string { return path.join(stateRoot(), "supervisor.pid"); }
+function stopRequestedPath(): string { return path.join(stateRoot(), "stop-requested"); }
 function statePath(): string { return path.join(stateRoot(), "state.json"); }
 function consolePath(): string { return path.join(stateRoot(), "guest-console.log"); }
+function supervisorScriptPath(): string { return path.resolve(process.cwd(), "scripts", "shecan-runtime-watchdog.cjs"); }
+
+function isOurSupervisor(pid: number | null): pid is number {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").includes(supervisorScriptPath());
+  } catch { return false; }
+}
+
+function launchOfficialRuntimeSupervisor(): void {
+  if (isOurSupervisor(readSupervisorPid()) || !regularFile(supervisorScriptPath())) return;
+  try {
+    const child = spawn(process.execPath, [supervisorScriptPath()], {
+      cwd: process.cwd(),
+      detached: true,
+      stdio: "ignore",
+      env: { ...process.env },
+    });
+    child.on("error", () => undefined);
+    child.unref();
+  } catch { /* The explicit runtime status remains fail-closed if supervision cannot start. */ }
+}
+
+function readSupervisorPid(): number | null {
+  try {
+    const pid = Number(fs.readFileSync(supervisorPidPath(), "utf8").trim());
+    return Number.isInteger(pid) && pid > 1 ? pid : null;
+  } catch { return null; }
+}
 
 export function officialRuntimePorts(): { vnc: number; proxy: number } {
   const vnc = Number(process.env.NOMREH_VNC_PORT || 15900);
@@ -131,6 +164,7 @@ export function getOfficialRuntimeStatus(): OfficialRuntimeStatus {
   } catch { installed = false; }
   const state = readState();
   const running = isOurGuest(readPid());
+  const supervisorRunning = isOurSupervisor(readSupervisorPid());
   const markers = running ? consoleTail() : "";
   const appReady = running && markers.includes("NOMREH_OFFICIAL_APP_PROCESS_ALIVE");
   const brokerReady = running && markers.includes("NOMREH_OFFICIAL_AI_BROKER_LISTENING");
@@ -141,6 +175,7 @@ export function getOfficialRuntimeStatus(): OfficialRuntimeStatus {
     running,
     appReady,
     brokerReady,
+    supervisorRunning,
     phase: !installed ? "not-installed" : failed || state.lastError ? "error" : ready ? "ready" : running ? "starting" : "stopped",
     startedAt: state.startedAt,
     message: !installed
@@ -165,8 +200,13 @@ function portIsFree(port: number): Promise<boolean> {
 }
 
 export async function startOfficialRuntime(): Promise<OfficialRuntimeStatus> {
+  fs.mkdirSync(stateRoot(), { recursive: true, mode: 0o700 });
+  try { fs.unlinkSync(stopRequestedPath()); } catch { /* No manual-stop marker. */ }
   const current = getOfficialRuntimeStatus();
-  if (current.running) return current;
+  if (current.running) {
+    launchOfficialRuntimeSupervisor();
+    return getOfficialRuntimeStatus();
+  }
   if (!current.installed) throw new Error("بستهٔ رسمی شکن هنوز روی سرور نصب نشده است.");
   verifyOfficialRuntime();
   const { vnc, proxy } = officialRuntimePorts();
@@ -195,6 +235,7 @@ export async function startOfficialRuntime(): Promise<OfficialRuntimeStatus> {
   writeState({ startedAt });
   child.once("error", () => writeState({ startedAt, lastError: "SPAWN_FAILED" }));
   child.unref();
+  launchOfficialRuntimeSupervisor();
   await new Promise<void>((resolve) => setTimeout(resolve, 300));
   return getOfficialRuntimeStatus();
 }
@@ -202,6 +243,14 @@ export async function startOfficialRuntime(): Promise<OfficialRuntimeStatus> {
 const delay = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 
 export async function stopOfficialRuntime(): Promise<OfficialRuntimeStatus> {
+  fs.mkdirSync(stateRoot(), { recursive: true, mode: 0o700 });
+  fs.writeFileSync(stopRequestedPath(), "manual stop\n", { mode: 0o600 });
+  const supervisor = readSupervisorPid();
+  if (isOurSupervisor(supervisor)) {
+    try { process.kill(supervisor, "SIGTERM"); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+    }
+  }
   const pid = readPid();
   if (isOurGuest(pid)) {
     try { process.kill(-pid, "SIGTERM"); } catch (error) {

@@ -15,6 +15,15 @@ const files = [
   "run-official.sh",
 ];
 
+async function waitFor(check: () => boolean, timeoutMs = 15000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.fail("Timed out waiting for the official runtime supervisor");
+}
+
 function fakeRuntime(root: string) {
   for (const relative of files) {
     const target = path.join(root, relative);
@@ -71,6 +80,15 @@ test("runtime lifecycle markers gate the AI proxy and stopping fails closed with
     assert.equal(ready.running, true);
     assert.equal(ready.appReady, true);
     assert.equal(ready.brokerReady, true);
+    await waitFor(() => getOfficialRuntimeStatus().supervisorRunning, 5000);
+    const firstPid = Number(fs.readFileSync(path.join(data, "shecan-official", "guest.pid"), "utf8").trim());
+    process.kill(-firstPid, "SIGKILL");
+    await waitFor(() => {
+      const current = getOfficialRuntimeStatus();
+      let currentPid = 0;
+      try { currentPid = Number(fs.readFileSync(path.join(data, "shecan-official", "guest.pid"), "utf8").trim()); } catch { /* Waiting for replacement. */ }
+      return current.running && current.appReady && current.brokerReady && current.supervisorRunning && currentPid > 1 && currentPid !== firstPid;
+    });
     const seen: unknown[] = [];
     globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
       seen.push((init as RequestInit & { dispatcher?: unknown } | undefined)?.dispatcher);
@@ -82,6 +100,10 @@ test("runtime lifecycle markers gate the AI proxy and stopping fails closed with
     assert.equal(seen[1], undefined, "unrelated traffic must never inherit the proxy");
     const stopped = await stopOfficialRuntime();
     assert.equal(stopped.running, false);
+    await waitFor(() => !getOfficialRuntimeStatus().supervisorRunning, 5000);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    assert.equal(getOfficialRuntimeStatus().running, false, "a manual stop must not be undone by the watchdog");
+    assert.equal(fs.existsSync(path.join(data, "shecan-official", "stop-requested")), true);
   } finally {
     closeProviderNetwork();
     await stopOfficialRuntime().catch(() => undefined);

@@ -519,7 +519,7 @@ async function officialRuntimeReadiness(page, validateOfficialRuntime) {
   const runtimeResponse = await context.request.get(`${ORIGIN}/api/admin/shecan-runtime`);
   const runtimePayload = await runtimeResponse.json().catch(() => ({}));
   if (!runtimeResponse.ok() || typeof runtimePayload.runtime?.installed !== "boolean") throw new Error("The authenticated official-runtime status API was not operational.");
-  lines.push(`- Official runtime installed: ${runtimePayload.runtime.installed ? "yes" : "no"}; running: ${runtimePayload.runtime.running ? "yes" : "no"}; app-ready: ${runtimePayload.runtime.appReady ? "yes" : "no"}.`);
+  lines.push(`- Official runtime installed: ${runtimePayload.runtime.installed ? "yes" : "no"}; running: ${runtimePayload.runtime.running ? "yes" : "no"}; app-ready: ${runtimePayload.runtime.appReady ? "yes" : "no"}; supervisor: ${runtimePayload.runtime.supervisorRunning === true ? "yes" : runtimePayload.runtime.supervisorRunning === false ? "no" : "unknown"}.`);
   if (validateOfficialRuntime) {
     if (!runtimePayload.runtime.installed) throw new Error("The official runtime is not installed; live admin framebuffer validation cannot start.");
     if (!runtimePayload.runtime.appReady) {
@@ -537,7 +537,16 @@ async function officialRuntimeReadiness(page, validateOfficialRuntime) {
       if (currentRuntime.phase === "error") throw new Error(`The official runtime entered its sanitized error state: ${clean(currentRuntime.message)}`);
     }
     if (!currentRuntime.appReady || !currentRuntime.brokerReady) throw new Error("The official runtime did not become app/broker ready within six minutes.");
-    lines.push("- The isolated official guest reported its real app and loopback AI broker ready. No login, OTP, update-link, or provider request was submitted.");
+    const supervisorDeadline = Date.now() + 30_000;
+    while (currentRuntime.supervisorRunning !== true && Date.now() < supervisorDeadline) {
+      await page.waitForTimeout(1000);
+      const response = await context.request.get(`${ORIGIN}/api/admin/shecan-runtime`);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload.runtime) throw new Error("Official runtime supervisor status was lost during startup.");
+      currentRuntime = payload.runtime;
+    }
+    if (currentRuntime.supervisorRunning !== true) throw new Error("The independent official runtime supervisor did not become active.");
+    lines.push("- The isolated official guest reported its real app and loopback AI broker ready; the independent always-on supervisor is active. No login, OTP, update-link, or provider request was submitted.");
     await page.goto(`${ORIGIN}/admin`, { waitUntil: "domcontentloaded", timeout: 30000 });
     let connected = await page.locator(".official-shecan-screen.connected").waitFor({ state: "visible", timeout: 120_000 }).then(() => true).catch(() => false);
     if (!connected && process.env.NOMREH_RESTART_ON_VNC_FAILURE === "1" && vncDiagnostics.events.some((event) => event.includes("VNC_CONNECT"))) {
@@ -703,6 +712,23 @@ async function main() {
   const usersPayload = await usersResponse.json();
   if (!usersResponse.ok() || !Array.isArray(usersPayload.users)) throw new Error("The admin-only account API was not available to the authenticated admin.");
   lines.push(`- Admin-only account management API: HTTP ${usersResponse.status()}; ${usersPayload.users.length} account(s) visible without exposing their details.`);
+
+  const runtimeControl = process.env.NOMREH_OFFICIAL_RUNTIME_CONTROL || "";
+  if (runtimeControl) {
+    if (!["start", "stop", "restart"].includes(runtimeControl)) throw new Error("Unsupported official runtime control action.");
+    const currentResponse = await context.request.get(`${ORIGIN}/api/admin/shecan-runtime`);
+    const currentPayload = await currentResponse.json().catch(() => ({}));
+    if (!currentResponse.ok() || !currentPayload.runtime) throw new Error("The official runtime control status API was unavailable.");
+    if (runtimeControl === "stop" && !currentPayload.runtime.installed) {
+      lines.push("- No official runtime was installed; no guest or provider setting was changed before extraction.", "");
+      return;
+    }
+    const controlResponse = await context.request.post(`${ORIGIN}/api/admin/shecan-runtime`, { data: { action: runtimeControl } });
+    const controlPayload = await controlResponse.json().catch(() => ({}));
+    if (![200, 202].includes(controlResponse.status()) || !controlPayload.runtime) throw new Error(`The official runtime ${runtimeControl} control returned HTTP ${controlResponse.status()}.`);
+    lines.push(`- Controlled official runtime ${runtimeControl}: HTTP ${controlResponse.status()}; installed=${controlPayload.runtime.installed ? "yes" : "no"}; running=${controlPayload.runtime.running ? "yes" : "no"}; app-ready=${controlPayload.runtime.appReady ? "yes" : "no"}.`, "- No Shecan login, OTP, update link, provider request, or grading job was submitted.", "");
+    return;
+  }
 
   if (process.env.NOMREH_OFFICIAL_ONLY === "1") {
     await officialRuntimeReadiness(page, true);
