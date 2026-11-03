@@ -40,8 +40,9 @@ jobs:
               rm -f "$artifact"
             fi
           }
-          download_official windows.bin https://dl.shecan.ir/download/windows/amd64
-          download_official shecan.apk https://shecan.ir/shecan.apk
+          download_official windows.bin "https://dl.shecan.ir/download/windows/amd64?version=v3.0.30"
+          download_official linux.rpm "https://dl.shecan.ir/download/linux/amd64?version=v3.0.30&format=rpm"
+          download_official shecan.apk "https://dl.shecan.ir/download/android/universal?version=v3.0.30"
 
       - name: Statically extract the official Windows package without executing it
         run: |
@@ -58,6 +59,16 @@ jobs:
             echo 'The official Electron app archive was statically extracted.'
           fi
           find windows-app -maxdepth 4 -type f \( -name '*.js' -o -name 'package.json' \) -printf '%p\n' 2>/dev/null | head -100 || true
+
+      - name: Statically extract the official Linux package without executing it
+        run: |
+          set -uo pipefail
+          cd "$RUNNER_TEMP/shecan-app-inspect"
+          if [ ! -f linux.rpm ]; then exit 0; fi
+          mkdir -p linux-extracted
+          7z x -y -olinux-extracted linux.rpm > linux-extract.log 2>&1 || true
+          tail -35 linux-extract.log || true
+          find linux-extracted -maxdepth 7 -type f \( -iname '*shecan*' -o -name '*.so' -o -name 'package.json' -o -name '*.asar' \) -printf '%p %s bytes\n' | head -120 || true
 
       - name: Statically extract the official Android package without executing it
         run: |
@@ -91,7 +102,7 @@ jobs:
               data = path.read_bytes()[:100]
               printable = ''.join(chr(byte) if 32 <= byte < 127 else '.' for byte in data)
               print(f'{name}: {path.stat().st_size} bytes; first bytes {printable}')
-          roots = [Path('windows-app'), Path('windows-extracted'), Path('android-app')]
+          roots = [Path('windows-app'), Path('windows-extracted'), Path('linux-extracted'), Path('android-app')]
           for root in roots:
               files = [path for path in root.rglob('*') if path.is_file()] if root.exists() else []
               print(f'{root}: {len(files)} extracted files')
