@@ -1,0 +1,124 @@
+name: Inspect official Shecan app authentication
+
+on:
+  push:
+    branches: [arena/f4b832aa-animation]
+    paths:
+      - .github/workflows/shecan-official-app-inspect.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: shecan-official-app-inspect
+  cancel-in-progress: false
+
+jobs:
+  inspect-public-apps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Download only the official public app packages
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/shecan-app-inspect"
+          cd "$RUNNER_TEMP/shecan-app-inspect"
+          if curl --fail --location --max-time 180 --output windows.bin https://dl.shecan.ir/download/windows/amd64; then
+            echo 'Official Windows package downloaded.'
+          else
+            echo 'Official Windows package download failed; no alternate source will be used.'
+          fi
+          if curl --fail --location --max-time 180 --output shecan.apk https://shecan.ir/shecan.apk; then
+            echo 'Official Android package downloaded.'
+          else
+            echo 'Official Android package download failed; no alternate source will be used.'
+          fi
+          for artifact in windows.bin shecan.apk; do
+            if [ -f "$artifact" ]; then
+              file "$artifact"
+              stat -c "$artifact bytes=%s" "$artifact"
+              sha256sum "$artifact"
+            fi
+          done
+
+      - name: Statically extract the official Windows package without executing it
+        run: |
+          set -uo pipefail
+          cd "$RUNNER_TEMP/shecan-app-inspect"
+          if [ ! -f windows.bin ]; then exit 0; fi
+          mkdir -p windows-extracted
+          7z x -y -owindows-extracted windows.bin > windows-extract.log 2>&1 || true
+          tail -35 windows-extract.log || true
+          find windows-extracted -maxdepth 6 -type f \( -name 'app.asar' -o -name 'nxtdns.exe' -o -name 'package.json' -o -name '*.exe' \) -printf '%p %s bytes\n' | head -80 || true
+          app_asar="$(find windows-extracted -type f -name app.asar | head -n 1 || true)"
+          if [ -n "$app_asar" ]; then
+            npx --yes @electron/asar extract "$app_asar" windows-app
+            echo 'The official Electron app archive was statically extracted.'
+          fi
+          find windows-app -maxdepth 4 -type f \( -name '*.js' -o -name 'package.json' \) -printf '%p\n' 2>/dev/null | head -100 || true
+
+      - name: Statically extract the official Android package without executing it
+        run: |
+          set -uo pipefail
+          cd "$RUNNER_TEMP/shecan-app-inspect"
+          if [ ! -f shecan.apk ]; then exit 0; fi
+          mkdir -p android-app
+          unzip -q -o shecan.apk -d android-app || true
+          find android-app -maxdepth 4 -type f \( -name '*.bundle' -o -name '*.so' -o -name 'AndroidManifest.xml' -o -name 'resources.arsc' -o -name '*.json' \) -printf '%p %s bytes\n' | head -100 || true
+
+      - name: Report only sanitized public endpoints and authentication-related strings
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/shecan-app-inspect"
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          from urllib.parse import urlsplit, urlunsplit
+
+          roots = [Path('windows-app'), Path('windows-extracted'), Path('android-app')]
+          urls = set()
+          strings = set()
+          url_pattern = re.compile(rb'https?://[A-Za-z0-9._~:/?#\[\]@!$&\'()*+,;=%-]{4,500}')
+          string_pattern = re.compile(rb'[\x20-\x7e]{5,350}')
+          keyword = re.compile(r'(?i)(login|log in|signin|sign in|auth|ddns|update.?url|update.?link|ip.?update|static.?ip|dynamic.?ip|access.?token|refresh.?token)')
+          for root in roots:
+              if not root.exists():
+                  continue
+              for path in root.rglob('*'):
+                  if not path.is_file() or path.suffix.lower() in {'.png', '.jpg', '.jpeg', '.gif', '.ico', '.woff', '.woff2', '.ttf', '.zip', '.dll'}:
+                      continue
+                  try:
+                      if path.stat().st_size > 120_000_000:
+                          continue
+                      data = path.read_bytes()
+                  except OSError:
+                      continue
+                  for match in url_pattern.findall(data):
+                      try:
+                          value = match.decode('ascii').rstrip('.,;\\')
+                          parsed = urlsplit(value)
+                          if not re.search(r'(?i)(shecan|ddns|auth|login)', parsed.netloc + parsed.path):
+                              continue
+                          urls.add(urlunsplit((parsed.scheme, parsed.netloc, parsed.path, '', '')))
+                      except Exception:
+                          pass
+                  if path.suffix.lower() in {'.js', '.json', '.ts', '.html', '.bundle', '.so', '.exe', '.arsc'} or path.name in {'nxtdns.exe', 'windows.bin'}:
+                      for raw in string_pattern.findall(data):
+                          try:
+                              value = raw.decode('ascii').strip()
+                          except Exception:
+                              continue
+                          if not keyword.search(value):
+                              continue
+                          if len(value) > 350 or re.search(r'(?i)(api[_-]?key|client[_-]?secret|authorization:)', value):
+                              continue
+                          value = re.sub(r'([?&](?:token|key|secret|password|code)=)[^&\s]+', r'\1[redacted]', value, flags=re.I)
+                          strings.add(f'{path}: {value}')
+          print('\n## Sanitized public endpoint candidates (query strings removed)')
+          for value in sorted(urls)[:160]:
+              print(value)
+          print('\n## Authentication/update string candidates from official packages')
+          for value in sorted(strings)[:180]:
+              print(value[:500])
+          print('\nNo user credential was supplied; no app was executed; no host or DNS setting was contacted or changed.')
+          PY
