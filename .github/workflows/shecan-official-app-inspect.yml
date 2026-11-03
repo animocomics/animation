@@ -78,6 +78,27 @@ jobs:
             find linux-root -maxdepth 8 -type f \( -iname '*shecan*' -o -iname '*nxtdns*' -o -name '*.service' -o -name '*.json' -o -name '*.desktop' \) -printf '%p %s bytes\n' | head -120 || true
           fi
 
+      - name: Inspect official Linux desktop runtime dependencies without execution
+        run: |
+          set -uo pipefail
+          cd "$RUNNER_TEMP/shecan-app-inspect"
+          desktop="linux-root/usr/local/bin/shecan-desktop"
+          if [ -f "$desktop" ]; then
+            file "$desktop"
+            stat -c 'Official desktop bytes=%s' "$desktop"
+            echo '## Dynamic dependencies (static ELF inspection only)'
+            readelf -d "$desktop" | grep -E 'NEEDED|RPATH|RUNPATH' || true
+            echo '## Program interpreter (static ELF inspection only)'
+            readelf -l "$desktop" | grep -A1 'interpreter' || true
+            echo '## Official desktop launcher'
+            cat linux-root/usr/share/applications/shecan-desktop.desktop || true
+            echo '## GUI/runtime evidence from printable strings'
+            strings -a "$desktop" | grep -Ei 'fyne|wails|webkit|webengine|electron|gtk|golang.org/x/exp/shiny|github.com/gen2brain/dlgs|X11|wayland|GLFW' | sort -u | head -100 || true
+            echo '## Relevant binary and library sizes'
+            du -sh linux-root linux-extracted linux.rpm
+            find linux-root/usr/local/bin -maxdepth 1 -type f -printf '%f %s bytes\n' | sort
+          fi
+
       - name: Statically extract the official Android package without executing it
         run: |
           set -uo pipefail
