@@ -6,5 +6,6 @@ disk=41570728828
 restart=41570892105
 methods=dns53,doh,dot,dns5353,direct-curl,ddns,shecan-ip
 mode=activate
-previous-diagnostic=41569205561
+previous-diagnostic=41571030251
 read-only-evidence=41569834327
+quick-retest=after-shecan-dashboard-registration
