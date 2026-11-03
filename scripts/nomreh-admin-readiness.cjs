@@ -669,7 +669,7 @@ async function main() {
   }
 
   await page.locator("#admin-model").fill("gemini-3.8-flash");
-  await page.locator("#admin-api-key").fill("nomreh-readiness-invalid-not-a-secret");
+  await page.locator("#admin-api-key").fill("x");
   let unexpectedSaveCalls = 0;
   await page.route(`${ORIGIN}/api/provider`, async (route) => {
     if (route.request().method() === "POST") {
@@ -698,7 +698,7 @@ async function main() {
 
   const invalidKeyResponse = await context.request.post(`${ORIGIN}/api/provider/test`, {
     headers: { Accept: "application/json" },
-    data: { provider: "gemini", model: "gemini-3.8-flash", apiKey: "nomreh-readiness-invalid-not-a-secret" },
+    data: { provider: "gemini", model: "gemini-3.8-flash", apiKey: "x" },
   });
   const invalidKeyBody = await invalidKeyResponse.text();
   const invalidKeyContentType = invalidKeyResponse.headers()["content-type"] || "none";
