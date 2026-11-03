@@ -1,0 +1,77 @@
+name: Extract the uploaded VNC HTTP diagnostics
+
+on:
+  push:
+    branches: [arena/f4b832aa-animation]
+    paths: [.github/workflows/plesk-vnc-http-diagnostics-extract.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+
+concurrency:
+  group: plesk-nomreh-browser
+  cancel-in-progress: false
+
+jobs:
+  extract-restart:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Prepare an isolated temporary browser
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/plesk-browser"
+          cd "$RUNNER_TEMP/plesk-browser"
+          npm init -y > /dev/null
+          npm install --ignore-scripts --no-audit --no-fund playwright@1.64.1
+          npx playwright install --with-deps chromium
+      - name: Extract the already uploaded diagnostics and verify its exact hash
+        id: extract
+        env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+          PLESK_BROWSER_ACTION: extract
+          PLESK_ARCHIVE_NAME: nomreh-deploy-vnc-http-diagnostics-v39.zip
+          PLESK_DELTA_SOURCE: ${{ github.sha }}
+          PLESK_DELTA_FILES: scripts/shecan-vnc-http.cjs
+          PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-vnc-http-extract.md
+          NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
+        run: node scripts/plesk-browser-diagnostics.cjs
+      - name: Restart only the existing Nomreh Node application
+        id: restart
+        if: steps.extract.outcome == 'success'
+        env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+          PLESK_BROWSER_ACTION: restart-runtime
+          PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-vnc-http-restart.md
+          NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
+        run: node scripts/plesk-browser-diagnostics.cjs
+      - name: Publish the sanitized extraction and restart result
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EXTRACT_OUTCOME: ${{ steps.extract.outcome }}
+          RESTART_OUTCOME: ${{ steps.restart.outcome }}
+        run: |
+          set -euo pipefail
+          conclusion=success
+          if [ "$EXTRACT_OUTCOME" != success ] || [ "$RESTART_OUTCOME" != success ]; then conclusion=failure; fi
+          summary='The VNC diagnostics extraction did not produce a report.'
+          for report in nomreh-vnc-http-restart.md nomreh-vnc-http-extract.md; do
+            if [ -f "$RUNNER_TEMP/$report" ]; then summary="$(cat "$RUNNER_TEMP/$report")"; break; fi
+          done
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name="Authenticated VNC HTTP diagnostics extraction" \
+            -f head_sha="$GITHUB_SHA" \
+            -f status=completed \
+            -f conclusion="$conclusion" \
+            -f 'output[title]=Hosted VNC HTTP diagnostics and restart' \
+            --raw-field "output[summary]=${summary}" > /dev/null
