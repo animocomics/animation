@@ -30,7 +30,9 @@ if (ACTION === "extract" && (DELTA_SOURCE || DELTA_FILES.length)) {
 const EXPECTED_DELTA = ACTION === "extract" && DELTA_SOURCE
   ? DELTA_FILES.map((file) => ({
       file,
-      sha256: crypto.createHash("sha256").update(execFileSync("git", ["show", `${DELTA_SOURCE}:${file}`], { maxBuffer: 2 * 1024 * 1024 })).digest("hex"),
+      // The pinned SWC WASM tarball is about 6.6 MiB; retain a bounded 32 MiB
+      // per-file manifest limit instead of rejecting verified binary dependencies.
+      sha256: crypto.createHash("sha256").update(execFileSync("git", ["show", `${DELTA_SOURCE}:${file}`], { maxBuffer: 32 * 1024 * 1024 })).digest("hex"),
     }))
   : [];
 

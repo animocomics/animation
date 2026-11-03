@@ -2,6 +2,7 @@ name: Plesk Nomreh archive extraction
 
 # Validated application source: the exact commit triggering this workflow.
 # Hosted delta verification stays in the live File Manager session without AJAX-resetting navigation.
+# Binary delta manifests allow the verified 6.6 MiB SWC tarball with a bounded 32 MiB per-file limit.
 
 on:
   push:
