@@ -540,7 +540,7 @@ async function officialRuntimeReadiness(page, validateOfficialRuntime) {
     lines.push("- The isolated official guest reported its real app and loopback AI broker ready. No login, OTP, update-link, or provider request was submitted.");
     await page.goto(`${ORIGIN}/admin`, { waitUntil: "domcontentloaded", timeout: 30000 });
     let connected = await page.locator(".official-shecan-screen.connected").waitFor({ state: "visible", timeout: 120_000 }).then(() => true).catch(() => false);
-    if (!connected && vncDiagnostics.events.some((event) => event.includes("VNC_CONNECT"))) {
+    if (!connected && process.env.NOMREH_RESTART_ON_VNC_FAILURE === "1" && vncDiagnostics.events.some((event) => event.includes("VNC_CONNECT"))) {
       lines.push("- The first authenticated noVNC attempt reached the classified host-to-guest VNC connection failure; restarting only the isolated official guest once before retrying.");
       const restartResponse = await context.request.post(`${ORIGIN}/api/admin/shecan-runtime`, { data: { action: "restart" } });
       if (![200, 202].includes(restartResponse.status())) throw new Error(`The isolated official runtime restart returned HTTP ${restartResponse.status()}.`);

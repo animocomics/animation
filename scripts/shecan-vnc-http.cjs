@@ -1,6 +1,7 @@
 "use strict";
 
 const crypto = require("node:crypto");
+const fs = require("node:fs");
 const net = require("node:net");
 const { authorizeUpgrade } = require("./shecan-vnc-websocket.cjs");
 
@@ -109,6 +110,20 @@ function requireSession(request) {
   return session;
 }
 
+function listenerState(port) {
+  const hex = port.toString(16).toUpperCase().padStart(4, "0");
+  try {
+    for (const table of ["/proc/net/tcp", "/proc/net/tcp6"]) {
+      const lines = fs.readFileSync(table, "utf8").split("\n").slice(1);
+      for (const line of lines) {
+        const fields = line.trim().split(/\s+/);
+        if (fields[1]?.endsWith(`:${hex}`) && fields[3] === "0A") return "LISTENER";
+      }
+    }
+    return "NO_LISTENER";
+  } catch { return "LISTENER_UNKNOWN"; }
+}
+
 async function createSession(request, response, applicationPort) {
   request.nomrehVncStage = "SESSION_LIMIT";
   if (sessions.size >= MAX_SESSIONS) throw Object.assign(new Error("Too many VNC sessions"), { statusCode: 429 });
@@ -138,7 +153,9 @@ async function createSession(request, response, applicationPort) {
     socket.once("error", onError);
   }).catch((error) => {
     socket.destroy();
-    throw Object.assign(new Error("VNC is unavailable"), { statusCode: 503, cause: error });
+    const rawCode = error.message === "VNC connection timeout" ? "TIMEOUT" : String(error.code || "UNKNOWN");
+    const code = /^[A-Z0-9_]+$/.test(rawCode) ? rawCode : "UNKNOWN";
+    throw Object.assign(new Error("VNC is unavailable"), { statusCode: 503, vncCode: `VNC_CONNECT_${code}_${listenerState(port)}`, cause: error });
   });
   request.nomrehVncStage = "SESSION_CREATE";
   const id = crypto.randomBytes(16).toString("hex");
