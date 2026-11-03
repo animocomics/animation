@@ -78,7 +78,7 @@ docker run --rm --platform linux/amd64 -v "$WORK/rootfs:/out" debian:12-slim \
     if ldd /usr/local/bin/shecan-desktop | grep -q "not found"; then exit 1; fi
     test -x /usr/bin/dbus-run-session
     test -x /usr/bin/tinyproxy
-    test -x /usr/bin/vncconfig
+    test -x /usr/bin/tigervncconfig
   '
 
 du -sh "$WORK/full/nomreh-vm/official/qemu" "$WORK/full/nomreh-vm/official/glibc" "$WORK/rootfs"
