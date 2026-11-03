@@ -15,9 +15,24 @@ type ApiNetworkPayload = {
   pending?: boolean;
   jobError?: string;
   accountProbe?: { reachable: boolean; httpStatus: number };
+  otp?: { expiresAt: string };
+  retryAfter?: number;
 };
 
-type AccountBusy = "login" | "probe" | "refresh" | "select" | "logout" | null;
+type AccountBusy = "send-otp" | "verify-otp" | "probe" | "refresh" | "select" | "logout" | null;
+type OtpStage = "identifier" | "code";
+
+function normalizeOtpCode(value: string): string {
+  return value.trim()
+    .replace(/[۰-۹]/g, (digit) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit)))
+    .replace(/[٠-٩]/g, (digit) => String("٠١٢٣٤٥٦٧٨٩".indexOf(digit)))
+    .replace(/\D/g, "")
+    .slice(0, 6);
+}
+
+function otpTimer(seconds: number): string {
+  return faNumber(`${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`);
+}
 
 async function resolveNetworkJob(initial: ApiNetworkPayload, onPayload: (payload: ApiNetworkPayload) => void): Promise<ApiNetworkPayload> {
   let current = initial;
@@ -41,8 +56,10 @@ export function ApiNetworkConnection() {
   const [updateUrl, setUpdateUrl] = useState("");
   const [showUpdateUrl, setShowUpdateUrl] = useState(false);
   const [identifier, setIdentifier] = useState("");
-  const [password, setPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
+  const [otpStage, setOtpStage] = useState<OtpStage>("identifier");
+  const [otpCode, setOtpCode] = useState("");
+  const [otpExpiresAt, setOtpExpiresAt] = useState("");
+  const [otpNow, setOtpNow] = useState(0);
   const [orders, setOrders] = useState<ShecanOrderPublic[]>([]);
   const [selectedOrderId, setSelectedOrderId] = useState(0);
   const [accountBusy, setAccountBusy] = useState<AccountBusy>(null);
@@ -69,6 +86,14 @@ export function ApiNetworkConnection() {
     }).catch((reason) => setError(reason instanceof Error ? reason.message : "وضعیت شکن خوانده نشد.")).finally(() => setBusy(null));
   }, [user.role]);
 
+  useEffect(() => {
+    if (!otpExpiresAt) return;
+    const update = () => setOtpNow(Date.now());
+    update();
+    const timer = window.setInterval(update, 1000);
+    return () => window.clearInterval(timer);
+  }, [otpExpiresAt]);
+
   if (user.role !== "admin") return null;
 
   function selectPlan(next: "free" | "pro") {
@@ -88,7 +113,11 @@ export function ApiNetworkConnection() {
     });
     const payload = await readJsonResponse<ApiNetworkPayload>(response, "عملیات حساب شکن");
     applyPayload(payload);
-    if (!response.ok) throw new Error(payload.error || "عملیات حساب شکن ناموفق بود.");
+    if (!response.ok) {
+      const failure = new Error(payload.error || "عملیات حساب شکن ناموفق بود.") as Error & { retryAfter?: number };
+      if (payload.retryAfter && Number.isFinite(payload.retryAfter)) failure.retryAfter = payload.retryAfter;
+      throw failure;
+    }
     return payload;
   }
 
@@ -98,31 +127,56 @@ export function ApiNetworkConnection() {
     try {
       const payload = await accountRequest({ action: "probe" });
       if (!payload.accountProbe?.reachable) throw new Error("پاسخ سرویس ورود شکن تأیید نشد.");
-      notify({ title: "دسترسی به سرویس ورود شکن تأیید شد", description: "سرور نمره پاسخ رسمی شکن را دریافت کرد؛ این آزمایش بدون نام کاربری، رمز یا کلید انجام شد.", variant: "success" });
+      notify({ title: "دسترسی به سرویس ورود شکن تأیید شد", description: "سرور نمره پاسخ رسمی شکن را دریافت کرد؛ این آزمایش بدون شماره، کد، رمز یا کلید انجام شد.", variant: "success" });
     } catch (reason) { setError(reason instanceof Error ? reason.message : "دسترسی به سرویس ورود شکن برقرار نشد."); }
     finally { setAccountBusy(null); }
   }
 
-  async function login(event: FormEvent) {
-    event.preventDefault();
-    setAccountBusy("login");
+  async function sendOtp(event?: FormEvent) {
+    event?.preventDefault();
+    setAccountBusy("send-otp");
     setError("");
     try {
-      const payload = await accountRequest({ action: "login", identifier, password });
-      setPassword("");
-      setShowPassword(false);
+      const payload = await accountRequest({ action: "send-otp", identifier });
+      if (!payload.otp?.expiresAt || !Number.isFinite(Date.parse(payload.otp.expiresAt))) throw new Error("زمان انقضای کد در پاسخ شکن دریافت نشد.");
+      setOtpCode("");
+      setOtpExpiresAt(payload.otp.expiresAt);
+      setOtpStage("code");
+      notify({ title: "کد یک‌بارمصرف ارسال شد", description: "کد ۶ رقمی پیامک یا ایمیل را وارد کنید؛ شماره و کد در نمره ذخیره نمی‌شوند.", variant: "success" });
+    } catch (reason) {
+      const failure = reason as Error & { retryAfter?: number };
+      if (failure.retryAfter) {
+        setOtpExpiresAt(new Date(Date.now() + failure.retryAfter * 1000).toISOString());
+        setOtpStage("code");
+      }
+      setError(failure.message || "ارسال کد یک‌بارمصرف انجام نشد.");
+    } finally { setAccountBusy(null); }
+  }
+
+  async function verifyOtp(event: FormEvent) {
+    event.preventDefault();
+    setAccountBusy("verify-otp");
+    setError("");
+    try {
+      const payload = await accountRequest({ action: "verify-otp", identifier, code: otpCode });
+      setOtpCode("");
+      setOtpExpiresAt("");
+      setOtpStage("identifier");
+      setIdentifier("");
       setUpdateUrl("");
       setDirty(false);
       notify({
-        title: "ورود به حساب شکن انجام شد",
-        description: payload.status?.selectedOrderId
-          ? `سرویس «${payload.status.selectedOrderLabel || "انتخاب‌شده"}» آماده است؛ اکنون آزمایش و فعال‌سازی را بزنید. رمز ذخیره نشد.`
-          : "رمز ذخیره نشد؛ یک سرویس فعال را از فهرست انتخاب کنید.",
+        title: "ورود با کد یک‌بارمصرف تأیید شد",
+        description: payload.status?.updateUrlSource === "manual" && payload.status.hasUpdateUrl
+          ? "لینک به‌روزرسان فعلی بدون تغییر حفظ شد؛ اکنون آزمایش و فعال‌سازی را بزنید. کد ذخیره نشد."
+          : payload.status?.selectedOrderId
+            ? `سرویس «${payload.status.selectedOrderLabel || "انتخاب‌شده"}» آماده است؛ اکنون آزمایش و فعال‌سازی را بزنید. کد ذخیره نشد.`
+            : "کد ذخیره نشد؛ یک سرویس فعال را از فهرست انتخاب کنید.",
         variant: "success",
       });
     } catch (reason) {
-      setPassword("");
-      setError(reason instanceof Error ? reason.message : "ورود به حساب شکن انجام نشد.");
+      setOtpCode("");
+      setError(reason instanceof Error ? reason.message : "تأیید کد یک‌بارمصرف انجام نشد.");
     } finally { setAccountBusy(null); }
   }
 
@@ -156,7 +210,9 @@ export function ApiNetworkConnection() {
       await accountRequest({}, "DELETE");
       setOrders([]);
       setSelectedOrderId(0);
-      setPassword("");
+      setOtpCode("");
+      setOtpExpiresAt("");
+      setOtpStage("identifier");
       notify({ title: "کلید حساب شکن حذف شد", description: "لینک ذخیره‌شده و وضعیت فعلی اتصال AI تغییری نکرد.", variant: "success" });
     } catch (reason) { setError(reason instanceof Error ? reason.message : "خروج از حساب شکن انجام نشد."); }
     finally { setAccountBusy(null); }
@@ -195,6 +251,7 @@ export function ApiNetworkConnection() {
 
   const isBusy = busy !== null || accountBusy !== null;
   const enabled = Boolean(status?.enabled);
+  const otpSeconds = otpExpiresAt && otpNow ? Math.max(0, Math.ceil((Date.parse(otpExpiresAt) - otpNow) / 1000)) : 0;
 
   return <div className="api-network-connection">
     <div className={`api-network-status ${enabled ? "enabled" : ""} ${status?.lastTestStatus === "error" ? "has-error" : ""}`}>
@@ -217,16 +274,19 @@ export function ApiNetworkConnection() {
     {plan === "pro" && <section className="shecan-account-panel" aria-labelledby="shecan-account-title">
       <div className="shecan-account-heading">
         <span><UserRound size={19} /></span>
-        <div><h4 id="shecan-account-title">ورود به حساب شکن</h4><p>همان روش اپ رسمی؛ دریافت سرویس و ساخت لینک ثبت IP بدون کپی‌کردن توکن.</p></div>
+        <div><h4 id="shecan-account-title">ورود با شماره همراه و کد پیامکی</h4><p>همان فرایند پنل و اپ رسمی شکن؛ بدون رمز عبور، سپس دریافت سرویس و ساخت لینک ثبت IP.</p></div>
         {status?.hasAccountKey && <span className="status-badge success"><CheckCircle2 size={12} /> حساب متصل</span>}
       </div>
 
-      {!status?.hasAccountKey ? <form className="shecan-login-form" onSubmit={login}>
-        <div className="form-field"><label htmlFor="shecan-account-identifier">نام کاربری، ایمیل یا شمارهٔ شکن</label><div className="input-with-icon"><UserRound size={17} /><input id="shecan-account-identifier" className="input" dir="ltr" required autoComplete="username" spellCheck={false} value={identifier} onChange={(event) => setIdentifier(event.target.value)} placeholder="همان اطلاعات ورود به اپ شکن" /></div></div>
-        <div className="form-field"><label htmlFor="shecan-account-password">رمز عبور شکن</label><div className="input-with-icon input-with-action"><LockKeyhole size={17} /><input id="shecan-account-password" className="input" dir="ltr" type={showPassword ? "text" : "password"} required autoComplete="current-password" spellCheck={false} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="رمز ذخیره نمی‌شود" /><button className="input-action" type="button" onClick={() => setShowPassword((value) => !value)} aria-label={showPassword ? "پنهان‌کردن رمز شکن" : "نمایش رمز شکن"}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div></div>
-        <div className="shecan-login-submit"><button className="btn btn-secondary" type="submit" disabled={isBusy}>{accountBusy === "login" ? <LoaderCircle className="spin-icon" size={16} /> : <LogIn size={16} />}{accountBusy === "login" ? "در حال ورود امن…" : "ورود و دریافت سرویس‌ها"}</button><button className="btn btn-ghost" type="button" onClick={() => void probeAccountService()} disabled={isBusy}>{accountBusy === "probe" ? <LoaderCircle className="spin-icon" size={15} /> : <Globe2 size={15} />}{accountBusy === "probe" ? "در حال آزمایش…" : "آزمایش مسیر ورود"}</button><span><ShieldCheck size={12} /> رمز فقط با HTTPS مستقیم به شکن می‌رود و در نمره ذخیره نمی‌شود.</span></div>
-      </form> : <div className="shecan-account-connected">
-        <div className="shecan-account-identity"><span><KeyRound size={17} /></span><div><strong>{status.accountName || "حساب شکن"}</strong><small dir="ltr">{status.accountLogin || "حساب تأییدشده"}</small></div><p>کلید حساب رمزنگاری شده است؛ رمز عبور نزد نمره نیست.</p></div>
+      {!status?.hasAccountKey ? (otpStage === "identifier" ? <form className="shecan-login-form shecan-otp-form" onSubmit={sendOtp}>
+        <div className="form-field"><label htmlFor="shecan-account-identifier">شماره همراه یا ایمیل</label><div className="input-with-icon"><UserRound size={17} /><input id="shecan-account-identifier" className="input" dir="ltr" required autoComplete="username" spellCheck={false} value={identifier} onChange={(event) => setIdentifier(event.target.value)} placeholder="شماره یا ایمیل ثبت‌شده در شکن" /></div></div>
+        <div className="shecan-login-submit"><button className="btn btn-secondary" type="submit" disabled={isBusy || !identifier.trim()}>{accountBusy === "send-otp" ? <LoaderCircle className="spin-icon" size={16} /> : <LogIn size={16} />}{accountBusy === "send-otp" ? "در حال ارسال کد…" : "ادامه و ارسال کد"}</button><button className="btn btn-ghost" type="button" onClick={() => void probeAccountService()} disabled={isBusy}>{accountBusy === "probe" ? <LoaderCircle className="spin-icon" size={15} /> : <Globe2 size={15} />}{accountBusy === "probe" ? "در حال آزمایش…" : "آزمایش مسیر ورود"}</button><span><ShieldCheck size={12} /> شناسه فقط با HTTPS به شکن می‌رود؛ شمارهٔ کامل در وضعیت حساب نمایش داده نمی‌شود.</span></div>
+      </form> : <form className="shecan-login-form shecan-otp-form" onSubmit={verifyOtp}>
+        <div className="form-field shecan-otp-code-field"><label htmlFor="shecan-otp-code">کد ۶ رقمی ارسال‌شده</label><input id="shecan-otp-code" className="input shecan-otp-input" dir="ltr" type="text" inputMode="numeric" autoComplete="one-time-code" required minLength={6} maxLength={6} pattern="[0-9]{6}" value={otpCode} onChange={(event) => setOtpCode(normalizeOtpCode(event.target.value))} placeholder="------" aria-describedby="shecan-otp-help" /></div>
+        <div className="shecan-otp-meta" id="shecan-otp-help"><span>{otpSeconds > 0 ? `مهلت استفاده از کد: ${otpTimer(otpSeconds)}` : "مهلت کد به پایان رسیده است؛ می‌توانید دوباره ارسال کنید."}</span><button className="btn btn-ghost btn-sm" type="button" onClick={() => void sendOtp()} disabled={isBusy || otpSeconds > 0}>{accountBusy === "send-otp" ? <LoaderCircle className="spin-icon" size={14} /> : <RefreshCw size={14} />}ارسال مجدد کد</button><button className="btn btn-ghost btn-sm" type="button" onClick={() => { setOtpStage("identifier"); setOtpCode(""); setOtpExpiresAt(""); setError(""); }} disabled={isBusy}>تغییر شماره یا ایمیل</button></div>
+        <div className="shecan-login-submit"><button className="btn btn-secondary" type="submit" disabled={isBusy || otpCode.length !== 6}>{accountBusy === "verify-otp" ? <LoaderCircle className="spin-icon" size={16} /> : <LogIn size={16} />}{accountBusy === "verify-otp" ? "در حال تأیید کد…" : "تأیید و دریافت سرویس‌ها"}</button><span><ShieldCheck size={12} /> کد فقط برای همین تأیید استفاده می‌شود و در نمره ذخیره نمی‌شود.</span></div>
+      </form>) : <div className="shecan-account-connected">
+        <div className="shecan-account-identity"><span><KeyRound size={17} /></span><div><strong>{status.accountName || "حساب شکن"}</strong><small dir="ltr">{status.accountLogin || "حساب تأییدشده"}</small></div><p>کلید حساب رمزنگاری شده است؛ کد یک‌بارمصرف و شمارهٔ کامل در نمره ذخیره نمی‌شوند.</p></div>
         <div className="shecan-account-actions"><button className="btn btn-ghost btn-sm" type="button" onClick={() => void refreshOrders()} disabled={isBusy}>{accountBusy === "refresh" ? <LoaderCircle className="spin-icon" size={14} /> : <RefreshCw size={14} />}به‌روزرسانی سرویس‌ها</button><button className="btn btn-ghost btn-sm" type="button" onClick={() => void logout()} disabled={isBusy}>{accountBusy === "logout" ? <LoaderCircle className="spin-icon" size={14} /> : <LogOut size={14} />}خروج و حذف کلید</button></div>
         {status.selectedOrderLabel && <div className="shecan-selected-order"><CheckCircle2 size={15} /><div><strong>{status.selectedOrderLabel}</strong><span>{status.selectedOrderId ? `سفارش ${faNumber(status.selectedOrderId)}` : ""}{status.selectedOrderDue ? ` · اعتبار تا ${faDate(`${status.selectedOrderDue}T12:00:00`, { year: "numeric", month: "long", day: "numeric" })}` : ""}</span></div></div>}
         {orders.length > 0 && <div className="shecan-order-picker"><div className="form-field"><label htmlFor="shecan-order-select">سرویس مورد استفاده برای ثبت IP سرور</label><select id="shecan-order-select" className="select" value={selectedOrderId || ""} onChange={(event) => setSelectedOrderId(Number(event.target.value))} disabled={isBusy}><option value="" disabled>یک سرویس را انتخاب کنید</option>{orders.map((order) => <option key={order.id} value={order.id}>{[order.product, order.tier].filter(Boolean).join(" · ")} — {order.active ? "فعال" : order.statusName || "غیرفعال"}{order.hasUpdateToken ? "" : " — بدون توکن ثبت IP"}</option>)}</select></div><button className="btn btn-secondary" type="button" onClick={() => void selectOrder()} disabled={isBusy || !selectedOrderId}>{accountBusy === "select" ? <LoaderCircle className="spin-icon" size={15} /> : <CheckCircle2 size={15} />}{accountBusy === "select" ? "در حال انتخاب…" : "انتخاب این سرویس"}</button></div>}
@@ -253,6 +313,6 @@ export function ApiNetworkConnection() {
       {enabled && <button className="btn btn-secondary" type="button" onClick={() => void save(false)} disabled={isBusy}>{busy === "disabling" ? <LoaderCircle className="spin-icon" size={16} /> : <Power size={16} />}غیرفعال‌کردن شکن</button>}
       <a className="api-network-help" href="https://shecan.ir/tutorials/tutorials-pro/" target="_blank" rel="noreferrer">راهنمای رسمی شکن</a>
     </div>
-    <p className="api-network-footnote">فعال‌سازی فقط پس از پاسخ معتبر DNS و Google انجام می‌شود. ثبت IP و توقف یک‌دقیقه‌ای در پس‌زمینه ادامه می‌یابد و وضعیت همین‌جا به‌روزرسانی می‌شود. رمز شکن ذخیره نمی‌شود؛ تست شبکه بدون API Key است و صحت کلید و مدل را با دکمهٔ «آزمایش اتصال» در بخش بالا بسنجید.</p>
+    <p className="api-network-footnote">فعال‌سازی فقط پس از پاسخ معتبر DNS و Google انجام می‌شود. ثبت IP و توقف یک‌دقیقه‌ای در پس‌زمینه ادامه می‌یابد و وضعیت همین‌جا به‌روزرسانی می‌شود. کد یک‌بارمصرف شکن ذخیره نمی‌شود؛ تست شبکه بدون API Key است و صحت کلید و مدل را با دکمهٔ «آزمایش اتصال» در بخش بالا بسنجید.</p>
   </div>;
 }

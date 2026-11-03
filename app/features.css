@@ -110,6 +110,7 @@
 .shecan-login-form { padding:15px; display:grid; grid-template-columns:1fr 1fr; gap:12px; }
 .shecan-login-submit { grid-column:1/-1; display:flex; align-items:center; flex-wrap:wrap; gap:10px 14px; }
 .shecan-login-submit > span { display:inline-flex; align-items:center; gap:5px; color:var(--muted); font-size:8px; line-height:1.8; }.shecan-login-submit > span svg { color:var(--brand); flex-shrink:0; }
+.shecan-otp-form { grid-template-columns:1fr; }.shecan-otp-code-field { max-width:360px; }.shecan-otp-input { height:48px; padding-left:18px; text-align:center; direction:ltr; font-size:20px; font-weight:700; letter-spacing:.45em; font-variant-numeric:tabular-nums; }.shecan-otp-input::placeholder { color:var(--muted-2); font-size:16px; letter-spacing:.3em; }.shecan-otp-meta { display:flex; align-items:center; flex-wrap:wrap; gap:5px 10px; }.shecan-otp-meta > span { flex:1; min-width:190px; color:var(--muted); font-size:9px; line-height:1.8; }.shecan-otp-meta .btn { padding-right:8px; padding-left:8px; }
 .shecan-account-connected { padding:14px 15px 15px; display:grid; gap:12px; }
 .shecan-account-identity { display:flex; align-items:center; flex-wrap:wrap; gap:9px; }.shecan-account-identity > span { width:31px; height:31px; display:grid; place-items:center; border-radius:9px; background:var(--mint); color:var(--brand); }
 .shecan-account-identity > div { display:grid; }.shecan-account-identity strong { font-size:10px; }.shecan-account-identity small { margin-top:2px; color:var(--muted); font-size:9px; }

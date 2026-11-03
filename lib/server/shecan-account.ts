@@ -1,6 +1,6 @@
 import { isIP } from "node:net";
 import type { ShecanOrderPublic } from "../types";
-import { SHECAN_DNS } from "../api-network";
+import { displayShecanAccountLogin, SHECAN_DNS } from "../api-network";
 import { closeProviderNetwork } from "./provider-network";
 import { encryptSecret, decryptSecret } from "./secret-crypto";
 
@@ -35,15 +35,18 @@ interface ShecanRequestResult {
   status: number;
   ok: boolean;
   data: unknown;
+  retryAfter?: number;
 }
 
 export class ShecanAccountError extends Error {
   status: number;
+  retryAfter?: number;
 
-  constructor(message: string, status = 502, options?: ErrorOptions) {
+  constructor(message: string, status = 502, options?: ErrorOptions, retryAfter?: number) {
     super(message, options);
     this.name = "ShecanAccountError";
     this.status = status;
+    this.retryAfter = retryAfter;
   }
 }
 
@@ -74,7 +77,7 @@ async function shecanRequest(path: string, options: { method?: "GET" | "POST"; b
       signal: AbortSignal.timeout(15_000),
     });
   } catch (error) {
-    throw new ShecanAccountError("اتصال امن سرور نمره به my.shecan.ir برقرار نشد؛ رمز یا کلید تازه‌ای ذخیره نشد.", 502, { cause: error });
+    throw new ShecanAccountError("اتصال امن سرور نمره به my.shecan.ir برقرار نشد؛ کد، رمز یا کلید تازه‌ای ذخیره نشد.", 502, { cause: error });
   }
   if (response.status >= 300 && response.status < 400) {
     await response.body?.cancel().catch(() => undefined);
@@ -86,7 +89,16 @@ async function shecanRequest(path: string, options: { method?: "GET" | "POST"; b
   if (text) {
     try { data = JSON.parse(text); } catch { /* Status-specific handling below avoids reflecting an HTML body. */ }
   }
-  return { status: response.status, ok: response.ok, data };
+  const bodyRetry = (data as { retry_after?: unknown } | null)?.retry_after;
+  const headerRetry = response.headers.get("Retry-After");
+  const retryCandidate = bodyRetry ?? headerRetry;
+  const retryAfter = typeof retryCandidate === "number" || typeof retryCandidate === "string" ? Number(retryCandidate) : 0;
+  return {
+    status: response.status,
+    ok: response.ok,
+    data,
+    ...(Number.isFinite(retryAfter) && retryAfter > 0 && retryAfter <= 86_400 ? { retryAfter: Math.ceil(retryAfter) } : {}),
+  };
 }
 
 function requireSuccessfulAccountRequest(result: ShecanRequestResult): void {
@@ -179,8 +191,15 @@ async function findAccountRow(): Promise<ShecanAccountRow | undefined> {
     account_login, account_name, account_authenticated_at, selected_order_id FROM api_network_settings WHERE id=1`).get() as ShecanAccountRow | undefined;
 }
 
+function displayAccountLogin(login: string): string {
+  // A phone identifier is not an account display name. Keep the full number
+  // out of both the database and the admin status response after OTP login.
+  return displayShecanAccountLogin(safeText(login));
+}
+
 async function persistLogin(identity: ShecanAccountIdentity, apiKey: string, selected: ShecanOrder | undefined, userId: string, freshLogin: boolean): Promise<void> {
   const previous = await findAccountRow();
+  const accountLogin = displayAccountLogin(identity.login);
   const now = new Date().toISOString();
   const usable = Boolean(selected?.active && selected.updateToken);
   const updateUrl = usable && selected ? buildUpdateUrl(selected) : "";
@@ -196,6 +215,14 @@ async function persistLogin(identity: ShecanAccountIdentity, apiKey: string, sel
     ? `سرویس «${orderLabel(selected)}» از حساب شکن دریافت شد؛ برای فعال‌سازی، ثبت IP و آزمایش را اجرا کنید.`
     : "حساب شکن متصل شد؛ یک سرویس فعال با قابلیت ثبت IP انتخاب کنید.";
   const db = (await import("./db")).getDb();
+  if (freshLogin && previous?.encrypted_update_url && previous.update_url_source === "manual") {
+    // The user-supplied update URL is authoritative. OTP authentication adds
+    // account/order discovery without silently replacing or retesting it.
+    db.prepare(`UPDATE api_network_settings SET encrypted_account_key=?, account_login=?, account_name=?, account_authenticated_at=?,
+      updated_at=?, updated_by=? WHERE id=1`)
+      .run(encryptedAccountKey, accountLogin, identity.name, authenticatedAt, now, userId);
+    return;
+  }
   if (!previous) {
     db.prepare(`INSERT INTO api_network_settings
       (id, plan, dns_primary, dns_secondary, enabled, encrypted_update_url, update_url_source,
@@ -204,26 +231,26 @@ async function persistLogin(identity: ShecanAccountIdentity, apiKey: string, sel
        last_test_status, last_test_message, last_tested_at, last_test_latency_ms, last_activated_at, updated_at, updated_by)
       VALUES (1, 'pro', ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'idle', ?, NULL, NULL, NULL, ?, ?)`)
       .run(SHECAN_DNS.pro[0], SHECAN_DNS.pro[1], encryptedUpdateUrl, usable ? "account" : "manual",
-        encryptedAccountKey, identity.login, identity.name, authenticatedAt, selectedId, selectedLabel, selectedDue, message, now, userId);
+        encryptedAccountKey, accountLogin, identity.name, authenticatedAt, selectedId, selectedLabel, selectedDue, message, now, userId);
   } else if (usable) {
     db.prepare(`UPDATE api_network_settings SET plan='pro', enabled=0, encrypted_update_url=?, update_url_source='account',
       encrypted_account_key=?, account_login=?, account_name=?, account_authenticated_at=?,
       selected_order_id=?, selected_order_label=?, selected_order_due=?,
       last_test_status='idle', last_test_message=?, last_tested_at=NULL, last_test_latency_ms=NULL, last_activated_at=NULL,
       updated_at=?, updated_by=? WHERE id=1`)
-      .run(encryptedUpdateUrl, encryptedAccountKey, identity.login, identity.name, authenticatedAt,
+      .run(encryptedUpdateUrl, encryptedAccountKey, accountLogin, identity.name, authenticatedAt,
         selectedId, selectedLabel, selectedDue, message, now, userId);
   } else {
     db.prepare(`UPDATE api_network_settings SET encrypted_account_key=?, account_login=?, account_name=?, account_authenticated_at=?,
       selected_order_id=NULL, selected_order_label='', selected_order_due='', last_test_message=?, updated_at=?, updated_by=? WHERE id=1`)
-      .run(encryptedAccountKey, identity.login, identity.name, authenticatedAt, message, now, userId);
+      .run(encryptedAccountKey, accountLogin, identity.name, authenticatedAt, message, now, userId);
   }
   if (usable) closeProviderNetwork();
 }
 
 async function storedAccountKey(): Promise<{ key: string; row: ShecanAccountRow }> {
   const row = await findAccountRow();
-  if (!row?.encrypted_account_key) throw new ShecanAccountError("ابتدا با نام کاربری و رمز عبور وارد حساب شکن شوید.", 400);
+  if (!row?.encrypted_account_key) throw new ShecanAccountError("ابتدا با شماره همراه یا ایمیل و کد یک‌بارمصرف وارد حساب شکن شوید.", 400);
   try {
     return { key: await decryptSecret(row.encrypted_account_key, ACCOUNT_KEY_PURPOSE), row };
   } catch (error) {
@@ -237,6 +264,74 @@ export async function probeShecanAccountService(): Promise<{ reachable: true; ht
   // An unauthenticated 401/403 is the expected proof that the exact official
   // account service answered. No identifier, password, key or cookie is sent.
   return { reachable: true, httpStatus: result.status };
+}
+
+function officialApiKey(data: unknown): string {
+  const payload = Array.isArray(data) ? data[0] : data;
+  const apiKey = (payload as { api_key?: unknown } | null)?.api_key;
+  if (typeof apiKey !== "string" || !/^[A-Za-z0-9]{20,64}$/.test(apiKey)) {
+    throw new ShecanAccountError("پاسخ رسمی ورود، کلید حساب معتبر نداشت؛ کد، رمز یا پاسخ حساب ذخیره نشد.", 502);
+  }
+  return apiKey;
+}
+
+async function completeShecanAuthentication(apiKey: string, userId: string): Promise<{ orders: ShecanOrderPublic[] }> {
+  const identity = await loadIdentity(apiKey);
+  const orders = await loadOrders(apiKey);
+  await persistLogin(identity, apiKey, pickOfficialOrder(orders), userId, true);
+  return { orders: orders.map(publicOrder) };
+}
+
+function validOtpIdentifier(input: string): string {
+  const trimmed = normalizeIdentifier(input);
+  const phoneCandidate = trimmed.replace(/[\s\-()]/g, "");
+  // Mirrors the official panel: validate 09…/9… after removing spacing and
+  // punctuation, then normalize a leading 9 to 09 before either OTP request.
+  const identifier = /^(09|9)\d{9}$/.test(phoneCandidate) ? phoneCandidate.replace(/^9/, "09") : trimmed;
+  if (!identifier || identifier.length > 160 || /[\u0000-\u001f\u007f]/.test(identifier)) {
+    throw new ShecanAccountError("شماره همراه یا ایمیل حساب شکن را به‌طور کامل وارد کنید.", 400);
+  }
+  return identifier;
+}
+
+export async function sendShecanOtp(identifierInput: string): Promise<{ expiresAt: string }> {
+  const identifier = validOtpIdentifier(identifierInput);
+  const result = await shecanRequest("/api/auth/send-otp", { method: "POST", body: { identifier } });
+  if (!result.ok) {
+    if (result.status === 429) {
+      throw new ShecanAccountError("کد دیگری به‌تازگی ارسال شده است؛ همان کد را وارد کنید یا پس از پایان زمان، دوباره ارسال کنید.", 429, undefined, result.retryAfter);
+    }
+    if (result.status === 400 || result.status === 401 || result.status === 403) {
+      throw new ShecanAccountError("شماره همراه یا ایمیل برای دریافت کد پذیرفته نشد؛ اطلاعات حساب شکن را بررسی کنید.", 400);
+    }
+    throw new ShecanAccountError(`ارسال کد یک‌بارمصرف شکن ناموفق بود (HTTP ${result.status})؛ بعداً دوباره تلاش کنید.`, 502);
+  }
+  const expiresValue = (result.data as { expires_at?: unknown } | null)?.expires_at;
+  if (typeof expiresValue !== "string" && typeof expiresValue !== "number") {
+    throw new ShecanAccountError("پاسخ ارسال کد، زمان انقضای معتبر نداشت؛ کد یا شناسه ذخیره نشد.", 502);
+  }
+  const expires = new Date(expiresValue);
+  if (!Number.isFinite(expires.getTime()) || expires.getTime() <= Date.now() || expires.getTime() > Date.now() + 86_400_000) {
+    throw new ShecanAccountError("زمان انقضای کد در پاسخ شکن معتبر نبود؛ کد یا شناسه ذخیره نشد.", 502);
+  }
+  return { expiresAt: expires.toISOString() };
+}
+
+export async function verifyShecanOtp(identifierInput: string, codeInput: string, userId: string): Promise<{ orders: ShecanOrderPublic[] }> {
+  const identifier = validOtpIdentifier(identifierInput);
+  const code = normalizeIdentifier(codeInput).replace(/[\s-]/g, "");
+  if (!/^\d{6}$/.test(code)) throw new ShecanAccountError("کد ۶ رقمی پیامک یا ایمیل را کامل وارد کنید.", 400);
+  const result = await shecanRequest("/api/auth/verify", { method: "POST", body: { identifier, code } });
+  if (!result.ok) {
+    if (result.status === 429) {
+      throw new ShecanAccountError("شکن موقتاً تعداد تلاش‌های تأیید کد را محدود کرده است؛ کمی بعد دوباره تلاش کنید.", 429, undefined, result.retryAfter);
+    }
+    if (result.status === 400 || result.status === 401 || result.status === 403) {
+      throw new ShecanAccountError("کد واردشده صحیح نیست یا منقضی شده است؛ کد تازه دریافت کنید. هیچ کدی ذخیره نشد.", 400);
+    }
+    throw new ShecanAccountError(`تأیید کد شکن ناموفق بود (HTTP ${result.status})؛ کد ذخیره نشد.`, 502);
+  }
+  return completeShecanAuthentication(officialApiKey(result.data), userId);
 }
 
 export async function loginShecanAccount(identifierInput: string, password: string, userId: string): Promise<{ orders: ShecanOrderPublic[] }> {
@@ -255,14 +350,7 @@ export async function loginShecanAccount(identifierInput: string, password: stri
     if (result.status === 429) throw new ShecanAccountError("شکن موقتاً تعداد تلاش‌های ورود را محدود کرده است؛ کمی بعد دوباره تلاش کنید.", 429);
     throw new ShecanAccountError(`ورود به حساب شکن ناموفق بود (HTTP ${result.status})؛ رمز ذخیره نشد.`, 502);
   }
-  const apiKey = (result.data as { api_key?: unknown } | null)?.api_key;
-  if (typeof apiKey !== "string" || !/^[A-Za-z0-9]{20,64}$/.test(apiKey)) {
-    throw new ShecanAccountError("پاسخ رسمی ورود، کلید حساب معتبر نداشت؛ رمز یا پاسخ حساب ذخیره نشد.", 502);
-  }
-  const identity = await loadIdentity(apiKey);
-  const orders = await loadOrders(apiKey);
-  await persistLogin(identity, apiKey, pickOfficialOrder(orders), userId, true);
-  return { orders: orders.map(publicOrder) };
+  return completeShecanAuthentication(officialApiKey(result.data), userId);
 }
 
 export async function refreshShecanOrders(userId: string): Promise<{ orders: ShecanOrderPublic[] }> {
@@ -270,8 +358,9 @@ export async function refreshShecanOrders(userId: string): Promise<{ orders: She
   const identity = await loadIdentity(key);
   const orders = await loadOrders(key);
   const now = new Date().toISOString();
+  const accountLogin = displayAccountLogin(identity.login);
   (await import("./db")).getDb().prepare("UPDATE api_network_settings SET account_login=?, account_name=?, updated_at=?, updated_by=? WHERE id=1")
-    .run(identity.login, identity.name, now, userId);
+    .run(accountLogin, identity.name, now, userId);
   return { orders: orders.map(publicOrder) };
 }
 

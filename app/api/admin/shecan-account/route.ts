@@ -8,6 +8,8 @@ import {
   probeShecanAccountService,
   refreshShecanOrders,
   selectShecanOrder,
+  sendShecanOtp,
+  verifyShecanOtp,
   ShecanAccountError,
 } from "@/lib/server/shecan-account";
 
@@ -16,6 +18,8 @@ export const maxDuration = 90;
 
 const schema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("login"), identifier: z.string().min(1).max(160), password: z.string().min(1).max(512) }),
+  z.object({ action: z.literal("send-otp"), identifier: z.string().min(1).max(160) }),
+  z.object({ action: z.literal("verify-otp"), identifier: z.string().min(1).max(160), code: z.string().min(1).max(24) }),
   z.object({ action: z.literal("refresh") }),
   z.object({ action: z.literal("probe") }),
   z.object({ action: z.literal("select"), orderId: z.number().int().positive() }),
@@ -39,6 +43,14 @@ export async function POST(request: Request) {
   try {
     const user = await requireAdmin();
     const input = schema.parse(await request.json());
+    if (input.action === "send-otp") {
+      const otp = await sendShecanOtp(input.identifier);
+      return NextResponse.json({ otp, status: await getApiNetworkStatus() }, { headers: { "Cache-Control": "no-store" } });
+    }
+    if (input.action === "verify-otp") {
+      const result = await verifyShecanOtp(input.identifier, input.code, user.id);
+      return responseWithStatus(result.orders);
+    }
     if (input.action === "login") {
       const result = await loginShecanAccount(input.identifier, input.password, user.id);
       return responseWithStatus(result.orders);
@@ -54,14 +66,14 @@ export async function POST(request: Request) {
     const result = await selectShecanOrder(input.orderId, user.id);
     return responseWithStatus(result.orders);
   } catch (error) {
-    if (error instanceof z.ZodError) return NextResponse.json({ error: "نام کاربری، رمز عبور یا سرویس انتخاب‌شده معتبر نیست." }, { status: 400 });
+    if (error instanceof z.ZodError) return NextResponse.json({ error: "شناسه، کد یک‌بارمصرف یا سرویس انتخاب‌شده معتبر نیست." }, { status: 400 });
     if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.status });
     if (error instanceof ShecanAccountError) {
       const status = await getApiNetworkStatus().catch(() => undefined);
       const statusCode = error.status >= 500 || error.status === 401 || error.status === 403 ? 400 : error.status;
-      return NextResponse.json({ error: error.message, status }, { status: statusCode, headers: { "Cache-Control": "no-store" } });
+      return NextResponse.json({ error: error.message, status, ...(error.retryAfter ? { retryAfter: error.retryAfter } : {}) }, { status: statusCode, headers: { "Cache-Control": "no-store" } });
     }
-    return NextResponse.json({ error: "عملیات حساب شکن انجام نشد؛ رمز ذخیره نشد و دوباره تلاش کنید." }, { status: 500 });
+    return NextResponse.json({ error: "عملیات حساب شکن انجام نشد؛ کد یا رمز ذخیره نشد و دوباره تلاش کنید." }, { status: 500 });
   }
 }
 

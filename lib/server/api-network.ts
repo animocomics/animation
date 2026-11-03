@@ -6,7 +6,7 @@ import type { LookupOptions } from "node:dns";
 import type { TcpSocketConnectOpts } from "node:net";
 import { Agent } from "undici";
 import type { ApiNetworkPublicStatus } from "../types";
-import { SHECAN_DNS, type ProviderNetworkConfig } from "../api-network";
+import { displayShecanAccountLogin, SHECAN_DNS, type ProviderNetworkConfig } from "../api-network";
 import { closeProviderNetwork, createShecanLookup, providerFetch, ProviderNetworkError } from "./provider-network";
 import { resolveShecanDoh } from "./shecan-doh";
 import { resolveShecanDot } from "./shecan-dot";
@@ -109,7 +109,7 @@ export async function getApiNetworkStatus(): Promise<ApiNetworkPublicStatus> {
     hasUpdateUrl: Boolean(row.encrypted_update_url),
     updateUrlSource: row.encrypted_update_url ? row.update_url_source : "none",
     hasAccountKey: Boolean(row.encrypted_account_key),
-    accountLogin: row.account_login || undefined,
+    accountLogin: displayShecanAccountLogin(row.account_login) || undefined,
     accountName: row.account_name || undefined,
     accountAuthenticatedAt: row.account_authenticated_at || undefined,
     selectedOrderId: row.selected_order_id || undefined,
