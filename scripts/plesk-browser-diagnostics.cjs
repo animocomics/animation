@@ -554,7 +554,8 @@ async function main() {
           const executeButton = page.locator("button[title='Execute command'], button[aria-label='Execute command']").first();
           const outputElement = page.locator("pre.pul-console-output").first();
           if (!await commandInput.count() || !await executeButton.count() || !await outputElement.count()) throw new Error("The Nomreh command controls were not found. The harmless VM probe was not started.");
-          const command = "exec -- sh nomreh-vm/probe/run-probe.sh";
+          const probeSource = "const cp=require('child_process');const result=cp.spawnSync('/bin/sh',['nomreh-vm/probe/run-probe.sh'],{stdio:'inherit',timeout:130000,killSignal:'SIGTERM'});if(result.error)console.log('NOMREH_VM_PROBE_ERROR '+(result.error.code||'SPAWN_FAILED'));process.exitCode=typeof result.status==='number'?result.status:1;";
+          const command = `exec -- node -e ${JSON.stringify(probeSource)}`;
           lines.push("## Controlled harmless VM boot", "", "- The archive contains no Shecan executable, account, update link, credential, or AI key. QEMU runs with one CPU, 128 MiB RAM, no disk, and no NIC. The guest prints an explicit PASS and powers off; the host wrapper terminates it after at most 120 seconds. No DNS, host network, application source, build, restart, or setting is changed.", "");
           await commandInput.fill(command);
           if (await commandInput.inputValue() !== command) throw new Error("Plesk did not retain the exact harmless VM command. Nothing was executed.");
