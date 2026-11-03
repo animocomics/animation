@@ -55,16 +55,16 @@ jobs:
         run: |
           set -euo pipefail
           base_sha=6dafdc912a5bfcfdfbb7c7c5f22750512e2db517
-          source_sha=fa7509e40ff985c3655e00f811528e8c27a821bd
-          archive="$RUNNER_TEMP/nomreh-deploy-shecan-ddns-v27-delta.zip"
-          expected='lib/server/api-network.ts'
+          source_sha=9ac5e8c98977575a9bbba7701ae956dd7893d4a8
+          archive="$RUNNER_TEMP/nomreh-deploy-shecan-account-v28-delta.zip"
+          expected='app/api/admin/shecan-account/route.ts app/features.css components/api-network-connection.tsx lib/server/api-network.ts lib/server/db.ts lib/server/shecan-account.ts lib/types.ts'
           runtime_changes="$(git diff --name-only "$base_sha" "$source_sha" -- app components lib | tr '\n' ' ' | sed 's/ $//')"
           test "$runtime_changes" = "$expected"
           git archive --format=zip --output="$archive" "$source_sha" $expected
           for required in $expected; do
             unzip -Z1 "$archive" | grep -Fx "$required" > /dev/null
           done
-          test "$(unzip -Z1 "$archive" | grep -vc '/$')" -eq 1
+          test "$(unzip -Z1 "$archive" | grep -vc '/$')" -eq 7
           git show "$source_sha:scripts/plesk-node22.cjs" | grep -F 'Nomreh Passenger-aware launcher is active for this build.' > /dev/null
           git show "$source_sha:scripts/plesk-node22.cjs" | grep -F 'return [mainFile];' > /dev/null
           git show "$source_sha:scripts/plesk-node22.cjs" | grep -F 'syncPublicStatic();' > /dev/null
@@ -97,8 +97,8 @@ jobs:
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
           PLESK_BROWSER_ACTION: upload
-          PLESK_ARCHIVE_NAME: nomreh-deploy-shecan-ddns-v27-delta.zip
-          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-shecan-ddns-v27-delta.zip
+          PLESK_ARCHIVE_NAME: nomreh-deploy-shecan-account-v28-delta.zip
+          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-shecan-account-v28-delta.zip
           PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-plesk-upload.md
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
         run: node scripts/plesk-browser-diagnostics.cjs
