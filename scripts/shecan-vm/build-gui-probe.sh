@@ -89,7 +89,8 @@ if [[ "$OFFICIAL_PROBE" == 1 ]]; then
     --output "$WORK/shecan.rpm" \
     'https://dl.shecan.ir/download/linux/amd64?version=v3.0.30&format=rpm'
   file "$WORK/shecan.rpm"
-  sha256sum "$WORK/shecan.rpm"
+  # Pin the exact official release observed in the credential-free inspection.
+  printf '%s  %s\n' 59a300035e25a9dbe0b4e26f44333883bcb26b9e7ab1af5bac88310095f122b2 "$WORK/shecan.rpm" | sha256sum --check
   mkdir -p "$WORK/rpm" "$WORK/official-root"
   7z x -y -o"$WORK/rpm" "$WORK/shecan.rpm" >/dev/null
   cpio_file=$(find "$WORK/rpm" -type f -name '*.cpio' -print -quit)

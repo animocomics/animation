@@ -50,8 +50,30 @@ done
     fi
     # Error output may include URLs or other private material. Report only
     # a fixed diagnostic classification, never raw application output.
-    if grep -qiE 'Error loading shared library|Error relocating|symbol not found' /var/log/shecan.log; then
-      echo NOMREH_OFFICIAL_PROBE_DIAGNOSTIC dynamic_linker > /dev/console
+    for pair in \
+      'dynamic_linker:Error loading shared library|Error relocating|symbol not found|undefined symbol|GLIBC_' \
+      'missing_file:not found|No such file or directory|cannot open' \
+      'display:cannot open display|no display|failed to open display|XOpenDisplay' \
+      'gtk:GTK|GDK|WebKit' \
+      'dbus:dbus|D-Bus' \
+      'permissions:permission denied|not permitted|must be root|superuser' \
+      'panic:panic|fatal|segmentation fault' \
+      'configuration:config|settings|home directory' \
+      'generic_error:error|failed|exception'; do
+      label=${pair%%:*}; expression=${pair#*:}
+      if grep -qiE "$expression" /var/log/shecan.log; then
+        echo "NOMREH_OFFICIAL_PROBE_DIAGNOSTIC $label" > /dev/console
+      fi
+    done
+    if [ -e /lib64/ld-linux-x86-64.so.2 ]; then
+      echo NOMREH_OFFICIAL_PROBE_GLIBC_LOADER present > /dev/console
+    else
+      echo NOMREH_OFFICIAL_PROBE_GLIBC_LOADER missing > /dev/console
+    fi
+    if [ -s /var/log/shecan.log ]; then
+      echo NOMREH_OFFICIAL_PROBE_LOG nonempty > /dev/console
+    else
+      echo NOMREH_OFFICIAL_PROBE_LOG empty > /dev/console
     fi
   fi
   kill "$app" 2>/dev/null || true
