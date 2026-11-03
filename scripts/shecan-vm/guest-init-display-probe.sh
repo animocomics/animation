@@ -18,6 +18,11 @@ export HOME=/tmp/home DISPLAY=:0 NO_AT_BRIDGE=1 LIBGL_ALWAYS_SOFTWARE=1
 export WEBKIT_DISABLE_DMABUF_RENDERER=1 WEBKIT_DISABLE_COMPOSITING_MODE=1
 # This test has no NIC or persistent disk; QEMU is the isolation boundary.
 export WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1
+# Guest-local loopback is needed for Xvnc; the VM still has no virtual NIC.
+if ! /bin/busybox ip link set lo up || ! /bin/busybox ip addr add 127.0.0.1/8 dev lo; then
+  echo NOMREH_LOCAL_DISPLAY_ERROR loopback > /dev/console
+  /bin/busybox poweroff -f
+fi
 
 echo NOMREH_OFFICIAL_PROBE_BEGIN > /dev/console
 /usr/local/bin/Xvnc :0 -geometry 1100x760 -depth 24 -SecurityTypes None -localhost -NeverShared > /var/log/xvnc.log 2>&1 &

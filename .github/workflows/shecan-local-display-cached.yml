@@ -1,0 +1,80 @@
+name: Retest offline Shecan display from diagnostic cache
+
+on:
+  push:
+    branches: [arena/ccbdcb6e-animation]
+    paths:
+      - .github/workflows/shecan-local-display-cached.yml
+      - scripts/shecan-vm/append-init-overlay.py
+      - scripts/shecan-vm/guest-init-display-probe.sh
+      - scripts/shecan-vm/display-probe.cjs
+      - scripts/shecan-vm/run-display-probe.sh
+
+permissions:
+  contents: read
+  checks: write
+  actions: read
+
+jobs:
+  cached-display:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require the real official no-network window markers from the cache build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api 'repos/${{ github.repository }}/commits/f5126adb7279622b0b68c8f8292f6ed6a1f3462b/check-runs?per_page=100' \
+            --jq '.check_runs[] | select(.name == "Official Shecan local noVNC display diagnostic") | .output.summary' > "$RUNNER_TEMP/prior.txt"
+          grep -F 'NOMREH_OFFICIAL_PROBE_WINDOW_OBSERVED yes' "$RUNNER_TEMP/prior.txt" >/dev/null
+          grep -F 'NOMREH_OFFICIAL_PROBE_NO_NETWORK yes' "$RUNNER_TEMP/prior.txt" >/dev/null
+          grep -F 'NOMREH_OFFICIAL_PROBE_NO_CREDENTIALS yes' "$RUNNER_TEMP/prior.txt" >/dev/null
+          grep -F 'NOMREH_OFFICIAL_PROBE_PASS' "$RUNNER_TEMP/prior.txt" >/dev/null
+          grep -F -- '-nic none' scripts/shecan-vm/run-display-probe.sh >/dev/null
+      - name: Download short-lived credential-free runner diagnostic
+        uses: actions/download-artifact@v4
+        with:
+          name: offline-display-runtime
+          path: ${{ runner.temp }}/display-cache
+          github-token: ${{ github.token }}
+          run-id: 41611355411
+      - name: Prepare temporary browser and pinned noVNC source
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/display-deps"
+          cd "$RUNNER_TEMP/display-deps"
+          npm init -y >/dev/null
+          npm install --ignore-scripts --no-audit --no-fund playwright@1.64.1 ws@8.18.3
+          npx playwright install --with-deps chromium
+          git clone --quiet --depth 1 --branch v1.6.0 https://github.com/novnc/noVNC.git "$RUNNER_TEMP/novnc"
+          test "$(git -C "$RUNNER_TEMP/novnc" rev-parse HEAD)" = a8dfd6a3ea3c74244f5ebdaa5a7f1023007a7820
+      - name: Retry real framebuffer locally, without a NIC or Plesk
+        id: probe
+        env:
+          NODE_PATH: ${{ runner.temp }}/display-deps/node_modules
+        run: |
+          set -euo pipefail
+          runtime="$RUNNER_TEMP/display-cache"
+          test -f "$runtime/guest/initramfs-gui"
+          chmod +x "$runtime/glibc/lib/x86_64-linux-gnu/ld-2.27.so" "$runtime/qemu/bin/qemu-system-x86_64"
+          install -m 0755 scripts/shecan-vm/run-display-probe.sh "$runtime/run-display-probe.sh"
+          python3 scripts/shecan-vm/append-init-overlay.py "$runtime/guest/initramfs-gui" scripts/shecan-vm/guest-init-display-probe.sh
+          node scripts/shecan-vm/display-probe.cjs "$runtime" "$RUNNER_TEMP/novnc" 2>&1 | tee "$RUNNER_TEMP/cached-display.log"
+      - name: Publish local-only result
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOME: ${{ steps.probe.outcome }}
+        run: |
+          set -euo pipefail
+          conclusion=failure
+          if [ "$OUTCOME" = success ]; then conclusion=success; fi
+          summary='No local display report was produced. Plesk was not contacted.'
+          if [ -f "$RUNNER_TEMP/cached-display.log" ]; then summary="$(tail -c 50000 "$RUNNER_TEMP/cached-display.log")"; fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name='Official Shecan cached local display' -f head_sha="${GITHUB_SHA}" \
+            -f status=completed -f conclusion="$conclusion" \
+            -f 'output[title]=Offline runner display test only' \
+            --raw-field "output[summary]=${summary}" > /dev/null

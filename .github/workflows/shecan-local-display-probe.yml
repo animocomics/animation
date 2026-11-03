@@ -5,9 +5,6 @@ on:
     branches: [arena/ccbdcb6e-animation]
     paths:
       - .github/workflows/shecan-local-display-probe.yml
-      - scripts/shecan-vm/guest-init-display-probe.sh
-      - scripts/shecan-vm/run-display-probe.sh
-      - scripts/shecan-vm/display-probe.cjs
 
 permissions:
   contents: read
