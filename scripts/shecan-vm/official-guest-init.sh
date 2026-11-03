@@ -76,8 +76,22 @@ export WEBKIT_DISABLE_DMABUF_RENDERER=1
 export WEBKIT_DISABLE_COMPOSITING_MODE=1
 
 if grep -q 'nomreh_proxy=1' /proc/cmdline; then
-  if ! tinyproxy -c /etc/tinyproxy-nomreh.conf; then
+  tinyproxy -d -c /etc/tinyproxy-nomreh.conf > /var/log/tinyproxy-nomreh.log 2>&1 &
+  TINYPROXY_PID=$!
+  broker_ready=0
+  for attempt in $(seq 1 100); do
+    if awk '$2 ~ /:22B8$/ && $4 == "0A" { found=1 } END { exit found ? 0 : 1 }' /proc/net/tcp; then
+      broker_ready=1
+      break
+    fi
+    if ! kill -0 "$TINYPROXY_PID" 2>/dev/null; then break; fi
+    sleep 0.1
+  done
+  if [ "$broker_ready" -ne 1 ]; then
     echo NOMREH_OFFICIAL_GUEST_ERROR TINYPROXY > /dev/console
+    if grep -q 'nomreh_probe=1' /proc/cmdline; then
+      tail -40 /var/log/tinyproxy-nomreh.log > /dev/console 2>&1 || true
+    fi
     poweroff -f
     while true; do sleep 60; done
   fi
