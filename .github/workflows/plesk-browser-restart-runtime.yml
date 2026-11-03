@@ -44,15 +44,17 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          build_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41586863418" --jq '.status + " " + .conclusion')"
+          build_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41597387222" --jq '.status + " " + .conclusion')"
           disk_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41570728828" --jq '.status + " " + .conclusion')"
           enable_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41430311614" --jq '.status + " " + .conclusion')"
           test "$build_state" = "completed success"
           test "$disk_state" = "completed success"
           test "$enable_state" = "completed success"
-          echo "abafaf85f46b391dcbd9f675a5b1eb959555870eae8667290c6ab8216190d9c0  package.json" | sha256sum --check -
+          echo "58a4d71aad3db540436ab746a8c0c4ae2f67d4970406a99d2f25dd7dfe295455  package.json" | sha256sum --check -
           echo "5fdf01154fffcabbfe558a67a43268bafd0b0300f83117021239b66f8a765515  tsconfig.json" | sha256sum --check -
           grep -F 'syncPublicStatic();' scripts/plesk-node22.cjs > /dev/null
+          grep -F '"--include=dev", "--omit=optional"' scripts/plesk-node22.cjs > /dev/null
+          grep -F 'webpackBuildWorker: false' next.config.mjs > /dev/null
 
       - name: Prepare an isolated temporary browser
         if: steps.config.outputs.configured == 'true'

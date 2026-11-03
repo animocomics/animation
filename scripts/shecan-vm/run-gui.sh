@@ -22,7 +22,7 @@ timeout -k 5 120 "$LOADER" --library-path "$LIBRARIES" "$QEMU" \
   -machine pc,accel=tcg \
   -cpu max \
   -smp 1 \
-  -m 1024M \
+  -m 2048M \
   -kernel "$KERNEL" \
   -initrd "$INITRAMFS" \
   -append "console=ttyS0 rdinit=/init panic=1 quiet" \
