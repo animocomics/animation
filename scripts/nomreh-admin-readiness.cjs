@@ -660,6 +660,13 @@ async function main() {
     data: {},
   });
   lines.push(`- Schema-only provider-route probe (no key or provider traffic): HTTP ${providerRouteProbe.status()}; content type ${clean(providerRouteProbe.headers()["content-type"] || "none")}.`);
+  for (const [label, data] of [
+    ["invalid-provider", { provider: "invalid", model: "gemini-3.8-flash", apiKey: "nomreh-readiness-invalid-not-a-secret" }],
+    ["invalid-model", { provider: "gemini", model: "x", apiKey: "nomreh-readiness-invalid-not-a-secret" }],
+  ]) {
+    const response = await context.request.post(`${ORIGIN}/api/provider/test`, { headers: { Accept: "application/json" }, data });
+    lines.push(`- Schema-only ${label} probe with a non-secret placeholder (no provider traffic): HTTP ${response.status()}; content type ${clean(response.headers()["content-type"] || "none")}.`);
+  }
 
   await page.locator("#admin-model").fill("gemini-3.8-flash");
   await page.locator("#admin-api-key").fill("nomreh-readiness-invalid-not-a-secret");
