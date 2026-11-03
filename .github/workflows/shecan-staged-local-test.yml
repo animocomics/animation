@@ -1,0 +1,84 @@
+name: Exercise staged offline host probe locally
+
+on:
+  push:
+    branches: [arena/ccbdcb6e-animation]
+    paths:
+      - .github/workflows/shecan-staged-local-test.yml
+      - scripts/shecan-vm/staged-host-probe.cjs
+      - scripts/shecan-vm/verify-probe-packages.py
+      - tests/shecan-vm/test_staged_host_probe.py
+
+permissions:
+  contents: read
+  checks: write
+  actions: read
+
+jobs:
+  staged-local-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require successful bounded local package build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: test "$(gh api repos/${GITHUB_REPOSITORY}/actions/runs/41614976333 --jq '.status + " " + .conclusion')" = 'completed success'
+      - uses: actions/download-artifact@v4
+        with:
+          name: official-offline-host-probe
+          path: ${{ runner.temp }}/packages
+          github-token: ${{ github.token }}
+          run-id: 41614976333
+      - name: Unit test and independently verify actual packages
+        run: |
+          set -euo pipefail
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests/shecan-vm -v
+          python3 scripts/shecan-vm/verify-probe-packages.py "$RUNNER_TEMP/packages" "$RUNNER_TEMP/verified.json"
+      - name: Exercise every stage with actual archives, then boot isolated VM
+        id: exercise
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/vhosts/test-subscription/nomreh.arounidea.com"
+          mkdir -p "$root"
+          stage() {
+            node -e 'const fs=require("fs");const x=require(process.argv[1]);console.log("NOMREH_STAGE "+JSON.stringify(x.installStage(JSON.parse(fs.readFileSync(process.argv[2])),process.argv[3],process.argv[4])))' \
+              "$GITHUB_WORKSPACE/scripts/shecan-vm/staged-host-probe.cjs" "$RUNNER_TEMP/verified.json" "$1" "$root"
+          }
+          {
+            stage preflight-base-upload
+            cp "$RUNNER_TEMP/packages/nomreh-deploy-gui-probe-base.zip" "$root/"
+            stage extract-base
+            for id in 000 001 002; do
+              stage "preflight-part-upload-$id"
+              cp "$RUNNER_TEMP/packages/nomreh-deploy-gui-probe-part-$id.zip" "$root/"
+              stage "extract-part-$id"
+            done
+            stage assemble
+            cd "$root"
+            timeout 250 bash nomreh-vm/gui/run-gui.sh
+            echo 'NOMREH_STAGED_LOCAL_COMPLETE'
+          } 2>&1 | tee "$RUNNER_TEMP/staged-test.log"
+          tr -d '\r' < "$RUNNER_TEMP/staged-test.log" > "$RUNNER_TEMP/staged-test.normalized.log"
+          grep -Fx 'NOMREH_OFFICIAL_PROBE_PASS' "$RUNNER_TEMP/staged-test.normalized.log"
+          grep -Fx 'NOMREH_OFFICIAL_PROBE_NO_NETWORK yes' "$RUNNER_TEMP/staged-test.normalized.log"
+          grep -Fx 'NOMREH_OFFICIAL_PROBE_NO_CREDENTIALS yes' "$RUNNER_TEMP/staged-test.normalized.log"
+          grep -Fx 'NOMREH_STAGED_LOCAL_COMPLETE' "$RUNNER_TEMP/staged-test.normalized.log"
+      - name: Publish local-only result
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOME: ${{ steps.exercise.outcome }}
+        run: |
+          set -euo pipefail
+          conclusion=failure
+          if [ "$OUTCOME" = success ]; then conclusion=success; fi
+          summary='No local staged test report was produced; Plesk was not contacted.'
+          if [ -f "$RUNNER_TEMP/staged-test.log" ]; then
+            summary="$(tail -c 16000 "$RUNNER_TEMP/staged-test.log" | tr -d '\r')"
+          fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name='Offline staged probe local exercise' -f head_sha="${GITHUB_SHA}" \
+            -f status=completed -f conclusion="$conclusion" \
+            -f 'output[title]=Local staged install and offline VM only; not Plesk' \
+            --raw-field "output[summary]=${summary}" >/dev/null

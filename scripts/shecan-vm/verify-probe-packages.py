@@ -102,8 +102,8 @@ def verify(directory):
             if archive.namelist() != [f'{PREFIX}guest/{part_name}']:
                 raise ValueError('Unexpected part content')
             item = archive.infolist()[0]
-            if item.file_size != part['bytes'] or item.file_size > MAX_ZIP:
-                raise ValueError('Unexpected part size')
+            if item.file_size != part['bytes'] or item.file_size > MAX_ZIP or stat.S_IFMT(item.external_attr >> 16) not in (0, stat.S_IFREG):
+                raise ValueError('Unexpected part size or file type')
             hasher = hashlib.sha256()
             with archive.open(item) as contents:
                 for block in iter(lambda: contents.read(1024 * 1024), b''):
