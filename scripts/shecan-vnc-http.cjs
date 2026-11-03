@@ -161,6 +161,18 @@ function startShecanVncReverseServer() {
   if (port) ensureReverseServer(port);
 }
 
+function reverseDiagnostics(port) {
+  const listener = reverseServer?.listening ? "LISTENING" : "NO_LISTENER";
+  let guestFlag = "GUEST_UNKNOWN";
+  try {
+    const dataDirectory = process.env.NOMREH_DATA_DIR || path.join(process.cwd(), "data");
+    const pid = Number(fs.readFileSync(path.join(dataDirectory, "shecan-official", "guest.pid"), "utf8").trim());
+    const command = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8");
+    guestFlag = command.includes(`nomreh_vnc_reverse=${port}`) ? "GUEST_FLAG_OK" : "GUEST_FLAG_MISSING";
+  } catch { guestFlag = "GUEST_UNKNOWN"; }
+  return `${listener}_${guestFlag}_Q${Math.min(reverseSockets.length, 9)}`;
+}
+
 function takeReverseSocket(port) {
   ensureReverseServer(port);
   if (reverseSockets.length) return Promise.resolve(reverseSockets.shift());
@@ -169,7 +181,7 @@ function takeReverseSocket(port) {
     waiter.timer = setTimeout(() => {
       const index = reverseWaiters.indexOf(waiter);
       if (index >= 0) reverseWaiters.splice(index, 1);
-      reject(Object.assign(new Error("Reverse VNC connection timed out"), { statusCode: 503, vncCode: "VNC_REVERSE_TIMEOUT" }));
+      reject(Object.assign(new Error("Reverse VNC connection timed out"), { statusCode: 503, vncCode: `VNC_REVERSE_TIMEOUT_${reverseDiagnostics(port)}` }));
     }, 20000);
     reverseWaiters.push(waiter);
   });
