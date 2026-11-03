@@ -54,9 +54,10 @@ jobs:
         if: steps.config.outputs.configured == 'true'
         run: |
           set -euo pipefail
-          source_sha=e6ca4a8135817c20a79868d4f024019d8e3b2402
-          archive="$RUNNER_TEMP/nomreh-deploy-offline-vnc-v35.zip"
-          expected='package-lock.json package.json vendor/novnc-novnc-1.7.0.tgz vendor/ws-8.22.1.tgz'
+          source_sha="$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$source_sha"
+          archive="$RUNNER_TEMP/nomreh-deploy-offline-swc-v36.zip"
+          expected='package-lock.json package.json scripts/plesk-node22.cjs vendor/next-swc-wasm-nodejs-16.4.3.tgz'
           git archive --format=zip --output="$archive" "$source_sha" $expected
           for required in $expected; do
             unzip -Z1 "$archive" | grep -Fx "$required" > /dev/null
@@ -64,8 +65,11 @@ jobs:
           test "$(unzip -Z1 "$archive" | grep -vc '/$')" -eq 4
           test "$(git show "$source_sha:vendor/ws-8.22.1.tgz" | sha256sum | cut -d' ' -f1)" = a5cdb19c7090b816ffc109b6d928d352aa2bce73e38f73bd9678d484a62d2f75
           test "$(git show "$source_sha:vendor/novnc-novnc-1.7.0.tgz" | sha256sum | cut -d' ' -f1)" = 32689f18d6abe96bc6530828a6bd0b9ae33bda07c083a6575ed255b5a8f2e903
+          test "$(git show "$source_sha:vendor/next-swc-wasm-nodejs-16.4.3.tgz" | sha256sum | cut -d' ' -f1)" = f3891128551b931b7189fa4f65619eaa0791fe9be4558efdd34d979ee056ada3
           git show "$source_sha:package.json" | grep -F '"ws": "file:vendor/ws-8.22.1.tgz"' > /dev/null
           git show "$source_sha:package.json" | grep -F '"@novnc/novnc": "file:vendor/novnc-novnc-1.7.0.tgz"' > /dev/null
+          git show "$source_sha:package.json" | grep -F '"@next/swc-wasm-nodejs": "file:vendor/next-swc-wasm-nodejs-16.4.3.tgz"' > /dev/null
+          git show "$source_sha:scripts/plesk-node22.cjs" | grep -F 'NEXT_TEST_WASM_DIR: wasmDirectory' > /dev/null
           git show "$source_sha:scripts/plesk-node22.cjs" | grep -F 'Nomreh Passenger-aware launcher is active for this build.' > /dev/null
           git show "$source_sha:scripts/plesk-node22.cjs" | grep -F 'return [mainFile];' > /dev/null
           git show "$source_sha:scripts/plesk-node22.cjs" | grep -F 'syncPublicStatic();' > /dev/null
@@ -108,8 +112,8 @@ jobs:
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
           PLESK_BROWSER_ACTION: upload
-          PLESK_ARCHIVE_NAME: nomreh-deploy-offline-vnc-v35.zip
-          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-offline-vnc-v35.zip
+          PLESK_ARCHIVE_NAME: nomreh-deploy-offline-swc-v36.zip
+          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-offline-swc-v36.zip
           PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-plesk-upload.md
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
         run: node scripts/plesk-browser-diagnostics.cjs
