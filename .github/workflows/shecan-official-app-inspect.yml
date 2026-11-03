@@ -82,22 +82,56 @@ jobs:
         run: |
           set -uo pipefail
           cd "$RUNNER_TEMP/shecan-app-inspect"
-          desktop="linux-root/usr/local/bin/shecan-desktop"
-          if [ -f "$desktop" ]; then
-            file "$desktop"
-            stat -c 'Official desktop bytes=%s' "$desktop"
-            echo '## Dynamic dependencies (static ELF inspection only)'
-            readelf -d "$desktop" | grep -E 'NEEDED|RPATH|RUNPATH' || true
-            echo '## Program interpreter (static ELF inspection only)'
-            readelf -l "$desktop" | grep -A1 'interpreter' || true
-            echo '## Official desktop launcher'
-            cat linux-root/usr/share/applications/shecan-desktop.desktop || true
-            echo '## GUI/runtime evidence from printable strings'
-            strings -a "$desktop" | grep -Ei 'fyne|wails|webkit|webengine|electron|gtk|golang.org/x/exp/shiny|github.com/gen2brain/dlgs|X11|wayland|GLFW' | sort -u | head -100 || true
-            echo '## Relevant binary and library sizes'
-            du -sh linux-root linux-extracted linux.rpm
-            find linux-root/usr/local/bin -maxdepth 1 -type f -printf '%f %s bytes\n' | sort
-          fi
+          {
+            desktop="linux-root/usr/local/bin/shecan-desktop"
+            if [ -f "$desktop" ]; then
+              file "$desktop"
+              stat -c 'Official desktop bytes=%s' "$desktop"
+              echo '## Dynamic dependencies (static ELF inspection only)'
+              readelf -d "$desktop" | grep -E 'NEEDED|RPATH|RUNPATH' || true
+              echo '## Program interpreter (static ELF inspection only)'
+              readelf -l "$desktop" | grep -A1 'interpreter' || true
+              echo '## Official desktop launcher'
+              cat linux-root/usr/share/applications/shecan-desktop.desktop || true
+              echo '## GUI/runtime evidence from printable strings'
+              strings -a "$desktop" | grep -Ei 'fyne|wails|webkit|webengine|electron|gtk|golang.org/x/exp/shiny|github.com/gen2brain/dlgs|X11|wayland|GLFW' | sort -u | head -100 || true
+              echo '## Relevant binary and library sizes'
+              du -sh linux-root linux-extracted linux.rpm
+              find linux-root/usr/local/bin -maxdepth 1 -type f -printf '%f %s bytes\n' | sort
+            else
+              echo 'Official desktop binary was not present in the extracted package.'
+            fi
+          } 2>&1 | tee "$RUNNER_TEMP/shecan-linux-runtime.md"
+
+      - name: Publish the small official Linux runtime report
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = `${process.env.RUNNER_TEMP}/shecan-linux-runtime.md`;
+          const report = fs.existsSync(path) ? fs.readFileSync(path, 'utf8') : 'No Linux runtime report was produced.';
+          const payload = {
+            name: 'Official Shecan Linux runtime',
+            head_sha: process.env.GITHUB_SHA,
+            status: 'completed',
+            conclusion: 'neutral',
+            output: {
+              title: 'Official desktop dependencies; static inspection only',
+              summary: 'The official RPM was extracted but no Shecan binary was executed and no credentials were used.',
+              text: report.slice(0, 60000),
+            },
+          };
+          fetch(`https://api.github.com/repos/${process.env.GITHUB_REPOSITORY}/check-runs`, {
+            method: 'POST',
+            headers: { authorization: `Bearer ${process.env.GH_TOKEN}`, accept: 'application/vnd.github+json', 'content-type': 'application/json' },
+            body: JSON.stringify(payload),
+          }).then(async response => {
+            if (!response.ok) throw new Error(`Check-run publication returned ${response.status}`);
+            console.log('Published the small static Linux runtime report.');
+          }).catch(error => { console.error(error.message); process.exitCode = 1; });
+          NODE
 
       - name: Statically extract the official Android package without executing it
         run: |
