@@ -8,7 +8,7 @@ const { normalizePanelUrl } = require("./plesk-api-diagnostics.cjs");
 const ORIGIN = "https://nomreh.arounidea.com";
 const DOMAIN = "nomreh.arounidea.com";
 const OUTPUT = process.env.NOMREH_E2E_OUTPUT || "";
-const lines = ["# Nomreh admin login and configuration readiness", "", "This check uses the authorized demo account, the publicly offered initial account, or existing configured admin credentials in memory. It never prints credentials or session cookies, and it does not save API settings or change Shecan.", ""];
+const lines = ["# Nomreh admin login and configuration readiness", "", "This check uses the authorized demo account, the publicly offered initial account, or existing configured admin credentials in memory. It never prints credentials or session cookies and does not save API settings. With the separate official-runtime validation flag it may start the isolated guest, but never submits login, OTP, update links, or provider traffic.", ""];
 let browser;
 let context;
 let authenticated = false;
@@ -398,6 +398,7 @@ async function testTeacherAccess() {
       ["/api/admin/users", "account management"],
       ["/api/admin/usage", "usage reporting"],
       ["/api/admin/api-network", "Shecan configuration"],
+      ["/api/admin/shecan-runtime", "official Shecan runtime"],
     ];
     for (const [pathname, label] of adminChecks) {
       const response = await teacherContext.request.get(`${ORIGIN}${pathname}`);
@@ -585,7 +586,7 @@ async function main() {
   lines.push(`- Admin HTML cache control: ${clean(adminResponse?.headers()["cache-control"] || "none")}; Age: ${clean(adminResponse?.headers().age || "none")}.`);
   await page.getByRole("heading", { name: "مدیریت سامانهٔ نمره" }).waitFor({ state: "visible" });
   await page.getByText("پیکربندی سراسری مدل", { exact: true }).waitFor({ state: "visible" });
-  await page.getByText("مسیر اختصاصی API با شکن", { exact: true }).waitFor({ state: "visible" });
+  await page.getByText("برنامهٔ رسمی شکن و مسیر اختصاصی AI", { exact: true }).waitFor({ state: "visible" });
   await page.locator("#admin-api-key").waitFor({ state: "visible" });
   await page.locator("#shecan-update-url").waitFor({ state: "hidden" }).catch(() => undefined);
 
@@ -738,12 +739,67 @@ async function main() {
   const networkResponse = await context.request.get(`${ORIGIN}/api/admin/api-network`);
   const networkPayload = await networkResponse.json();
   if (!networkResponse.ok() || !networkPayload.status) throw new Error("The Shecan status API was not available to the authenticated admin.");
-  lines.push(`- Shecan enabled: ${networkPayload.status.enabled ? "yes" : "no"}.`, `- Shecan plan: ${networkPayload.status.plan}; encrypted update link stored: ${networkPayload.status.hasUpdateUrl ? "yes" : "no"}.`, `- Last Shecan test state: ${clean(networkPayload.status.lastTestStatus)}.`);
-
-  await page.getByRole("radio", { name: /شکن حرفه‌ای/ }).click();
-  await page.locator("#shecan-update-url").waitFor({ state: "visible" });
-  await page.getByRole("button", { name: /آزمایش، ذخیره و فعال‌سازی|آزمایش مجدد اتصال/ }).waitFor({ state: "visible" });
-  lines.push("- Shecan free/pro selection, update-link entry, DNS editing, and test/save/enable controls are available in the real admin UI.", "- No real API key, update link, DNS value, or enable/disable state was submitted or changed.", "");
+  lines.push(`- Shecan enabled: ${networkPayload.status.enabled ? "yes" : "no"}.`, `- Shecan plan: ${networkPayload.status.plan}; transport: ${clean(networkPayload.status.transport)}; encrypted update link stored: ${networkPayload.status.hasUpdateUrl ? "yes" : "no"}.`, `- Last Shecan test state: ${clean(networkPayload.status.lastTestStatus)}.`);
+  const runtimeResponse = await context.request.get(`${ORIGIN}/api/admin/shecan-runtime`);
+  const runtimePayload = await runtimeResponse.json().catch(() => ({}));
+  if (!runtimeResponse.ok() || typeof runtimePayload.runtime?.installed !== "boolean") throw new Error("The authenticated official-runtime status API was not operational.");
+  lines.push(`- Official runtime installed: ${runtimePayload.runtime.installed ? "yes" : "no"}; running: ${runtimePayload.runtime.running ? "yes" : "no"}; app-ready: ${runtimePayload.runtime.appReady ? "yes" : "no"}.`);
+  const validateOfficialRuntime = process.env.NOMREH_VALIDATE_OFFICIAL_RUNTIME === "1";
+  if (validateOfficialRuntime) {
+    if (!runtimePayload.runtime.installed) throw new Error("The official runtime is not installed; live admin framebuffer validation cannot start.");
+    if (!runtimePayload.runtime.appReady) {
+      const startResponse = await context.request.post(`${ORIGIN}/api/admin/shecan-runtime`, { data: { action: "start" } });
+      if (![200, 202].includes(startResponse.status())) throw new Error(`The isolated official runtime start returned HTTP ${startResponse.status()}.`);
+    }
+    const deadline = Date.now() + 360_000;
+    let currentRuntime = runtimePayload.runtime;
+    while (Date.now() < deadline && (!currentRuntime.appReady || !currentRuntime.brokerReady)) {
+      await page.waitForTimeout(2500);
+      const response = await context.request.get(`${ORIGIN}/api/admin/shecan-runtime`);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok() || !payload.runtime) throw new Error("Official runtime status was lost during startup.");
+      currentRuntime = payload.runtime;
+      if (currentRuntime.phase === "error") throw new Error(`The official runtime entered its sanitized error state: ${clean(currentRuntime.message)}`);
+    }
+    if (!currentRuntime.appReady || !currentRuntime.brokerReady) throw new Error("The official runtime did not become app/broker ready within six minutes.");
+    lines.push("- The isolated official guest reported its real app and loopback AI broker ready. No login, OTP, update-link, or provider request was submitted.");
+    await page.goto(`${ORIGIN}/admin`, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await page.locator(".official-shecan-screen.connected").waitFor({ state: "visible", timeout: 120_000 });
+    const canvas = page.locator(".official-shecan-vnc canvas").first();
+    await canvas.waitFor({ state: "visible", timeout: 30_000 });
+    await page.waitForTimeout(2500);
+    const frame = await canvas.evaluate(async (element) => {
+      const canvasElement = element;
+      const context2d = canvasElement.getContext("2d");
+      if (!context2d) throw new Error("The live VNC canvas has no readable 2D framebuffer.");
+      const width = canvasElement.width;
+      const height = canvasElement.height;
+      const pixels = context2d.getImageData(0, 0, width, height).data;
+      const colors = new Set();
+      let minimum = 255;
+      let maximum = 0;
+      for (let index = 0; index < pixels.length; index += 4) {
+        const red = pixels[index];
+        const green = pixels[index + 1];
+        const blue = pixels[index + 2];
+        if (colors.size < 4096) colors.add((red << 16) | (green << 8) | blue);
+        const luminance = Math.round((red + green + blue) / 3);
+        minimum = Math.min(minimum, luminance);
+        maximum = Math.max(maximum, luminance);
+      }
+      const digest = await crypto.subtle.digest("SHA-256", pixels);
+      const hash = Array.from(new Uint8Array(digest)).map((value) => value.toString(16).padStart(2, "0")).join("");
+      return { width, height, colors: colors.size, luminanceRange: maximum - minimum, hash };
+    });
+    if (frame.width < 800 || frame.height < 600 || frame.colors < 16 || frame.luminanceRange < 24) throw new Error(`The live admin VNC framebuffer did not pass diversity checks: ${JSON.stringify(frame)}`);
+    lines.push(`- Authenticated admin noVNC framebuffer passed: ${frame.width}x${frame.height}; colors=${frame.colors}; luminance-range=${frame.luminanceRange}; SHA-256=${frame.hash}.`);
+  }
+  await page.getByText("برنامهٔ رسمی شکن در محیط جداگانه", { exact: true }).waitFor({ state: "visible" });
+  await page.getByText("لینک به‌روزرسان و روش دستی", { exact: false }).waitFor({ state: "visible" });
+  if (await page.locator("#shecan-account-identifier, #shecan-otp-code").count()) throw new Error("The rejected substitute OTP form is still present in the admin UI.");
+  lines.push("- The admin mounts the genuine remote-application console and preserves the manual update-link fallback; the substitute OTP form is absent.", validateOfficialRuntime
+    ? "- Only the isolated runtime start action was allowed; no real API key, update link, DNS value, login, OTP, provider request, or AI enable/disable state was submitted or changed."
+    : "- No runtime start/stop, real API key, update link, DNS value, login, OTP, or enable/disable state was submitted or changed.", "");
 
   lines.push("## Management-only routes and read APIs", "");
   const workspaceApi = await context.request.get(`${ORIGIN}/api/workspace`);
@@ -791,7 +847,9 @@ async function main() {
 
   await logout();
   await testTeacherAccess();
-  lines.push("", "## Result", "", "Real admin login, management-only routes and APIs, legacy-preserving account-model discovery, manual model entry, GLM 5.3 Flash, Shecan configuration controls, teacher workspace/review scoring, and teacher access boundaries are operational. External provider-key validity and Shecan activation were not changed or tested; no real grading job was run without a configured provider.");
+  lines.push("", "## Result", "", validateOfficialRuntime
+    ? "Real admin login and the authenticated live official-Shecan noVNC framebuffer passed, alongside management APIs, model controls and teacher boundaries. No Shecan login/OTP, update-link submission, provider request, AI activation, or grading job was performed."
+    : "Real admin login, management-only routes and APIs, legacy-preserving account-model discovery, manual model entry, GLM 5.3 Flash, the official Shecan remote-console surface, teacher workspace/review scoring, and teacher access boundaries are operational. Runtime start/stop, external provider-key validity and Shecan activation were not changed or tested; no real grading job was run without a configured provider.");
 }
 
 main().catch(async (error) => {
