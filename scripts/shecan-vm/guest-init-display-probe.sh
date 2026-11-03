@@ -69,6 +69,9 @@ done
         if grep -qi 'unknown option' /var/log/relay.log; then echo NOMREH_LOCAL_DISPLAY_DIAGNOSTIC unknown_option > /dev/console; fi
         if grep -qi 'Input/output error' /var/log/relay.log; then echo NOMREH_LOCAL_DISPLAY_DIAGNOSTIC io_error > /dev/console; fi
         if grep -qi 'Invalid argument' /var/log/relay.log; then echo NOMREH_LOCAL_DISPLAY_DIAGNOSTIC invalid_argument > /dev/console; fi
+        # socat diagnostic mode never dumps application traffic. This guest
+        # contains no credentials; redact addresses and only emit error lines.
+        grep -E ' E ' /var/log/relay.log | tail -3 | sed -E 's/^.* E /NOMREH_LOCAL_DISPLAY_SOCAT_ERROR /; s/([0-9]{1,3}[.]){3}[0-9]{1,3}/[address]/g; s/:[0-9]+/:[port]/g' | cut -c1-240 > /dev/console || true
       else
         echo NOMREH_LOCAL_DISPLAY_ERROR handshake > /dev/console
       fi

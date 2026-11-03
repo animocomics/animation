@@ -76,6 +76,10 @@ install -m 0755 "$SOURCE_ROOT/scripts/shecan-vm/run-gui.sh" "$WORK/full/nomreh-v
 if [[ "${NOMREH_LOCAL_DISPLAY_PROBE:-0}" == 1 ]]; then
   : "${NOMREH_LOCAL_NOVNC_DIR:?Local noVNC checkout is required}"
   install -m 0755 "$SOURCE_ROOT/scripts/shecan-vm/run-display-probe.sh" "$WORK/full/nomreh-vm/gui/run-display-probe.sh"
+  if [[ -n "${NOMREH_DISPLAY_CACHE_DIR:-}" ]]; then
+    mkdir -p "$NOMREH_DISPLAY_CACHE_DIR"
+    cp -a "$WORK/full/nomreh-vm/gui/." "$NOMREH_DISPLAY_CACHE_DIR/"
+  fi
   node "$SOURCE_ROOT/scripts/shecan-vm/display-probe.cjs" "$WORK/full/nomreh-vm/gui" "$NOMREH_LOCAL_NOVNC_DIR"
   echo 'Local display diagnostic only; nothing was uploaded or deployed.'
   exit 0

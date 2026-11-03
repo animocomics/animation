@@ -43,9 +43,19 @@ jobs:
           NODE_PATH: ${{ runner.temp }}/display-deps/node_modules
           NOMREH_LOCAL_NOVNC_DIR: ${{ runner.temp }}/novnc
           NOMREH_LOCAL_DISPLAY_PROBE: '1'
+          NOMREH_DISPLAY_CACHE_DIR: ${{ runner.temp }}/display-cache
         run: |
           set -euo pipefail
           bash scripts/shecan-vm/build-official-glibc-vm.sh "$GITHUB_WORKSPACE" 2>&1 | tee "$RUNNER_TEMP/display-probe.log"
+      - name: Cache the credential-free diagnostic runtime briefly
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: offline-display-runtime
+          path: ${{ runner.temp }}/display-cache
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: ignore
       - name: Publish local-only diagnostic evidence
         if: always()
         env:
