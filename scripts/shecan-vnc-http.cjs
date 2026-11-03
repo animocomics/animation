@@ -19,18 +19,23 @@ function baseHeaders() {
   return { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" };
 }
 
-function sendJson(response, status, value) {
+function sendJson(response, status, value, code = "") {
   if (response.writableEnded || response.destroyed) return;
   const body = JSON.stringify(value);
-  response.writeHead(status, { ...baseHeaders(), "Content-Type": "application/json; charset=utf-8", "Content-Length": Buffer.byteLength(body) });
+  response.writeHead(status, { ...baseHeaders(), ...(code ? { "X-Nomreh-VNC-Error": code } : {}), "Content-Type": "application/json; charset=utf-8", "Content-Length": Buffer.byteLength(body) });
   response.end(body);
 }
 
-function validOrigin(request) {
+function originError(request) {
+  if (request.headers["x-nomreh-vnc-client"] !== "1") return "CLIENT_HEADER";
+  const raw = request.headers.origin;
+  if (!raw) return "ORIGIN_MISSING";
   try {
-    const origin = new URL(request.headers.origin || "");
-    return origin.host === request.headers.host && ["http:", "https:"].includes(origin.protocol);
-  } catch { return false; }
+    const origin = new URL(raw);
+    if (!["http:", "https:"].includes(origin.protocol)) return "ORIGIN_PROTOCOL";
+    if (origin.host !== request.headers.host) return "ORIGIN_HOST";
+    return "";
+  } catch { return "ORIGIN_INVALID"; }
 }
 
 function readBody(request) {
@@ -98,15 +103,19 @@ async function waitForQueued(session) {
 
 function requireSession(request) {
   const id = String(request.headers["x-nomreh-vnc-session"] || "");
-  if (!/^[a-f0-9]{32}$/.test(id)) throw Object.assign(new Error("Invalid VNC session"), { statusCode: 400 });
+  if (!/^[a-f0-9]{32}$/.test(id)) throw Object.assign(new Error("Invalid VNC session"), { statusCode: 400, vncCode: "SESSION" });
   const session = sessions.get(id);
-  if (!session || session.cookieHash !== cookieHash(request)) throw Object.assign(new Error("VNC session is unavailable"), { statusCode: 403 });
+  if (!session || session.cookieHash !== cookieHash(request)) throw Object.assign(new Error("VNC session is unavailable"), { statusCode: 403, vncCode: "SESSION" });
   return session;
 }
 
 async function createSession(request, response, applicationPort) {
   if (sessions.size >= MAX_SESSIONS) throw Object.assign(new Error("Too many VNC sessions"), { statusCode: 429 });
-  await authorizeUpgrade(request, applicationPort);
+  try { await authorizeUpgrade(request, applicationPort); }
+  catch (error) {
+    error.vncCode = "AUTH";
+    throw error;
+  }
   const port = Number(process.env.NOMREH_VNC_PORT || 15900);
   if (!Number.isInteger(port) || port < 1024 || port > 65535) throw Object.assign(new Error("Invalid VNC port"), { statusCode: 503 });
   const socket = net.createConnection({ host: "127.0.0.1", port });
@@ -172,8 +181,9 @@ async function exchange(session, request, response) {
 }
 
 async function handle(request, response, applicationPort) {
-  if (!validOrigin(request) || request.headers["x-nomreh-vnc-client"] !== "1") {
-    sendJson(response, 403, { error: "Same-origin admin VNC access is required" });
+  const originFailure = originError(request);
+  if (originFailure) {
+    sendJson(response, 403, { error: "Same-origin admin VNC access is required" }, originFailure);
     return;
   }
   if (request.method === "POST" && !request.headers["x-nomreh-vnc-session"]) {
@@ -197,7 +207,7 @@ function handleShecanVncHttp(request, response, applicationPort) {
   if (pathname !== HTTP_CHANNEL_PATH) return false;
   void handle(request, response, applicationPort).catch((error) => {
     const status = [400, 401, 403, 405, 409, 410, 413, 429].includes(error.statusCode) ? error.statusCode : 503;
-    sendJson(response, status, { error: "The authenticated VNC HTTP channel failed" });
+    sendJson(response, status, { error: "The authenticated VNC HTTP channel failed" }, error.vncCode || "RUNTIME");
   });
   return true;
 }

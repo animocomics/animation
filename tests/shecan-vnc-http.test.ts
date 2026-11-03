@@ -48,8 +48,10 @@ test("authenticated HTTP raw channel bridges both VNC directions without WebSock
   try {
     const unauthorized = await fetch(endpoint, { method: "POST", headers: { ...headers, Cookie: "" } });
     assert.equal(unauthorized.status, 401);
+    assert.equal(unauthorized.headers.get("x-nomreh-vnc-error"), "AUTH");
     const wrongOrigin = await fetch(endpoint, { method: "POST", headers: { ...headers, Origin: "https://attacker.invalid" } });
     assert.equal(wrongOrigin.status, 403);
+    assert.equal(wrongOrigin.headers.get("x-nomreh-vnc-error"), "ORIGIN_HOST");
     const created = await fetch(endpoint, { method: "POST", headers });
     assert.equal(created.status, 200);
     const payload = await created.json() as { session?: string };
