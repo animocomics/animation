@@ -42,6 +42,7 @@ jobs:
           set -euo pipefail
           archive="$RUNNER_TEMP/nomreh-deploy-shecan-official-v2.zip"
           grep -F 'test -x /usr/bin/x11vnc' scripts/shecan-vm/build-official-runtime.sh > /dev/null
+          grep -F 'const OFFICIAL_RUNTIME_ARCHIVE = /^nomreh-deploy-shecan-official-v[0-9]+' scripts/plesk-browser-diagnostics.cjs > /dev/null
           bash scripts/shecan-vm/build-official-runtime.sh "$GITHUB_WORKSPACE" "$archive" 2>&1 | tee "$RUNNER_TEMP/shecan-official-deploy-build.log"
       - name: Prepare an isolated temporary browser
         if: steps.build.outcome == 'success'
