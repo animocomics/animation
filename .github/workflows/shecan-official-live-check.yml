@@ -12,6 +12,7 @@ on:
 permissions:
   contents: read
   checks: write
+  actions: read
 
 concurrency:
   group: shecan-official-live-check
@@ -23,6 +24,12 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - name: Verify the deployed VNC proxy diagnostics revision
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          test "$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41672713478" --jq '.status + " " + .conclusion')" = 'completed success'
       - name: Prepare an isolated temporary browser
         run: |
           set -euo pipefail
