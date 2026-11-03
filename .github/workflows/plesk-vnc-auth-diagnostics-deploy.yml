@@ -25,13 +25,14 @@ jobs:
       - name: Create and verify the two-file runtime delta
         run: |
           set -euo pipefail
-          archive="$RUNNER_TEMP/nomreh-deploy-vnc-auth-diagnostics-v41.zip"
+          archive="$RUNNER_TEMP/nomreh-deploy-vnc-auth-diagnostics-v42.zip"
           git archive --format=zip --output="$archive" "$GITHUB_SHA" scripts/shecan-vnc-http.cjs scripts/shecan-vnc-websocket.cjs
           test "$(unzip -Z1 "$archive" | grep -vc '/$')" -eq 2
           unzip -Z1 "$archive" | grep -Fx 'scripts/shecan-vnc-http.cjs' > /dev/null
           grep -F 'const contentClass' scripts/shecan-vnc-websocket.cjs > /dev/null
           grep -F 'function originError(request)' scripts/shecan-vnc-http.cjs > /dev/null
           grep -F 'AUTH_UNCLASSIFIED' scripts/shecan-vnc-http.cjs > /dev/null
+          grep -F 'AUTH_STORAGE' scripts/shecan-vnc-websocket.cjs > /dev/null
           grep -F 'await authorizeUpgrade(request, applicationPort);' scripts/shecan-vnc-http.cjs > /dev/null
           sha256sum "$archive"
       - name: Prepare an isolated temporary browser
@@ -49,8 +50,8 @@ jobs:
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
           PLESK_BROWSER_ACTION: upload
-          PLESK_ARCHIVE_NAME: nomreh-deploy-vnc-auth-diagnostics-v41.zip
-          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-vnc-auth-diagnostics-v41.zip
+          PLESK_ARCHIVE_NAME: nomreh-deploy-vnc-auth-diagnostics-v42.zip
+          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-vnc-auth-diagnostics-v42.zip
           PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-vnc-http-upload.md
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
         run: node scripts/plesk-browser-diagnostics.cjs
@@ -62,7 +63,7 @@ jobs:
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
           PLESK_BROWSER_ACTION: extract
-          PLESK_ARCHIVE_NAME: nomreh-deploy-vnc-auth-diagnostics-v41.zip
+          PLESK_ARCHIVE_NAME: nomreh-deploy-vnc-auth-diagnostics-v42.zip
           PLESK_DELTA_SOURCE: ${{ github.sha }}
           PLESK_DELTA_FILES: scripts/shecan-vnc-http.cjs,scripts/shecan-vnc-websocket.cjs
           PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-vnc-http-extract.md

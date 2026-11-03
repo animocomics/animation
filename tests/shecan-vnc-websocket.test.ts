@@ -4,6 +4,7 @@ import net from "node:net";
 import type { AddressInfo } from "node:net";
 import { createRequire } from "node:module";
 import test from "node:test";
+import { createVncAuthFixture } from "./vnc-auth-fixture";
 
 const require = createRequire(import.meta.url);
 const { attachShecanVncWebSocket, UPGRADE_PATH } = require("../scripts/shecan-vnc-websocket.cjs");
@@ -22,6 +23,7 @@ function closeServer(server: http.Server | net.Server): Promise<void> {
 
 test("VNC WebSocket requires same-origin admin authorization and only bridges the loopback guest", async () => {
   const oldPort = process.env.NOMREH_VNC_PORT;
+  const restoreAuth = createVncAuthFixture();
   const targetSockets = new Set<net.Socket>();
   const targetFrames: Buffer[] = [];
   const target = net.createServer((socket) => {
@@ -57,6 +59,7 @@ test("VNC WebSocket requires same-origin admin authorization and only bridges th
       client.once("error", (error: Error) => { clearTimeout(timer); reject(error); });
     });
     await assert.rejects(open({ Origin: origin }), /401/);
+    await assert.rejects(open({ Origin: origin, Cookie: "nomreh_session=valid-teacher" }), /403/);
     await assert.rejects(open({ Origin: "https://attacker.invalid", Cookie: "nomreh_session=valid-admin" }), /403/);
     valid = await open({ Origin: origin, Cookie: "nomreh_session=valid-admin" });
     const deadline = Date.now() + 5000;
@@ -72,5 +75,6 @@ test("VNC WebSocket requires same-origin admin authorization and only bridges th
     await closeServer(application);
     await closeServer(target);
     if (oldPort === undefined) delete process.env.NOMREH_VNC_PORT; else process.env.NOMREH_VNC_PORT = oldPort;
+    restoreAuth();
   }
 });

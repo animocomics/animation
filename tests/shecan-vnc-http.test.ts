@@ -4,6 +4,7 @@ import net from "node:net";
 import type { AddressInfo } from "node:net";
 import { createRequire } from "node:module";
 import test from "node:test";
+import { createVncAuthFixture } from "./vnc-auth-fixture";
 
 const require = createRequire(import.meta.url);
 const { handleShecanVncHttp, closeShecanVncHttpSessions, HTTP_CHANNEL_PATH } = require("../scripts/shecan-vnc-http.cjs");
@@ -17,6 +18,7 @@ function listen(server: http.Server | net.Server): Promise<number> {
 
 test("authenticated HTTP raw channel bridges both VNC directions without WebSocket upgrade", async () => {
   const oldPort = process.env.NOMREH_VNC_PORT;
+  const restoreAuth = createVncAuthFixture();
   const targetSockets = new Set<net.Socket>();
   const targetFrames: Buffer[] = [];
   const target = net.createServer((socket) => {
@@ -48,7 +50,10 @@ test("authenticated HTTP raw channel bridges both VNC directions without WebSock
   try {
     const unauthorized = await fetch(endpoint, { method: "POST", headers: { ...headers, Cookie: "" } });
     assert.equal(unauthorized.status, 401);
-    assert.equal(unauthorized.headers.get("x-nomreh-vnc-error"), "AUTH_401_JSON_NO_COOKIE");
+    assert.equal(unauthorized.headers.get("x-nomreh-vnc-error"), "AUTH_401_SESSION_NO_COOKIE");
+    const teacher = await fetch(endpoint, { method: "POST", headers: { ...headers, Cookie: "nomreh_session=valid-teacher" } });
+    assert.equal(teacher.status, 403);
+    assert.equal(teacher.headers.get("x-nomreh-vnc-error"), "AUTH_403_ROLE");
     const wrongOrigin = await fetch(endpoint, { method: "POST", headers: { ...headers, Origin: "https://attacker.invalid" } });
     assert.equal(wrongOrigin.status, 403);
     assert.equal(wrongOrigin.headers.get("x-nomreh-vnc-error"), "ORIGIN_HOST");
@@ -75,5 +80,6 @@ test("authenticated HTTP raw channel bridges both VNC directions without WebSock
     await new Promise<void>((resolve) => application.close(() => resolve()));
     await new Promise<void>((resolve) => target.close(() => resolve()));
     if (oldPort === undefined) delete process.env.NOMREH_VNC_PORT; else process.env.NOMREH_VNC_PORT = oldPort;
+    restoreAuth();
   }
 });

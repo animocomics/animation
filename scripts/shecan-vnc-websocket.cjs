@@ -1,7 +1,9 @@
 "use strict";
 
-const http = require("node:http");
+const crypto = require("node:crypto");
+const path = require("node:path");
 const net = require("node:net");
+const { DatabaseSync } = require("node:sqlite");
 const { WebSocketServer, WebSocket } = require("ws");
 
 const UPGRADE_PATH = "/api/admin/shecan-runtime/vnc";
@@ -12,58 +14,47 @@ function rejectSocket(socket, status, message) {
   }
 }
 
-function authorizeUpgrade(request, applicationPort) {
-  return new Promise((resolve, reject) => {
-    const auth = http.request({
-      host: "127.0.0.1",
-      port: applicationPort,
-      path: "/api/admin/shecan-runtime",
-      method: "GET",
-      headers: {
-        Host: request.headers.host || "localhost",
-        Cookie: request.headers.cookie || "",
-        Accept: "application/json",
-      },
-      timeout: 8000,
-    }, (response) => {
-      let body = "";
-      response.setEncoding("utf8");
-      response.on("data", (chunk) => {
-        body += chunk;
-        if (body.length > 65536) response.destroy();
-      });
-      response.on("end", () => {
-        if (response.statusCode !== 200) {
-          const error = new Error("Admin authentication required");
-          error.statusCode = response.statusCode === 401 || response.statusCode === 403 ? response.statusCode : 503;
-          const contentClass = /application\/json/i.test(String(response.headers["content-type"] || "")) ? "JSON" : "HTML";
-          error.vncCode = `AUTH_${error.statusCode}_${contentClass}${request.headers.cookie ? "" : "_NO_COOKIE"}`;
-          reject(error);
-          return;
-        }
-        try {
-          const value = JSON.parse(body);
-          if (!value.runtime?.appReady) {
-            const error = new Error("Official runtime is not ready");
-            error.statusCode = 503;
-            reject(error);
-            return;
-          }
-          resolve();
-        } catch {
-          const error = new Error("Runtime authorization response was invalid");
-          error.statusCode = 503;
-          reject(error);
-        }
-      });
-    });
-    auth.on("timeout", () => auth.destroy(Object.assign(new Error("Authorization timeout"), { statusCode: 503 })));
-    auth.on("error", (error) => {
-      if (!error.statusCode) error.statusCode = 503;
-      reject(error);
-    });
-    auth.end();
-  });
+function authError(statusCode, vncCode, message = "Admin authentication required") {
+  return Object.assign(new Error(message), { statusCode, vncCode });
+}
+
+function sessionToken(request) {
+  for (const part of String(request.headers.cookie || "").split(";")) {
+    const separator = part.indexOf("=");
+    if (separator < 1 || part.slice(0, separator).trim() !== "nomreh_session") continue;
+    const token = part.slice(separator + 1).trim();
+    return /^[A-Za-z0-9_-]{1,256}$/.test(token) ? token : "";
+  }
+  return "";
+}
+
+/**
+ * Authorize against the same SQLite sessions used by requireAdmin(). A custom
+ * Node server cannot import the Next route's TypeScript auth helper, and a
+ * loopback HTTP request loses the original session context on this Plesk
+ * proxy. Read-only verification avoids that extra hop without weakening the
+ * role, active-account, expiry, origin, or per-session cookie checks.
+ */
+async function authorizeUpgrade(request) {
+  const token = sessionToken(request);
+  if (!token) throw authError(401, `AUTH_401_SESSION${request.headers.cookie ? "" : "_NO_COOKIE"}`);
+  const dataDirectory = process.env.NOMREH_DATA_DIR || path.join(process.cwd(), "data");
+  let database;
+  try {
+    database = new DatabaseSync(path.join(dataDirectory, "nomreh.db"), { readOnly: true });
+    database.exec("PRAGMA busy_timeout = 2000");
+    const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+    const row = database.prepare(`SELECT u.role
+      FROM sessions s JOIN users u ON u.id = s.user_id
+      WHERE s.token_hash = ? AND s.expires_at > ? AND u.active = 1`).get(tokenHash, new Date().toISOString());
+    if (!row) throw authError(401, "AUTH_401_SESSION");
+    if (row.role !== "admin") throw authError(403, "AUTH_403_ROLE");
+  } catch (error) {
+    if (error.vncCode) throw error;
+    throw authError(503, "AUTH_STORAGE", "Admin session storage is unavailable");
+  } finally {
+    if (database) database.close();
+  }
 }
 
 function attachShecanVncWebSocket(server, applicationPort) {
