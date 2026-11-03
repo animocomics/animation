@@ -15,23 +15,39 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
-      - name: Download the versioned official package without executing it
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download and hash the versioned official package without executing it
+        id: metadata
         run: |
-          set -euo pipefail
+          set -uo pipefail
+          report="$RUNNER_TEMP/shecan-rpm-metadata.txt"
           url='https://dl.shecan.ir/download/linux/amd64?version=v3.0.30&format=rpm'
-          curl --fail --location --silent --show-error --retry 4 --retry-all-errors \
+          if ! curl --fail --location --silent --show-error --retry 4 --retry-all-errors \
             --max-time 180 --user-agent 'Mozilla/5.0 (X11; Linux x86_64)' \
-            --output "$RUNNER_TEMP/shecan-v3.0.30-linux-amd64.rpm" "$url"
+            --output "$RUNNER_TEMP/shecan-v3.0.30-linux-amd64.rpm" "$url"; then
+            echo 'The official versioned RPM download did not complete; no package was executed.' > "$report"
+            exit 1
+          fi
           file "$RUNNER_TEMP/shecan-v3.0.30-linux-amd64.rpm"
           bytes="$(stat -c %s "$RUNNER_TEMP/shecan-v3.0.30-linux-amd64.rpm")"
-          test "$bytes" -gt 50000000
-          test "$bytes" -lt 120000000
+          if [ "$bytes" -le 20000000 ] || [ "$bytes" -ge 120000000 ]; then
+            echo "The official RPM had an unexpected size of ${bytes} bytes; no package was executed." > "$report"
+            exit 1
+          fi
           hash="$(sha256sum "$RUNNER_TEMP/shecan-v3.0.30-linux-amd64.rpm" | cut -d' ' -f1)"
-          summary="Official Shecan v3.0.30 Linux x86-64 RPM, downloaded over HTTPS and not executed. Bytes: ${bytes}. SHA-256: ${hash}."
+          echo "Official Shecan v3.0.30 Linux x86-64 RPM, downloaded over HTTPS and not executed. Bytes: ${bytes}. SHA-256: ${hash}." > "$report"
+      - name: Publish the sanitized package metadata
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          METADATA_OUTCOME: ${{ steps.metadata.outcome }}
+        run: |
+          set -euo pipefail
+          conclusion=neutral
+          if [ "$METADATA_OUTCOME" != success ]; then conclusion=failure; fi
+          summary='Package metadata did not complete; no binary was executed.'
+          if [ -f "$RUNNER_TEMP/shecan-rpm-metadata.txt" ]; then summary="$(cat "$RUNNER_TEMP/shecan-rpm-metadata.txt")"; fi
           gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
             -f name="Official Shecan RPM metadata" -f head_sha="$GITHUB_SHA" \
-            -f status=completed -f conclusion=neutral \
+            -f status=completed -f conclusion="$conclusion" \
             -f 'output[title]=Versioned official package hash' \
             --raw-field "output[summary]=${summary}" > /dev/null
