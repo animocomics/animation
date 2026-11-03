@@ -1,10 +1,8 @@
 import { isIP } from "node:net";
-import { Agent } from "undici";
 import type { ShecanOrderPublic } from "../types";
 import { SHECAN_DNS } from "../api-network";
 import { closeProviderNetwork } from "./provider-network";
 import { encryptSecret, decryptSecret } from "./secret-crypto";
-import { fixedShecanIpv4Lookup, SHECAN_SNI_FALLBACK_IPV4 } from "./shecan-sni";
 
 const SHECAN_API_ORIGIN = "https://my.shecan.ir";
 const ACCOUNT_KEY_PURPOSE = "nomreh-shecan-account-v1";
@@ -60,59 +58,35 @@ function safeText(value: unknown, maximum = 160): string {
 }
 
 async function shecanRequest(path: string, options: { method?: "GET" | "POST"; body?: unknown; apiKey?: string } = {}): Promise<ShecanRequestResult> {
-  const agents: Agent[] = [];
-  const execute = (dispatcher?: Agent) => fetch(`${SHECAN_API_ORIGIN}${path}`, {
-    method: options.method || "GET",
-    headers: {
-      Accept: "application/json",
-      ...(options.body !== undefined ? { "Content-Type": "application/json" } : {}),
-      ...(options.apiKey ? { "X-Redmine-API-Key": options.apiKey } : {}),
-    },
-    body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
-    cache: "no-store",
-    // A redirect must never forward a password or account key to another host.
-    redirect: "manual",
-    signal: AbortSignal.timeout(dispatcher ? 7_000 : 15_000),
-    ...(dispatcher ? { dispatcher } : {}),
-  } as RequestInit);
+  let response: Response;
   try {
-    let response: Response | undefined;
-    let lastError: unknown;
-    try { response = await execute(); }
-    catch (error) { lastError = error; }
-    if (!response) {
-      for (const address of SHECAN_SNI_FALLBACK_IPV4) {
-        const agent = new Agent({
-          connect: { lookup: fixedShecanIpv4Lookup(address), timeout: 5_000 },
-          headersTimeout: 7_000,
-          bodyTimeout: 7_000,
-        });
-        agents.push(agent);
-        try {
-          response = await execute(agent);
-          break;
-        } catch (error) {
-          lastError = error;
-        }
-      }
-    }
-    if (!response) {
-      throw new ShecanAccountError("اتصال امن سرور نمره به my.shecan.ir از مسیر مستقیم و گره‌های رسمی شکن برقرار نشد؛ رمز یا کلید تازه‌ای ذخیره نشد.", 502, { cause: lastError });
-    }
-    if (response.status >= 300 && response.status < 400) {
-      await response.body?.cancel().catch(() => undefined);
-      throw new ShecanAccountError("پاسخ تغییرمسیر غیرمنتظره از شکن دریافت شد؛ برای محافظت از رمز و کلید، درخواست دنبال نشد.", 502);
-    }
-    const text = await response.text();
-    if (text.length > 1_000_000) throw new ShecanAccountError("پاسخ شکن بیش از حد مجاز بزرگ بود و پذیرفته نشد.", 502);
-    let data: unknown = null;
-    if (text) {
-      try { data = JSON.parse(text); } catch { /* Status-specific handling below avoids reflecting an HTML body. */ }
-    }
-    return { status: response.status, ok: response.ok, data };
-  } finally {
-    await Promise.all(agents.map((agent) => agent.close().catch(() => undefined)));
+    response = await fetch(`${SHECAN_API_ORIGIN}${path}`, {
+      method: options.method || "GET",
+      headers: {
+        Accept: "application/json",
+        ...(options.body !== undefined ? { "Content-Type": "application/json" } : {}),
+        ...(options.apiKey ? { "X-Redmine-API-Key": options.apiKey } : {}),
+      },
+      body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+      cache: "no-store",
+      // A redirect must never forward a password or account key to another host.
+      redirect: "manual",
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (error) {
+    throw new ShecanAccountError("اتصال امن سرور نمره به my.shecan.ir برقرار نشد؛ رمز یا کلید تازه‌ای ذخیره نشد.", 502, { cause: error });
   }
+  if (response.status >= 300 && response.status < 400) {
+    await response.body?.cancel().catch(() => undefined);
+    throw new ShecanAccountError("پاسخ تغییرمسیر غیرمنتظره از شکن دریافت شد؛ برای محافظت از رمز و کلید، درخواست دنبال نشد.", 502);
+  }
+  const text = await response.text();
+  if (text.length > 1_000_000) throw new ShecanAccountError("پاسخ شکن بیش از حد مجاز بزرگ بود و پذیرفته نشد.", 502);
+  let data: unknown = null;
+  if (text) {
+    try { data = JSON.parse(text); } catch { /* Status-specific handling below avoids reflecting an HTML body. */ }
+  }
+  return { status: response.status, ok: response.ok, data };
 }
 
 function requireSuccessfulAccountRequest(result: ShecanRequestResult): void {
