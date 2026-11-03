@@ -80,9 +80,9 @@ function labelValues(text, labels) {
 }
 
 async function main() {
-  if (!["diagnose", "upload", "extract", "runtime-extract", "vm-probe", "cleanup-vm-probe", "build", "status", "disk", "os-info", "account-network", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
+  if (!["diagnose", "upload", "extract", "runtime-extract", "vm-probe", "cleanup-vm-probe", "build", "status", "disk", "os-info", "resource-check", "account-network", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
   const panel = normalizePanelUrl(process.env.PLESK_PANEL_URL || "");
-  const readOnly = ACTION === "diagnose" || ACTION === "status" || ACTION === "account-network";
+  const readOnly = ACTION === "diagnose" || ACTION === "status" || ACTION === "account-network" || ACTION === "resource-check";
   const actionDescription = ACTION === "upload"
     ? "Controlled action: upload one validated application archive to Nomreh only. No extraction, build, restart, or settings change is attempted."
     : ACTION === "extract"
@@ -453,7 +453,7 @@ async function main() {
         if (statusResult.error) lines.push(`- Status read error: ${sanitize(statusResult.error)}`);
         lines.push("- Read-only status request; no command, restart, or setting change was attempted.", "");
       }
-      if (["diagnose", "build", "status", "disk", "os-info", "account-network", "vm-probe", "cleanup-vm-probe"].includes(ACTION) && nomrehConsoleLink && await nomrehConsoleLink.count()) {
+      if (["diagnose", "build", "status", "disk", "os-info", "resource-check", "account-network", "vm-probe", "cleanup-vm-probe"].includes(ACTION) && nomrehConsoleLink && await nomrehConsoleLink.count()) {
         const consoleResponsePromise = page.waitForResponse((item) => item.url().includes("/modules/nodejs/index.php/domain/console") && item.request().isNavigationRequest(), { timeout: 15000 }).catch(() => null);
         await nomrehConsoleLink.click({ timeout: 8000 }).catch(() => undefined);
         const consoleResponse = await consoleResponsePromise;
@@ -517,6 +517,35 @@ async function main() {
           if (!osLines.length) throw new Error("Plesk did not expose an OS release identity within 60 seconds. No file or setting was changed.");
           for (const line of osLines.slice(0, 10)) lines.push(`- OS release: ${sanitize(line.slice(0, 220))}`);
           lines.push("- Read-only OS identification completed; no DNS, file, build, restart, or settings change was attempted.", "");
+          actionCompleted = true;
+        }
+        if (ACTION === "resource-check") {
+          if (!consoleBody.includes(`Node.js on ${DOMAIN}`) || !consoleBody.includes("/nomreh.arounidea.com")) {
+            throw new Error("The console is not scoped to Nomreh; no resource check was started.");
+          }
+          const commandInput = page.getByPlaceholder(/Pick a script or command/i).first();
+          const executeButton = page.locator("button[title='Execute command'], button[aria-label='Execute command']").first();
+          const outputElement = page.locator("pre.pul-console-output").first();
+          if (!await commandInput.count() || !await executeButton.count() || !await outputElement.count()) throw new Error("The Nomreh command controls were not found.");
+          // Read only kernel counters and process limits; do not enumerate users,
+          // processes or domains. No reservation or memory stress is attempted.
+          const probeSource = `const fs=require('fs'),os=require('os'),path=require('path');function read(p){try{return fs.readFileSync(p,'utf8').trim()}catch{return ''}}function mib(n){return Math.floor(n/1048576)}console.log('NOMREH_RESOURCE_HOST_TOTAL_MIB '+mib(os.totalmem()));const mem=read('/proc/meminfo').match(/^MemAvailable:\s+(\d+)\s+kB/m);console.log('NOMREH_RESOURCE_HOST_AVAILABLE_MIB '+(mem?Math.floor(Number(mem[1])/1024):'unknown'));const limits=read('/proc/self/limits').match(/^Max address space\s+(\S+)\s+(\S+)/m);console.log('NOMREH_RESOURCE_ADDRESS_SPACE_SOFT_MIB '+(limits?(limits[1]==='unlimited'?'unlimited':mib(Number(limits[1]))):'unknown'));const cg=read('/proc/self/cgroup').split('\n').find(x=>x.startsWith('0::'));let minimum=Infinity,seen=false;if(cg){let base='/sys/fs/cgroup',p=path.resolve(base,'.'+cg.slice(3));if(p===base||p.startsWith(base+'/')){for(;;){const max=read(p+'/memory.max'),cur=read(p+'/memory.current');if(/^\d+$/.test(max)&&/^\d+$/.test(cur)){minimum=Math.min(minimum,Math.max(0,Number(max)-Number(cur)));seen=true}if(p===base)break;p=path.dirname(p)}}}console.log('NOMREH_RESOURCE_CGROUP_V2_HEADROOM_MIB '+(seen?mib(minimum):'unknown'));console.log('NOMREH_RESOURCE_DONE');`;
+          const command = `exec -- node -e ${JSON.stringify(probeSource)}`;
+          lines.push("## Read-only memory and process-limit snapshot", "", "- Aggregate kernel memory availability and readable process/cgroup limits are estimates, not reserved capacity or proof of safe VM execution. No memory stress, process enumeration, file write, or host setting change is attempted.", "");
+          await commandInput.fill(command);
+          if (await commandInput.inputValue() !== command) throw new Error("The exact read-only resource command was not retained.");
+          await executeButton.click({ timeout: 8000 });
+          const startedAt = Date.now();
+          let probeLines = [];
+          while (Date.now() - startedAt < 60_000) {
+            await page.waitForTimeout(1000);
+            const text = await outputElement.innerText().catch(() => "");
+            probeLines = [...new Set(text.split(/\r?\n/).map(line => line.trim()).filter(line => /^NOMREH_RESOURCE_(?:HOST_TOTAL_MIB|HOST_AVAILABLE_MIB|ADDRESS_SPACE_SOFT_MIB|CGROUP_V2_HEADROOM_MIB) (?:[0-9]+|unlimited|unknown)$|^NOMREH_RESOURCE_DONE$/.test(line)))];
+            if (probeLines.includes("NOMREH_RESOURCE_DONE")) break;
+          }
+          if (!probeLines.includes("NOMREH_RESOURCE_DONE")) throw new Error("The read-only resource check did not report completion.");
+          for (const line of probeLines) lines.push(`- Resource: ${line}`);
+          lines.push("- No VM was run and no files or host settings were changed.", "");
           actionCompleted = true;
         }
         if (ACTION === "account-network") {
@@ -1765,7 +1794,7 @@ async function main() {
         lines.push("## Read-only Nomreh domain logs", "", "- Nomreh's scoped Logs tool was not exposed on the domain card; no alternate domain or log path was accessed.", "");
       }
     }
-    if (["upload", "extract", "runtime-extract", "vm-probe", "cleanup-vm-probe", "build", "status", "disk", "os-info", "account-network", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Review the reported host state before further action; no live-success claim was made.`);
+    if (["upload", "extract", "runtime-extract", "vm-probe", "cleanup-vm-probe", "build", "status", "disk", "os-info", "resource-check", "account-network", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Review the reported host state before further action; no live-success claim was made.`);
     lines.push("## Result", "", ACTION === "upload"
       ? "The validated application archive was uploaded to Nomreh. Extraction, dependency installation, build, and Node.js enablement remain pending."
       : ACTION === "extract"
@@ -1784,6 +1813,8 @@ async function main() {
               ? "The read-only Nomreh disk report completed. No build, deletion, restart, or settings change was attempted."
               : ACTION === "os-info"
                 ? "The read-only operating-system identity was reported. No DNS, file, build, deletion, restart, or settings change was attempted."
+                : ACTION === "resource-check"
+                  ? "A read-only resource snapshot completed. It does not prove capacity to run a VM."
                 : ACTION === "account-network"
                   ? "The credential-free Shecan account address and HTTPS probe completed. No DNS, file, OTP, login, build, restart, or settings change was attempted."
                   : ACTION === "fix-node-version"
