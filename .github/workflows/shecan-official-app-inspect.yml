@@ -94,7 +94,15 @@ jobs:
               echo '## Official desktop launcher'
               cat linux-root/usr/share/applications/shecan-desktop.desktop || true
               echo '## GUI/runtime evidence from printable strings'
-              strings -a "$desktop" | grep -Ei 'fyne|wails|webkit|webengine|electron|gtk|golang.org/x/exp/shiny|github.com/gen2brain/dlgs|X11|wayland|GLFW' | sort -u | head -100 || true
+              strings -a "$desktop" | grep -Ei 'fyne|wails|webkit|webengine|electron|gtk|golang.org/x/exp/shiny|github.com/gen2brain/dlgs|X11|wayland|GLFW' | awk 'length($0) <= 240' | sort -u | head -60 || true
+              echo '## Official Linux service definitions'
+              find linux-root -type f \( -name '*.service' -o -name '*.timer' \) -print | sort
+              find linux-root -type f -name '*.service' -exec sh -c 'for unit do echo "--- $unit"; cat "$unit"; done' sh {} +
+              echo '## Supporting official executable dependencies'
+              for binary in shecan-nextdns shecan-game shecan-updater; do
+                echo "--- $binary"
+                readelf -d "linux-root/usr/local/bin/$binary" 2>/dev/null | grep -E 'NEEDED|RPATH|RUNPATH' || echo 'No dynamic NEEDED entries'
+              done
               echo '## Relevant binary and library sizes'
               du -sh linux-root linux-extracted linux.rpm
               find linux-root/usr/local/bin -maxdepth 1 -type f -printf '%f %s bytes\n' | sort
