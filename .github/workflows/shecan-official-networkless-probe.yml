@@ -1,0 +1,56 @@
+name: Probe official Shecan desktop in a networkless VM
+
+on:
+  push:
+    branches: [arena/ccbdcb6e-animation]
+    paths:
+      - .github/workflows/shecan-official-networkless-probe.yml
+      - scripts/shecan-vm/guest-init-official-probe.sh
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  checks: write
+
+jobs:
+  official-networkless:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require actual prior networkless WebKit markers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api 'repos/${{ github.repository }}/commits/6b8bc873d2747a2b3c97afddca0d8c37e4506b2c/check-runs?per_page=100' \
+            --jq '.check_runs[] | select(.name == "Harmless graphical VM build") | .output.summary' > "$RUNNER_TEMP/prior-probe.txt"
+          grep -F 'NOMREH_GUI_PROBE_WEBKIT_LOAD_FINISHED' "$RUNNER_TEMP/prior-probe.txt" >/dev/null
+          grep -F 'NOMREH_GUI_PROBE_NO_NETWORK yes' "$RUNNER_TEMP/prior-probe.txt" >/dev/null
+          grep -F 'NOMREH_GUI_PROBE_SHECAN_INCLUDED no' "$RUNNER_TEMP/prior-probe.txt" >/dev/null
+          grep -F 'NOMREH_GUI_PROBE_PASS' "$RUNNER_TEMP/prior-probe.txt" >/dev/null
+          grep -F -- '-nic none' scripts/shecan-vm/run-gui.sh >/dev/null
+      - name: Boot the official desktop without network, credentials, or persistent disk
+        id: probe
+        env:
+          NOMREH_OFFICIAL_APP_PROBE: '1'
+        run: |
+          set -euo pipefail
+          bash scripts/shecan-vm/build-gui-probe.sh "$GITHUB_WORKSPACE" "$RUNNER_TEMP/unused.zip" 2>&1 | tee "$RUNNER_TEMP/official-probe.log"
+      - name: Publish the bounded probe result
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROBE_OUTCOME: ${{ steps.probe.outcome }}
+        run: |
+          set -euo pipefail
+          conclusion=failure
+          if [ "$PROBE_OUTCOME" = success ]; then conclusion=success; fi
+          summary='No probe output was produced. Plesk was not contacted.'
+          if [ -f "$RUNNER_TEMP/official-probe.log" ]; then summary="$(tail -c 55000 "$RUNNER_TEMP/official-probe.log")"; fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name='Official Shecan networkless desktop probe' \
+            -f head_sha="${GITHUB_SHA}" -f status=completed -f conclusion="$conclusion" \
+            -f 'output[title]=Official desktop in disposable networkless guest; no Plesk deployment' \
+            --raw-field "output[summary]=${summary}" > /dev/null

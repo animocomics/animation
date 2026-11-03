@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build and boot a harmless WebKitGTK/Xvnc guest. No Shecan package is included.
+# Build a networkless GUI guest. The optional official-app probe is local-only.
 set -euo pipefail
 
 if [[ $# -ne 2 ]]; then
@@ -8,6 +8,11 @@ if [[ $# -ne 2 ]]; then
 fi
 SOURCE_ROOT=$(cd "$1" && pwd)
 ARCHIVE=$2
+OFFICIAL_PROBE=${NOMREH_OFFICIAL_APP_PROBE:-0}
+if [[ "$OFFICIAL_PROBE" != 0 && "$OFFICIAL_PROBE" != 1 ]]; then
+  echo 'Invalid probe mode.' >&2
+  exit 2
+fi
 XVNC_URL=https://github.com/unpins/xvnc/releases/download/v1.16.2-1/xvnc-1.16.2-1-x86_64-linux.zst
 XVNC_SHA256=1193f75a5a2a27aec1a5636dfe47a5f326b34ed0b00724cf94aa719afe55fdea
 WORK=$(mktemp -d)
@@ -58,7 +63,7 @@ docker run --rm --platform linux/amd64 \
       --repository https://dl-cdn.alpinelinux.org/alpine/v3.24/community \
       --keys-dir /etc/apk/keys \
       busybox musl gcompat libc6-compat ca-certificates \
-      webkit2gtk-4.1 gtk+3.0 dbus tinyproxy font-noto-arabic >/dev/null
+      webkit2gtk-4.1 gtk+3.0 dbus tinyproxy font-noto-arabic xwininfo >/dev/null
     rm -rf /out/var/cache/apk/* /out/usr/share/man
     # Keep Mesa/LLVM: Alpine libGL/libEGL link to libgallium directly even
     # when WebKit compositing and DMABUF are disabled.
@@ -75,13 +80,38 @@ chmod 0755 "$WORK/rootfs/usr/local/bin/Xvnc"
 file "$WORK/rootfs/usr/local/bin/Xvnc"
 readelf -l "$WORK/rootfs/usr/local/bin/Xvnc" | grep -A1 interpreter || echo 'Xvnc has no external program interpreter.'
 
+if [[ "$OFFICIAL_PROBE" == 1 ]]; then
+  # The package is obtained directly over HTTPS from the official release
+  # endpoint. Record hashes; no unpinned package is uploaded to Plesk.
+  curl --fail --location --silent --show-error --retry 3 --retry-all-errors \
+    --output "$WORK/shecan.rpm" \
+    'https://dl.shecan.ir/download/linux/amd64?version=v3.0.30&format=rpm'
+  file "$WORK/shecan.rpm"
+  sha256sum "$WORK/shecan.rpm"
+  mkdir -p "$WORK/rpm" "$WORK/official-root"
+  7z x -y -o"$WORK/rpm" "$WORK/shecan.rpm" >/dev/null
+  cpio_file=$(find "$WORK/rpm" -type f -name '*.cpio' -print -quit)
+  [[ -n "$cpio_file" ]] || { echo 'Official RPM payload not found.' >&2; exit 1; }
+  7z x -y -o"$WORK/official-root" "$cpio_file" >/dev/null
+  for executable in shecan-desktop shecan-game shecan-nextdns shecan-updater; do
+    source_file="$WORK/official-root/usr/local/bin/$executable"
+    [[ -f "$source_file" && ! -L "$source_file" ]] || { echo "Missing official executable: $executable" >&2; exit 1; }
+    sha256sum "$source_file"
+    install -m 0755 "$source_file" "$WORK/rootfs/usr/local/bin/$executable"
+  done
+  INIT_SCRIPT="$SOURCE_ROOT/scripts/shecan-vm/guest-init-official-probe.sh"
+else
+  INIT_SCRIPT="$SOURCE_ROOT/scripts/shecan-vm/guest-init.sh"
+fi
+
 du -sh "$WORK/rootfs"
 echo 'Largest guest rootfs files:'
 du -ah "$WORK/rootfs" | sort -h | tail -30
 python3 "$SOURCE_ROOT/scripts/shecan-vm/rootfs-initramfs.py" \
-  "$WORK/rootfs" "$SOURCE_ROOT/scripts/shecan-vm/guest-init.sh" \
+  "$WORK/rootfs" "$INIT_SCRIPT" \
   "$WORK/full/nomreh-vm/gui/guest/initramfs-gui"
 install -m 0755 "$SOURCE_ROOT/scripts/shecan-vm/run-gui.sh" "$WORK/full/nomreh-vm/gui/run-gui.sh"
+if [[ "$OFFICIAL_PROBE" == 0 ]]; then
 cat > "$WORK/full/nomreh-vm/gui/THIRD_PARTY.md" <<EOF
 # Harmless graphical VM probe provenance
 
@@ -94,6 +124,7 @@ The guest has no virtual NIC and WebKit loads only inline static HTML.
 - Xvnc SHA-256: $XVNC_SHA256
 - GUI probe and init sources: scripts/shecan-vm in this private repository.
 EOF
+fi
 
 RUNTIME="$WORK/full/nomreh-vm/gui"
 set +e
@@ -104,6 +135,14 @@ cat "$WORK/gui-probe.log"
 if ((PROBE_STATUS != 0)); then
   echo "Local graphical VM probe exited with status $PROBE_STATUS." >&2
   exit "$PROBE_STATUS"
+fi
+if [[ "$OFFICIAL_PROBE" == 1 ]]; then
+  grep -Fx 'NOMREH_OFFICIAL_PROBE_WINDOW_OBSERVED yes' <(tr -d '\r' < "$WORK/gui-probe.log")
+  grep -Fx 'NOMREH_OFFICIAL_PROBE_NO_NETWORK yes' <(tr -d '\r' < "$WORK/gui-probe.log")
+  grep -Fx 'NOMREH_OFFICIAL_PROBE_NO_CREDENTIALS yes' <(tr -d '\r' < "$WORK/gui-probe.log")
+  grep -Fx 'NOMREH_OFFICIAL_PROBE_PASS' <(tr -d '\r' < "$WORK/gui-probe.log")
+  echo 'Local official-app probe only: no archive was prepared, uploaded, or deployed.'
+  exit 0
 fi
 grep -F 'NOMREH_GUI_PROBE_WEBKIT_LOAD_FINISHED' "$WORK/gui-probe.log"
 grep -F 'NOMREH_GUI_PROBE_NO_NETWORK yes' "$WORK/gui-probe.log"
