@@ -58,14 +58,6 @@ if [ "$xvnc_ready" -ne 1 ]; then
   while true; do sleep 60; done
 fi
 
-if ! dbus-daemon --session --fork --print-address=1 --print-pid=1 > /run/dbus-session-info; then
-  echo NOMREH_OFFICIAL_GUEST_ERROR DBUS > /dev/console
-  poweroff -f
-  while true; do sleep 60; done
-fi
-DBUS_SESSION_BUS_ADDRESS=$(sed -n '1p' /run/dbus-session-info)
-DBUS_SESSION_BUS_PID=$(sed -n '2p' /run/dbus-session-info)
-export DBUS_SESSION_BUS_ADDRESS
 export DISPLAY=:0
 export XDG_RUNTIME_DIR=/run/user/0
 export XDG_CONFIG_HOME=/root/.config
@@ -75,8 +67,6 @@ export LIBGL_ALWAYS_SOFTWARE=1
 export WEBKIT_DISABLE_DMABUF_RENDERER=1
 export WEBKIT_DISABLE_COMPOSITING_MODE=1
 export GOTRACEBACK=single
-# Keep JavaScriptCore's GC signal away from Go's SIGUSR1 handler.
-export JSC_SIGNAL_FOR_GC=61
 
 if grep -q 'nomreh_proxy=1' /proc/cmdline; then
   tinyproxy -d -c /etc/tinyproxy-nomreh.conf > /var/log/tinyproxy-nomreh.log 2>&1 &
@@ -101,7 +91,7 @@ if grep -q 'nomreh_proxy=1' /proc/cmdline; then
   echo NOMREH_OFFICIAL_AI_BROKER_LISTENING > /dev/console
 fi
 
-/usr/local/bin/shecan-desktop > /var/log/shecan-desktop.log 2>&1 &
+dbus-run-session -- /usr/local/bin/shecan-desktop > /var/log/shecan-desktop.log 2>&1 &
 APP_PID=$!
 echo NOMREH_OFFICIAL_APP_PROCESS_STARTED > /dev/console
 sleep 15
@@ -126,7 +116,6 @@ if grep -q 'nomreh_probe=1' /proc/cmdline; then
   echo NOMREH_OFFICIAL_PROBE_LOG_END > /dev/console
   kill "$APP_PID" 2>/dev/null || true
   kill "$XVNC_PID" 2>/dev/null || true
-  if [ -n "$DBUS_SESSION_BUS_PID" ]; then kill "$DBUS_SESSION_BUS_PID" 2>/dev/null || true; fi
   sync
   poweroff -f
 fi
