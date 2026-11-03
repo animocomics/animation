@@ -35,8 +35,22 @@ if [ "$network_ready" -ne 1 ]; then
   poweroff -f
   while true; do sleep 60; done
 fi
-ifconfig eth0 10.0.2.15 netmask 255.255.255.0 up
-route add default gw 10.0.2.2
+network_configured=0
+for attempt in $(seq 1 20); do
+  ip addr replace 10.0.2.15/24 dev eth0
+  ip link set eth0 up
+  ip route replace default via 10.0.2.2 dev eth0
+  if ip -4 addr show dev eth0 | grep -q '10.0.2.15/24' && ip route show default | grep -q '^default via 10.0.2.2'; then
+    network_configured=1
+    break
+  fi
+  sleep 0.2
+done
+if [ "$network_configured" -ne 1 ]; then
+  echo NOMREH_OFFICIAL_GUEST_ERROR NETWORK_ROUTE > /dev/console
+  poweroff -f
+  while true; do sleep 60; done
+fi
 rm -f /etc/resolv.conf
 printf 'nameserver 10.0.2.3\n' > /etc/resolv.conf
 echo NOMREH_OFFICIAL_GUEST_NETWORK_CONFIGURED > /dev/console
