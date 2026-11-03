@@ -92,7 +92,15 @@ if kill -0 "$PROBE_PID" 2>/dev/null; then
   tail -80 "$WORK/local-probe.log" >&2
   exit 1
 fi
+set +e
 wait "$PROBE_PID"
+PROBE_STATUS=$?
+set -e
+cat "$WORK/local-probe.log"
+if ((PROBE_STATUS != 0)); then
+  echo "Local harmless VM probe exited with status $PROBE_STATUS." >&2
+  exit "$PROBE_STATUS"
+fi
 grep -F 'NOMREH_VM_PROBE_NO_NETWORK yes' "$WORK/local-probe.log"
 grep -F 'NOMREH_VM_PROBE_SHECAN_INCLUDED no' "$WORK/local-probe.log"
 grep -F 'NOMREH_VM_PROBE_PASS' "$WORK/local-probe.log"
