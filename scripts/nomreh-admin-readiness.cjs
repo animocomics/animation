@@ -539,7 +539,26 @@ async function officialRuntimeReadiness(page, validateOfficialRuntime) {
     if (!currentRuntime.appReady || !currentRuntime.brokerReady) throw new Error("The official runtime did not become app/broker ready within six minutes.");
     lines.push("- The isolated official guest reported its real app and loopback AI broker ready. No login, OTP, update-link, or provider request was submitted.");
     await page.goto(`${ORIGIN}/admin`, { waitUntil: "domcontentloaded", timeout: 30000 });
-    const connected = await page.locator(".official-shecan-screen.connected").waitFor({ state: "visible", timeout: 120_000 }).then(() => true).catch(() => false);
+    let connected = await page.locator(".official-shecan-screen.connected").waitFor({ state: "visible", timeout: 120_000 }).then(() => true).catch(() => false);
+    if (!connected && vncDiagnostics.events.some((event) => event.includes("VNC_CONNECT"))) {
+      lines.push("- The first authenticated noVNC attempt reached the classified host-to-guest VNC connection failure; restarting only the isolated official guest once before retrying.");
+      const restartResponse = await context.request.post(`${ORIGIN}/api/admin/shecan-runtime`, { data: { action: "restart" } });
+      if (![200, 202].includes(restartResponse.status())) throw new Error(`The isolated official runtime restart returned HTTP ${restartResponse.status()}.`);
+      const restartDeadline = Date.now() + 360_000;
+      currentRuntime = (await restartResponse.json().catch(() => ({}))).runtime || currentRuntime;
+      while (Date.now() < restartDeadline && (!currentRuntime.appReady || !currentRuntime.brokerReady)) {
+        await page.waitForTimeout(2500);
+        const response = await context.request.get(`${ORIGIN}/api/admin/shecan-runtime`);
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.runtime) throw new Error("Official runtime status was lost during the controlled restart.");
+        currentRuntime = payload.runtime;
+        if (currentRuntime.phase === "error") throw new Error(`The official runtime entered its sanitized error state after restart: ${clean(currentRuntime.message)}`);
+      }
+      if (!currentRuntime.appReady || !currentRuntime.brokerReady) throw new Error("The official runtime did not become app/broker ready after the controlled restart.");
+      lines.push("- The isolated official guest became app/broker ready after its controlled restart; opening a fresh authenticated console.");
+      await page.goto(`${ORIGIN}/admin`, { waitUntil: "domcontentloaded", timeout: 30000 });
+      connected = await page.locator(".official-shecan-screen.connected").waitFor({ state: "visible", timeout: 120_000 }).then(() => true).catch(() => false);
+    }
     if (!connected) {
       const alert = await page.locator(".api-network-error").innerText().catch(() => "");
       const canvasCount = await page.locator(".official-shecan-vnc canvas").count();
