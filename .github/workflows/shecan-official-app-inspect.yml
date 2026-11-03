@@ -175,8 +175,8 @@ jobs:
           probe_sni() {
             local url="$1" host="$2" address="$3"
             local http exit_code
-            http="$(curl --silent --show-error --output /dev/null --connect-timeout 4 --max-time 7 --resolve "$host:443:$address" --write-out '%{http_code}' "$url" 2> /tmp/shecan-sni-curl.log)"
-            exit_code=$?
+            exit_code=0
+            http="$(curl --silent --show-error --output /dev/null --connect-timeout 4 --max-time 7 --resolve "$host:443:$address" --write-out '%{http_code}' "$url" 2> /tmp/shecan-sni-curl.log)" || exit_code=$?
             echo "$host via $address: curl=$exit_code HTTP=$http $(tail -n 1 /tmp/shecan-sni-curl.log | sed -E 's#https?://[^ ]+#[url]#g')" >> "$RUNNER_TEMP/shecan-sni-report.md"
           }
           for address in 144.76.1.88 94.130.70.160 65.109.34.234 5.202.75.100 88.218.19.178; do
