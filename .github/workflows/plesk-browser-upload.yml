@@ -58,7 +58,7 @@ jobs:
           source_sha=148ba13b1baa9f6e687f5e51a5a28307363ffa4d
           archive="$RUNNER_TEMP/nomreh-deploy-shecan-space-v31-delta.zip"
           expected='lib/server/provider-network.ts lib/server/shecan-account.ts lib/server/shecan-sni.ts scripts/plesk-space.cjs'
-          runtime_changes="$(git diff --name-only "$base_sha" "$source_sha" -- app components lib | tr '\n' ' ' | sed 's/ $//')"
+          runtime_changes="$(git diff --name-only "$base_sha" "$source_sha" -- app components lib scripts | tr '\n' ' ' | sed 's/ $//')"
           test "$runtime_changes" = "$expected"
           git archive --format=zip --output="$archive" "$source_sha" $expected
           for required in $expected; do
