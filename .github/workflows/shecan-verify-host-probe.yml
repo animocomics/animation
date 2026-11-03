@@ -1,0 +1,63 @@
+name: Verify official offline host probe packages
+
+on:
+  push:
+    branches: [arena/ccbdcb6e-animation]
+    paths:
+      - .github/workflows/shecan-verify-host-probe.yml
+      - scripts/shecan-vm/verify-probe-packages.py
+      - tests/shecan-vm/test_package_probe.py
+
+permissions:
+  contents: read
+  checks: write
+  actions: read
+
+jobs:
+  verify-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require successful local-only preparation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: test "$(gh api repos/${GITHUB_REPOSITORY}/actions/runs/41613456732 --jq '.status + " " + .conclusion')" = 'completed success'
+      - name: Download the exact private diagnostic artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: official-offline-host-probe
+          path: ${{ runner.temp }}/host-probe-packages
+          github-token: ${{ github.token }}
+          run-id: 41613456732
+      - name: Check independent verifier tests
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests/shecan-vm -v
+      - name: Verify all paths, file hashes and assembled payload
+        id: verify
+        run: |
+          set -euo pipefail
+          PYTHONDONTWRITEBYTECODE=1 python3 scripts/shecan-vm/verify-probe-packages.py "$RUNNER_TEMP/host-probe-packages" "$RUNNER_TEMP/validated-host-manifest.json" | tee "$RUNNER_TEMP/verify-probe.log"
+      - name: Store validated manifest only
+        if: steps.verify.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: validated-offline-probe-manifest
+          path: ${{ runner.temp }}/validated-host-manifest.json
+          retention-days: 1
+          if-no-files-found: error
+      - name: Publish verification report
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOME: ${{ steps.verify.outcome }}
+        run: |
+          set -euo pipefail
+          conclusion=failure
+          if [ "$OUTCOME" = success ]; then conclusion=success; fi
+          summary='No offline verification report was produced. Plesk was not contacted.'
+          if [ -f "$RUNNER_TEMP/verify-probe.log" ]; then summary="$(cat "$RUNNER_TEMP/verify-probe.log")"; fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name='Official offline probe package verification' -f head_sha="${GITHUB_SHA}" \
+            -f status=completed -f conclusion="$conclusion" \
+            -f 'output[title]=Hash and archive verification only; no Plesk deployment' \
+            --raw-field "output[summary]=${summary}" >/dev/null
