@@ -39,7 +39,7 @@ jobs:
         if: steps.config.outputs.configured == 'true'
         uses: actions/checkout@v4
 
-      - name: Verify the successful nginx-static production build
+      - name: Verify the successful production build and exact-archive cleanup
         if: steps.config.outputs.configured == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -52,6 +52,8 @@ jobs:
             sleep 3
           done
           test "$build_state" = "completed success"
+          cleanup_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41571537662" --jq '.status + " " + .conclusion')"
+          test "$cleanup_state" = "completed success"
 
       - name: Prepare an isolated temporary browser
         if: steps.config.outputs.configured == 'true'
