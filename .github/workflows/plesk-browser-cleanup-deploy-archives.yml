@@ -1,6 +1,6 @@
 name: Plesk Nomreh safe deployment-archive cleanup
 
-# Preserve the currently verified v23 archive. Delete only exact, redundant
+# Preserve the currently verified v25 archive. Delete only exact, redundant
 # nomreh-deploy…zip files in Nomreh's application root after re-verifying it.
 
 on:
@@ -41,13 +41,13 @@ jobs:
         if: steps.config.outputs.configured == 'true'
         uses: actions/checkout@v4
 
-      - name: Verify the currently running v23 host chain
+      - name: Verify the currently running v25 host chain
         if: steps.config.outputs.configured == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          for run_id in 41546736280 41546956067 41547264488 41547465491; do
+          for run_id in 41552656791 41552826854 41551350832 41553154870; do
             test "$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}" --jq '.status + " " + .conclusion')" = 'completed success'
           done
           node --check scripts/plesk-browser-diagnostics.cjs
@@ -56,7 +56,7 @@ jobs:
           grep -F 'const archiveStillVisible = await page.locator("a:visible")' scripts/plesk-browser-diagnostics.cjs > /dev/null
           node - <<'NODE'
           const { cleanupCandidates } = require('./scripts/plesk-deploy-archives.cjs');
-          const keep = 'nomreh-deploy-shecan-5353-v23-delta.zip';
+          const keep = 'nomreh-deploy-shecan-ddns-v25-delta.zip';
           const selected = cleanupCandidates([keep, 'nomreh-deploy.zip', 'package.json', 'nomreh-data'], keep);
           if (JSON.stringify(selected) !== JSON.stringify(['nomreh-deploy.zip'])) process.exit(1);
           NODE
@@ -79,7 +79,7 @@ jobs:
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
           PLESK_BROWSER_ACTION: cleanup-deploy-archives
-          PLESK_ARCHIVE_NAME: nomreh-deploy-shecan-5353-v23-delta.zip
+          PLESK_ARCHIVE_NAME: nomreh-deploy-shecan-ddns-v25-delta.zip
           PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-plesk-archive-cleanup.md
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
         run: node scripts/plesk-browser-diagnostics.cjs
