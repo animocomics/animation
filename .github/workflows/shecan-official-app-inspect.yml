@@ -165,6 +165,26 @@ jobs:
           print('\nNo user credential was supplied; no app was executed; no host or DNS setting was contacted or changed.')
           PY
 
+      - name: Probe official SNI proxy candidates without credentials or API keys
+        if: always()
+        run: |
+          set -uo pipefail
+          cd "$RUNNER_TEMP/shecan-app-inspect"
+          : > "$RUNNER_TEMP/shecan-sni-report.md"
+          echo '# Official Shecan SNI-only probes; no credential, update token, or API key' >> "$RUNNER_TEMP/shecan-sni-report.md"
+          probe_sni() {
+            local url="$1" host="$2" address="$3"
+            local http exit_code
+            http="$(curl --silent --show-error --output /dev/null --connect-timeout 4 --max-time 7 --resolve "$host:443:$address" --write-out '%{http_code}' "$url" 2> /tmp/shecan-sni-curl.log)"
+            exit_code=$?
+            echo "$host via $address: curl=$exit_code HTTP=$http $(tail -n 1 /tmp/shecan-sni-curl.log | sed -E 's#https?://[^ ]+#[url]#g')" >> "$RUNNER_TEMP/shecan-sni-report.md"
+          }
+          for address in 144.76.1.88 94.130.70.160 65.109.34.234 5.202.75.100 88.218.19.178; do
+            probe_sni "https://my.shecan.ir/my/account.json" my.shecan.ir "$address"
+            probe_sni "https://ddns.shecan.ir/" ddns.shecan.ir "$address"
+            probe_sni "https://generativelanguage.googleapis.com/v1beta/models" generativelanguage.googleapis.com "$address"
+          done
+
       - name: Prepare the official CLI authentication source report
         if: always()
         run: |
@@ -214,7 +234,7 @@ jobs:
           python - <<'PY'
           import json, os
           from pathlib import Path
-          text = Path(os.environ['RUNNER_TEMP'] + '/shecan-cli-source.md').read_text()[:60000]
+          text = Path(os.environ['RUNNER_TEMP'] + '/shecan-sni-report.md').read_text()[:60000]
           conclusion = 'success' if os.environ.get('INSPECT_OUTCOME') == 'success' else 'failure'
           payload = {
               'name': 'Official Shecan app authentication inspection',
