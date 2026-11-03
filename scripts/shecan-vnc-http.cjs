@@ -113,7 +113,7 @@ async function createSession(request, response, applicationPort) {
   if (sessions.size >= MAX_SESSIONS) throw Object.assign(new Error("Too many VNC sessions"), { statusCode: 429 });
   try { await authorizeUpgrade(request, applicationPort); }
   catch (error) {
-    error.vncCode = "AUTH";
+    error.vncCode = error.vncCode || "AUTH";
     throw error;
   }
   const port = Number(process.env.NOMREH_VNC_PORT || 15900);

@@ -36,6 +36,8 @@ function authorizeUpgrade(request, applicationPort) {
         if (response.statusCode !== 200) {
           const error = new Error("Admin authentication required");
           error.statusCode = response.statusCode === 401 || response.statusCode === 403 ? response.statusCode : 503;
+          const contentClass = /application\/json/i.test(String(response.headers["content-type"] || "")) ? "JSON" : "HTML";
+          error.vncCode = `AUTH_${error.statusCode}_${contentClass}${request.headers.cookie ? "" : "_NO_COOKIE"}`;
           reject(error);
           return;
         }
