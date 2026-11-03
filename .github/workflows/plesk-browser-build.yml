@@ -80,7 +80,20 @@ jobs:
           PLESK_BROWSER_ACTION: build
           PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-plesk-build.md
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
-        run: node scripts/plesk-browser-diagnostics.cjs
+        run: |
+          set -u
+          attempt=1
+          while [ "$attempt" -le 3 ]; do
+            if node scripts/plesk-browser-diagnostics.cjs; then
+              printf '\n- Production build command succeeded on attempt %s.\n' "$attempt" >> "$PLESK_DIAGNOSTICS_OUTPUT"
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ] || ! grep -Eq 'ETIMEDOUT|ECONNRESET|EAI_AGAIN|network request to' "$PLESK_DIAGNOSTICS_OUTPUT"; then
+              exit 1
+            fi
+            attempt=$((attempt + 1))
+            sleep 20
+          done
 
       - name: Publish the sanitized build result
         if: always()
