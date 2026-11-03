@@ -1,6 +1,7 @@
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -21,6 +22,7 @@ class PackageProbeTests(unittest.TestCase):
             path = self.runtime / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b'bounded test file')
+        os.utime(self.runtime / 'run-gui.sh', (0, 0))
         self.init = self.runtime / 'guest/initramfs-gui'
         self.init.write_bytes(bytes(range(251)) * 10)
         self.output = self.root / 'output'

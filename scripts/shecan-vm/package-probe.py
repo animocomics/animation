@@ -53,7 +53,7 @@ def pack(runtime, destination, part_size=DEFAULT_PART):
     destination.mkdir(parents=True, exist_ok=True)
 
     base = destination / 'nomreh-gui-base.zip'
-    with zipfile.ZipFile(base, 'x', compression=zipfile.ZIP_DEFLATED, compresslevel=9, allowZip64=True) as archive:
+    with zipfile.ZipFile(base, 'x', compression=zipfile.ZIP_DEFLATED, compresslevel=9, allowZip64=True, strict_timestamps=False) as archive:
         for entry in sorted(runtime.rglob('*')):
             if entry == source or entry.is_dir() and not entry.is_symlink():
                 continue
