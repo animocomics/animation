@@ -80,6 +80,8 @@ test("runtime lifecycle markers gate the AI proxy and stopping fails closed with
     assert.equal(ready.running, true);
     assert.equal(ready.appReady, true);
     assert.equal(ready.brokerReady, true);
+    assert.ok(ready.markers.includes("NOMREH_OFFICIAL_APP_PROCESS_ALIVE"));
+    assert.ok(ready.markers.includes("NOMREH_OFFICIAL_AI_BROKER_LISTENING"));
     await waitFor(() => getOfficialRuntimeStatus().supervisorRunning, 5000);
     const firstPid = Number(fs.readFileSync(path.join(data, "shecan-official", "guest.pid"), "utf8").trim());
     process.kill(-firstPid, "SIGKILL");

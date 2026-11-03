@@ -18,6 +18,7 @@ export interface OfficialRuntimeStatus {
   appReady: boolean;
   brokerReady: boolean;
   supervisorRunning: boolean;
+  markers: string[];
   phase: "not-installed" | "stopped" | "starting" | "ready" | "error";
   startedAt?: string;
   message: string;
@@ -116,6 +117,12 @@ function consoleTail(): string {
   } catch { return ""; }
 }
 
+function consoleMarkers(text = consoleTail()): string[] {
+  return text.split(/\r?\n/).map((line) => line.trim())
+    .filter((line) => /^NOMREH_(?:OFFICIAL|VNC)_[A-Z0-9_]+$/.test(line))
+    .slice(-48);
+}
+
 function readPid(): number | null {
   try {
     const pid = Number(fs.readFileSync(pidPath(), "utf8").trim());
@@ -166,6 +173,7 @@ export function getOfficialRuntimeStatus(): OfficialRuntimeStatus {
   const running = isOurGuest(readPid());
   const supervisorRunning = isOurSupervisor(readSupervisorPid());
   const markers = running ? consoleTail() : "";
+  const markerList = running ? consoleMarkers(markers) : [];
   const appReady = running && markers.includes("NOMREH_OFFICIAL_APP_PROCESS_ALIVE");
   const brokerReady = running && markers.includes("NOMREH_OFFICIAL_AI_BROKER_LISTENING");
   const failed = running && /NOMREH_(?:OFFICIAL|VNC)_[A-Z_]*ERROR/.test(markers);
@@ -176,6 +184,7 @@ export function getOfficialRuntimeStatus(): OfficialRuntimeStatus {
     appReady,
     brokerReady,
     supervisorRunning,
+    markers: markerList,
     phase: !installed ? "not-installed" : failed || state.lastError ? "error" : ready ? "ready" : running ? "starting" : "stopped",
     startedAt: state.startedAt,
     message: !installed
