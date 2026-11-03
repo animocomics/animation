@@ -40,13 +40,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Verify the successful v28 host chain
+      - name: Verify the successful v29 host chain
         if: steps.config.outputs.configured == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          for run_id in 41577894215 41578028912 41578214730 41578421688; do
+          for run_id in 41579650181 41579786162 41579925905 41580341222; do
             test "$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}" --jq '.status + " " + .conclusion')" = 'completed success'
           done
 
@@ -54,17 +54,17 @@ jobs:
         if: steps.config.outputs.configured == 'true'
         run: |
           set -euo pipefail
-          base_sha=9ac5e8c98977575a9bbba7701ae956dd7893d4a8
-          source_sha=cfcf7abf8b2afbcb3a9fac2d6301353e145e31bf
-          archive="$RUNNER_TEMP/nomreh-deploy-shecan-nddns-sni-v29-delta.zip"
-          expected='lib/server/api-network.ts lib/server/provider-network.ts lib/server/shecan-account.ts lib/server/shecan-sni.ts'
+          base_sha=cfcf7abf8b2afbcb3a9fac2d6301353e145e31bf
+          source_sha=2a7faac3cc1952e4f8880d5da7ba027770194dd2
+          archive="$RUNNER_TEMP/nomreh-deploy-shecan-nddns-v30-delta.zip"
+          expected='lib/server/provider-network.ts lib/server/shecan-account.ts lib/server/shecan-sni.ts'
           runtime_changes="$(git diff --name-only "$base_sha" "$source_sha" -- app components lib | tr '\n' ' ' | sed 's/ $//')"
           test "$runtime_changes" = "$expected"
           git archive --format=zip --output="$archive" "$source_sha" $expected
           for required in $expected; do
             unzip -Z1 "$archive" | grep -Fx "$required" > /dev/null
           done
-          test "$(unzip -Z1 "$archive" | grep -vc '/$')" -eq 4
+          test "$(unzip -Z1 "$archive" | grep -vc '/$')" -eq 3
           git show "$source_sha:scripts/plesk-node22.cjs" | grep -F 'Nomreh Passenger-aware launcher is active for this build.' > /dev/null
           git show "$source_sha:scripts/plesk-node22.cjs" | grep -F 'return [mainFile];' > /dev/null
           git show "$source_sha:scripts/plesk-node22.cjs" | grep -F 'syncPublicStatic();' > /dev/null
@@ -97,8 +97,8 @@ jobs:
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
           PLESK_BROWSER_ACTION: upload
-          PLESK_ARCHIVE_NAME: nomreh-deploy-shecan-nddns-sni-v29-delta.zip
-          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-shecan-nddns-sni-v29-delta.zip
+          PLESK_ARCHIVE_NAME: nomreh-deploy-shecan-nddns-v30-delta.zip
+          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-shecan-nddns-v30-delta.zip
           PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-plesk-upload.md
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
         run: node scripts/plesk-browser-diagnostics.cjs
