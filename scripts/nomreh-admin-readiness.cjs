@@ -656,7 +656,7 @@ async function main() {
   lines.push("- The real admin UI used POST for provider save; an intercepted HTML 403 response became a safe Persian HTTP error, never a raw JSON parser failure. Both provider requests were mocked.");
 
   await page.locator("#admin-model").fill("gemini-3.8-flash");
-  await page.locator("#admin-api-key").fill("AIzaSyNomrehReadinessInvalid0000000000000000");
+  await page.locator("#admin-api-key").fill("nomreh-readiness-invalid-not-a-secret");
   let unexpectedSaveCalls = 0;
   await page.route(`${ORIGIN}/api/provider`, async (route) => {
     if (route.request().method() === "POST") {
@@ -681,7 +681,7 @@ async function main() {
 
   const invalidKeyResponse = await context.request.post(`${ORIGIN}/api/provider/test`, {
     headers: { Accept: "application/json" },
-    data: { provider: "gemini", model: "gemini-3.8-flash", apiKey: "AIzaSyNomrehReadinessInvalid0000000000000000" },
+    data: { provider: "gemini", model: "gemini-3.8-flash", apiKey: "nomreh-readiness-invalid-not-a-secret" },
   });
   const invalidKeyBody = await invalidKeyResponse.text();
   const invalidKeyContentType = invalidKeyResponse.headers()["content-type"] || "none";
