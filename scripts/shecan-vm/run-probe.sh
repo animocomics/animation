@@ -20,6 +20,7 @@ done
 unset LD_LIBRARY_PATH LD_PRELOAD http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY
 
 timeout -k 5 120 "$LOADER" --library-path "$LIBRARIES" "$QEMU" \
+  -L "$ROOT/qemu/share/qemu" \
   -machine pc,accel=tcg \
   -cpu qemu64 \
   -smp 1 \
