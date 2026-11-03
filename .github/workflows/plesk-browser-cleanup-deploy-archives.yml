@@ -1,6 +1,6 @@
 name: Plesk Nomreh safe deployment-archive cleanup
 
-# Preserve the currently verified cumulative v31 archive. Delete only exact,
+# Preserve the currently verified cumulative v32 archive. Delete only exact,
 # redundant nomreh-deploy…zip files in Nomreh's application root.
 
 on:
@@ -41,13 +41,13 @@ jobs:
         if: steps.config.outputs.configured == 'true'
         uses: actions/checkout@v4
 
-      - name: Verify the running v30 chain and hash-checked v31 reporter
+      - name: Verify the running v32 OTP chain and read-only browser evidence
         if: steps.config.outputs.configured == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          for run_id in 41581708445 41581849727 41581998451 41582273458 41584020663 41584152680; do
+          for run_id in 41586525013 41586651661 41586863418 41587101689 41587299942; do
             test "$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}" --jq '.status + " " + .conclusion')" = 'completed success'
           done
           node --check scripts/plesk-browser-diagnostics.cjs
@@ -56,7 +56,7 @@ jobs:
           grep -F 'const archiveStillVisible = await page.locator("a:visible")' scripts/plesk-browser-diagnostics.cjs > /dev/null
           node - <<'NODE'
           const { cleanupCandidates } = require('./scripts/plesk-deploy-archives.cjs');
-          const keep = 'nomreh-deploy-shecan-space-v31-delta.zip';
+          const keep = 'nomreh-deploy-shecan-otp-v32-delta.zip';
           const selected = cleanupCandidates([keep, 'nomreh-deploy.zip', 'package.json', 'nomreh-data'], keep);
           if (JSON.stringify(selected) !== JSON.stringify(['nomreh-deploy.zip'])) process.exit(1);
           NODE
@@ -79,7 +79,7 @@ jobs:
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
           PLESK_BROWSER_ACTION: cleanup-deploy-archives
-          PLESK_ARCHIVE_NAME: nomreh-deploy-shecan-space-v31-delta.zip
+          PLESK_ARCHIVE_NAME: nomreh-deploy-shecan-otp-v32-delta.zip
           PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-plesk-archive-cleanup.md
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
         run: node scripts/plesk-browser-diagnostics.cjs
