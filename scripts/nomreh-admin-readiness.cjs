@@ -655,6 +655,12 @@ async function main() {
   await page.unroute(`${ORIGIN}/api/provider`);
   lines.push("- The real admin UI used POST for provider save; an intercepted HTML 403 response became a safe Persian HTTP error, never a raw JSON parser failure. Both provider requests were mocked.");
 
+  const providerRouteProbe = await context.request.post(`${ORIGIN}/api/provider/test`, {
+    headers: { Accept: "application/json" },
+    data: {},
+  });
+  lines.push(`- Schema-only provider-route probe (no key or provider traffic): HTTP ${providerRouteProbe.status()}; content type ${clean(providerRouteProbe.headers()["content-type"] || "none")}.`);
+
   await page.locator("#admin-model").fill("gemini-3.8-flash");
   await page.locator("#admin-api-key").fill("nomreh-readiness-invalid-not-a-secret");
   let unexpectedSaveCalls = 0;
@@ -673,7 +679,11 @@ async function main() {
   }, safeHtmlErrorText, { timeout: 30000 });
   const actualInvalidUiText = await page.locator(".api-test-message.error").innerText();
   const actualTestContentType = actualTestResponse.headers()["content-type"] || "none";
-  if (actualTestResponse.status() !== 400 || !/application\/json/i.test(actualTestContentType)) throw new Error(`The real invalid-key UI test returned HTTP ${actualTestResponse.status()} with ${actualTestContentType}.`);
+  if (actualTestResponse.status() !== 400 || !/application\/json/i.test(actualTestContentType)) {
+    const body = await actualTestResponse.text().catch(() => "");
+    const safeBody = clean(body.replace(/AIza[0-9A-Za-z_-]{16,}/g, "[key]").replace(/nomreh-readiness-invalid-not-a-secret/g, "[placeholder]")).slice(0, 180);
+    throw new Error(`The real invalid-key UI test returned HTTP ${actualTestResponse.status()} with ${actualTestContentType}; server=${clean(actualTestResponse.headers().server || "none")}; body=${safeBody || "empty"}.`);
+  }
   if (/Unexpected token|<!DOCTYPE|not valid JSON/i.test(actualInvalidUiText)) throw new Error("The real invalid-key UI flow exposed a raw JSON parser error.");
   if (unexpectedSaveCalls !== 0) throw new Error("The deliberately invalid real provider test unexpectedly reached the guarded save request.");
   await page.unroute(`${ORIGIN}/api/provider`);
