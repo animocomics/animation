@@ -3,6 +3,7 @@
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const net = require("node:net");
+const path = require("node:path");
 const { authorizeUpgrade } = require("./shecan-vnc-websocket.cjs");
 
 const HTTP_CHANNEL_PATH = "/api/admin/shecan-runtime/vnc-http";
@@ -117,7 +118,20 @@ function listenerState(port) {
       const lines = fs.readFileSync(table, "utf8").split("\n").slice(1);
       for (const line of lines) {
         const fields = line.trim().split(/\s+/);
-        if (fields[1]?.endsWith(`:${hex}`) && fields[3] === "0A") return "LISTENER";
+        if (!fields[1]?.endsWith(`:${hex}`) || fields[3] !== "0A") continue;
+        const receiveQueue = Number.parseInt(String(fields[4] || "").split(":")[1] || "0", 16);
+        const queue = Number.isFinite(receiveQueue) ? Math.min(receiveQueue, 9999) : 9999;
+        const inode = fields[9] || "";
+        try {
+          const dataDirectory = process.env.NOMREH_DATA_DIR || path.join(process.cwd(), "data");
+          const pid = Number(fs.readFileSync(path.join(dataDirectory, "shecan-official", "guest.pid"), "utf8").trim());
+          const command = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8");
+          if (!command.includes("qemu-system-x86_64") || !command.includes("initramfs-official")) return `OTHER_LISTENER_Q${queue}`;
+          for (const fd of fs.readdirSync(`/proc/${pid}/fd`)) {
+            if (fs.readlinkSync(`/proc/${pid}/fd/${fd}`) === `socket:[${inode}]`) return `QEMU_LISTENER_Q${queue}`;
+          }
+          return `OTHER_LISTENER_Q${queue}`;
+        } catch { return `LISTENER_OWNER_UNKNOWN_Q${queue}`; }
       }
     }
     return "NO_LISTENER";
