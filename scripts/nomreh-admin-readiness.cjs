@@ -667,6 +667,11 @@ async function main() {
     const response = await context.request.post(`${ORIGIN}/api/provider/test`, { headers: { Accept: "application/json" }, data });
     lines.push(`- Schema-only ${label} probe with a non-secret placeholder (no provider traffic): HTTP ${response.status()}; content type ${clean(response.headers()["content-type"] || "none")}.`);
   }
+  const diagnosticModelsResponse = await context.request.post(`${ORIGIN}/api/provider/models`, {
+    headers: { Accept: "application/json" },
+    data: { provider: "gemini", apiKey: "nomreh-readiness-invalid-not-a-secret" },
+  });
+  lines.push(`- Invalid-placeholder model-discovery response (no stored key or saved settings): HTTP ${diagnosticModelsResponse.status()}; content type ${clean(diagnosticModelsResponse.headers()["content-type"] || "none")}.`);
 
   await page.locator("#admin-model").fill("gemini-3.8-flash");
   await page.locator("#admin-api-key").fill("x");
