@@ -106,14 +106,42 @@ async function run() {
   const beforeUsage = await usage(page);
   const accountPanel = page.locator(".shecan-account-panel");
   const accountLoginInput = page.locator("#shecan-account-identifier");
-  lines.push(`- Real admin Shecan account environment: panel ${await accountPanel.count() ? "present" : "missing"}; username/password form ${await accountLoginInput.count() ? "present" : "not shown (an account may already be connected)"}.`);
+  const legacyPasswordInput = page.locator("#shecan-account-password");
+  lines.push(`- Real admin Shecan account environment: panel ${await accountPanel.count() ? "present" : "missing"}; phone/email OTP entry ${await accountLoginInput.count() ? "present" : "not shown (an account may already be connected)"}; legacy Shecan password field ${await legacyPasswordInput.count() ? "PRESENT (unexpected)" : "absent"}.`);
   const accountProbe = await api(page, "/api/admin/shecan-account", { action: "probe" });
   const probePayload = payloadOf(accountProbe)?.accountProbe;
   lines.push(`- Real Plesk-to-Shecan account-service probe (no Shecan credentials): HTTP ${accountProbe.status}; ${probePayload?.reachable ? `official account service answered with upstream HTTP ${clean(probePayload.httpStatus)}` : summarize(accountProbe)}.`);
   if (READ_ONLY) {
-    lines.push("- Read-only stored-result inspection: no activation, provider test, or configuration mutation was requested.");
+    if (await accountLoginInput.count()) {
+      const routePattern = "**/api/admin/shecan-account";
+      await page.route(routePattern, async (route) => {
+        const request = route.request();
+        let action = "";
+        try { action = JSON.parse(request.postData() || "{}").action || ""; } catch { /* Continue non-JSON requests unchanged. */ }
+        if (request.method() === "POST" && action === "send-otp") {
+          await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ otp: { expiresAt: new Date(Date.now() + 120000).toISOString() } }) });
+          return;
+        }
+        await route.continue();
+      });
+      await accountLoginInput.fill("09123456789");
+      await page.getByRole("button", { name: "ادامه و ارسال کد", exact: true }).click();
+      const otpInput = page.locator("#shecan-otp-code");
+      await otpInput.waitFor({ state: "visible", timeout: 10000 });
+      const autocomplete = await otpInput.getAttribute("autocomplete");
+      await otpInput.fill("۱۲۳۴۵۶");
+      const normalizedLength = (await otpInput.inputValue()).length;
+      await page.getByRole("button", { name: "تغییر شماره یا ایمیل", exact: true }).click();
+      await accountLoginInput.waitFor({ state: "visible", timeout: 10000 });
+      await accountLoginInput.fill("");
+      await page.unroute(routePattern);
+      lines.push(`- Browser-only mocked OTP transition: six-digit stage visible; one-time-code autocomplete ${clean(autocomplete)}; Persian-digit normalization ${normalizedLength === 6 ? "passed" : "failed"}; return-to-identifier passed. The send response was intercepted in Chromium; no Nomreh/Shecan send request, real SMS, OTP verification, account login, or stored credential occurred.`);
+    } else {
+      lines.push("- Browser-only mocked OTP transition: skipped because the identifier entry was not shown; no SMS or OTP request occurred.");
+    }
+    lines.push("- Read-only stored-result inspection: no activation, provider test, real OTP request, or configuration mutation was requested.");
     lines.push(`- Nomreh-recorded AI usage: jobs ${beforeUsage.jobs}; input tokens ${beforeUsage.input}; output tokens ${beforeUsage.output}; failed ${beforeUsage.failures}.`);
-    lines.push("", "Read-only inspection completed. No exam, grade, teacher data, provider setting, or Shecan setting was changed.");
+    lines.push("", "Read-only inspection completed. No exam, grade, teacher data, provider setting, Shecan credential, or Shecan setting was changed.");
     return;
   }
 

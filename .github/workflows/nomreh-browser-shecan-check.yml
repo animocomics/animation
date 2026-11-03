@@ -1,8 +1,8 @@
 name: Nomreh real-browser Shecan and provider check
 
-# Application source under test: 148ba13b1baa9f6e687f5e51a5a28307363ffa4d
-# Hosted source verified by SHA-256 in extraction run 41584152680; app runtime restarted in run 41582273458.
-# Read-only final inspection retains documented DNS/DDNS/nddns methods and excludes the unverified SNI proxy fallback. Activation run 41580613143 is the latest real network attempt.
+# Application source under test: 39b666bf238fa820d9e7b42ec3ba470f4e7cb043
+# Hosted source verified by SHA-256 in extraction run 41586651661; app runtime restarted in run 41587101689.
+# Read-only OTP UI inspection sends no real identifier, SMS, OTP, activation, or provider request. The account probe remains credential-free; activation run 41580613143 is still the latest real network attempt.
 
 on:
   push:
