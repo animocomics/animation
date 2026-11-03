@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  checks: write
 
 concurrency:
   group: shecan-official-app-inspect
@@ -67,10 +68,11 @@ jobs:
           find android-app -maxdepth 4 -type f \( -name '*.bundle' -o -name '*.so' -o -name 'AndroidManifest.xml' -o -name 'resources.arsc' -o -name '*.json' \) -printf '%p %s bytes\n' | head -100 || true
 
       - name: Report only sanitized public endpoints and authentication-related strings
+        id: inspect-report
         run: |
           set -euo pipefail
           cd "$RUNNER_TEMP/shecan-app-inspect"
-          python - <<'PY'
+          python - <<'PY' | tee "$RUNNER_TEMP/shecan-app-report.md"
           from pathlib import Path
           import re
           from urllib.parse import urlsplit, urlunsplit
@@ -122,3 +124,27 @@ jobs:
               print(value[:500])
           print('\nNo user credential was supplied; no app was executed; no host or DNS setting was contacted or changed.')
           PY
+
+      - name: Publish the sanitized inspection report
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INSPECT_OUTCOME: ${{ steps.inspect-report.outcome }}
+        run: |
+          set -euo pipefail
+          test -s "$RUNNER_TEMP/shecan-app-report.md"
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          text = Path(os.environ['RUNNER_TEMP'] + '/shecan-app-report.md').read_text()[:60000]
+          conclusion = 'success' if os.environ.get('INSPECT_OUTCOME') == 'success' else 'failure'
+          payload = {
+              'name': 'Official Shecan app authentication inspection',
+              'head_sha': os.environ['GITHUB_SHA'],
+              'status': 'completed',
+              'conclusion': conclusion,
+              'output': {'title': 'Official Shecan app public static inspection', 'summary': text},
+          }
+          Path(os.environ['RUNNER_TEMP'] + '/shecan-app-check.json').write_text(json.dumps(payload))
+          PY
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" --input "$RUNNER_TEMP/shecan-app-check.json" > /dev/null
