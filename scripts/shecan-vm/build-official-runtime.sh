@@ -18,7 +18,7 @@ WORK=$(mktemp -d)
 RUNNER_PID=''
 VNC_PID=''
 trap 'if [[ -n "$RUNNER_PID" ]]; then kill "$RUNNER_PID" 2>/dev/null || true; fi; if [[ -n "$VNC_PID" ]]; then kill "$VNC_PID" 2>/dev/null || true; fi; rm -rf "$WORK" 2>/dev/null || true' EXIT
-mkdir -p "$WORK/rootfs/usr/local/bin" "$WORK/full"
+mkdir -p "$WORK/rootfs/usr/local/bin" "$WORK/rootfs/etc" "$WORK/full"
 
 if ! bash "$SOURCE_ROOT/scripts/shecan-vm/build-probe.sh" "$SOURCE_ROOT" "$WORK/base.zip" > "$WORK/base-build.log" 2>&1; then
   cat "$WORK/base-build.log" >&2
