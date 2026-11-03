@@ -9,6 +9,7 @@ const { execFileSync } = require("node:child_process");
 const { chromium } = require("playwright");
 const { normalizePanelUrl, redact } = require("./plesk-api-diagnostics.cjs");
 const { cleanupCandidates } = require("./plesk-deploy-archives.cjs");
+const { restrictToPanelOrigin } = require("./plesk-origin-policy.cjs");
 
 const DOMAIN = "nomreh.arounidea.com";
 const ACTION = process.env.PLESK_BROWSER_ACTION || "diagnose";
@@ -122,13 +123,8 @@ async function main() {
     // The certificate exception is only authorized for the configured Plesk
     // origin. Reject redirects, subresources and requests to every other origin
     // in this isolated browser context before they can bypass TLS validation.
-    const context = await browser.newContext({ ignoreHTTPSErrors: true, viewport: { width: 1680, height: 1050 } });
-    await context.route("**/*", async (route) => {
-      let origin = "";
-      try { origin = new URL(route.request().url()).origin; } catch { /* reject malformed URLs */ }
-      if (origin !== panel) return route.abort();
-      return route.continue();
-    });
+    const context = await browser.newContext({ ignoreHTTPSErrors: true, serviceWorkers: "block", viewport: { width: 1680, height: 1050 } });
+    await restrictToPanelOrigin(context, panel);
     const page = await context.newPage();
     page.setDefaultTimeout(15000);
     let loginPageLoaded = false;
