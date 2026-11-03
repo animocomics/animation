@@ -547,6 +547,7 @@ async function officialRuntimeReadiness(page, validateOfficialRuntime) {
     }
     if (currentRuntime.supervisorRunning !== true) throw new Error("The independent official runtime supervisor did not become active.");
     lines.push("- The isolated official guest reported its real app and loopback AI broker ready; the independent always-on supervisor is active. No login, OTP, update-link, or provider request was submitted.");
+    lines.push(`- Official guest safe markers: ${clean((currentRuntime.markers || []).slice(-18).join(" | ") || "none")}.`);
     await page.goto(`${ORIGIN}/admin`, { waitUntil: "domcontentloaded", timeout: 30000 });
     let connected = await page.locator(".official-shecan-screen.connected").waitFor({ state: "visible", timeout: 120_000 }).then(() => true).catch(() => false);
     if (!connected && process.env.NOMREH_RESTART_ON_VNC_FAILURE === "1" && vncDiagnostics.events.some((event) => /VNC_(?:CONNECT|REVERSE)/.test(event))) {
@@ -567,6 +568,7 @@ async function officialRuntimeReadiness(page, validateOfficialRuntime) {
       if (!currentRuntime.appReady || !currentRuntime.brokerReady) throw new Error("The official runtime did not become app/broker ready after the controlled restart.");
       if (beforeRestartStartedAt && currentRuntime.startedAt === beforeRestartStartedAt) throw new Error("The controlled restart did not replace the official guest instance.");
       lines.push(`- The isolated official guest became app/broker ready after its controlled restart; new started-at=${clean(currentRuntime.startedAt || "unknown")}; opening a fresh authenticated console.`);
+      lines.push(`- Post-restart official guest safe markers: ${clean((currentRuntime.markers || []).slice(-18).join(" | ") || "none")}.`);
       await page.goto(`${ORIGIN}/admin`, { waitUntil: "domcontentloaded", timeout: 30000 });
       connected = await page.locator(".official-shecan-screen.connected").waitFor({ state: "visible", timeout: 120_000 }).then(() => true).catch(() => false);
     }
