@@ -4,7 +4,7 @@ const path = require("node:path");
 const { spawn } = require("node:child_process");
 const next = require("next");
 const { attachShecanVncWebSocket } = require("./shecan-vnc-websocket.cjs");
-const { handleShecanVncHttp, closeShecanVncHttpSessions } = require("./shecan-vnc-http.cjs");
+const { handleShecanVncHttp, closeShecanVncHttpSessions, startShecanVncReverseServer } = require("./shecan-vnc-http.cjs");
 
 process.env.NODE_ENV = "production";
 const port = Number(process.env.PORT) || 3000;
@@ -31,6 +31,9 @@ function ensureOfficialShecanSupervisor() {
 }
 
 app.prepare().then(() => {
+  // Listen before the guest boots so its reverse x11vnc connection is queued
+  // even when no admin console is open yet.
+  try { startShecanVncReverseServer(); } catch { console.error("Nomreh reverse VNC listener could not be configured"); }
   ensureOfficialShecanSupervisor();
   const server = createServer((request, response) => {
     if (handleShecanVncHttp(request, response, port)) return;

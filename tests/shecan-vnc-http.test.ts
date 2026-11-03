@@ -7,7 +7,7 @@ import test from "node:test";
 import { createVncAuthFixture } from "./vnc-auth-fixture";
 
 const require = createRequire(import.meta.url);
-const { handleShecanVncHttp, closeShecanVncHttpSessions, HTTP_CHANNEL_PATH } = require("../scripts/shecan-vnc-http.cjs");
+const { handleShecanVncHttp, closeShecanVncHttpSessions, startShecanVncReverseServer, HTTP_CHANNEL_PATH } = require("../scripts/shecan-vnc-http.cjs");
 
 function listen(server: http.Server | net.Server): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -42,6 +42,7 @@ test("authenticated HTTP raw channel accepts reverse VNC and bridges both direct
       if (!targetStopped) setTimeout(connectTarget, 20);
     });
   };
+  startShecanVncReverseServer();
   connectTarget();
   const application = http.createServer((request, response) => {
     if (handleShecanVncHttp(request, response, applicationPort)) return;

@@ -156,6 +156,11 @@ function ensureReverseServer(port) {
   server.listen({ host: "127.0.0.1", port, exclusive: true });
 }
 
+function startShecanVncReverseServer() {
+  const port = configuredReversePort();
+  if (port) ensureReverseServer(port);
+}
+
 function takeReverseSocket(port) {
   ensureReverseServer(port);
   if (reverseSockets.length) return Promise.resolve(reverseSockets.shift());
@@ -336,4 +341,4 @@ function closeShecanVncHttpSessions() {
   }
 }
 
-module.exports = { handleShecanVncHttp, closeShecanVncHttpSessions, HTTP_CHANNEL_PATH };
+module.exports = { handleShecanVncHttp, closeShecanVncHttpSessions, startShecanVncReverseServer, HTTP_CHANNEL_PATH };
