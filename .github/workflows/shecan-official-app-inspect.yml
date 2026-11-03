@@ -165,18 +165,22 @@ jobs:
           print('\nNo user credential was supplied; no app was executed; no host or DNS setting was contacted or changed.')
           PY
 
-      - name: Preserve only public text protocol sources for one day
+      - name: Prepare the official public extension protocol source report
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: shecan-public-protocol-source
-          retention-days: 1
-          if-no-files-found: error
-          path: |
-            ${{ runner.temp }}/shecan-app-inspect/chrome-extension/*.js
-            ${{ runner.temp }}/shecan-app-inspect/chrome-extension/*.json
-            ${{ runner.temp }}/shecan-app-inspect/chrome-extension/README.md
-            ${{ runner.temp }}/shecan-app-inspect/windows-extracted/console-setup.ps1
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/shecan-app-inspect"
+          {
+            printf '# Official Shecan Chrome extension public protocol source\n\n'
+            printf 'No credential was supplied and no code was executed. This is the public extension JavaScript for static protocol inspection.\n\n'
+            for file in chrome-extension/manifest.json chrome-extension/panelkey.js chrome-extension/background.js chrome-extension/popup.js chrome-extension/detect.js chrome-extension/options.js chrome-extension/flow/stat.js; do
+              if [ -f "$file" ]; then
+                printf '\n## FILE: %s\n\n' "$file"
+                cat "$file"
+                printf '\n'
+              fi
+            done
+          } > "$RUNNER_TEMP/shecan-extension-source.md"
 
       - name: Publish the sanitized inspection report
         if: always()
@@ -189,7 +193,7 @@ jobs:
           python - <<'PY'
           import json, os
           from pathlib import Path
-          text = Path(os.environ['RUNNER_TEMP'] + '/shecan-app-report.md').read_text()[:60000]
+          text = Path(os.environ['RUNNER_TEMP'] + '/shecan-extension-source.md').read_text()[:60000]
           conclusion = 'success' if os.environ.get('INSPECT_OUTCOME') == 'success' else 'failure'
           payload = {
               'name': 'Official Shecan app authentication inspection',
