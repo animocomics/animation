@@ -29,6 +29,7 @@ interface ApiNetworkRow {
   plan: "free" | "pro";
   dns_primary: string;
   dns_secondary: string;
+  transport: "dns" | "official-vm";
   enabled: number;
   encrypted_update_url: string;
   update_url_source: "manual" | "account";
@@ -56,6 +57,7 @@ export interface SaveApiNetworkInput {
   enabled: boolean;
   plan: "free" | "pro";
   servers: [string, string];
+  transport?: "dns" | "official-vm";
   updateUrl?: string;
 }
 
@@ -95,6 +97,7 @@ export async function getApiNetworkStatus(): Promise<ApiNetworkPublicStatus> {
     enabled: false,
     plan: "free",
     servers: [...SHECAN_DNS.free],
+    transport: "dns",
     hasUpdateUrl: false,
     updateUrlSource: "none",
     hasAccountKey: false,
@@ -106,6 +109,7 @@ export async function getApiNetworkStatus(): Promise<ApiNetworkPublicStatus> {
     enabled: Boolean(row.enabled),
     plan: row.plan,
     servers: [row.dns_primary, row.dns_secondary],
+    transport: row.transport || "dns",
     hasUpdateUrl: Boolean(row.encrypted_update_url),
     updateUrlSource: row.encrypted_update_url ? row.update_url_source : "none",
     hasAccountKey: Boolean(row.encrypted_account_key),
@@ -126,7 +130,7 @@ export async function getApiNetworkStatus(): Promise<ApiNetworkPublicStatus> {
 
 export async function getApiNetworkConfig(): Promise<ApiNetworkConfig> {
   const row = await findRow();
-  if (!row) return { enabled: false, plan: "free", servers: [...SHECAN_DNS.free], updateUrl: "" };
+  if (!row) return { enabled: false, plan: "free", servers: [...SHECAN_DNS.free], transport: "dns", updateUrl: "" };
   let updateUrl = "";
   if (row.enabled && row.encrypted_update_url) {
     try {
@@ -139,6 +143,7 @@ export async function getApiNetworkConfig(): Promise<ApiNetworkConfig> {
     enabled: Boolean(row.enabled),
     plan: row.plan,
     servers: [row.dns_primary, row.dns_secondary],
+    transport: row.transport || "dns",
     updateUrl,
     lastActivatedAt: row.last_activated_at || undefined,
   };
@@ -744,7 +749,9 @@ export async function activateUpdateUrl(
 }
 
 export async function ensureApiNetworkActivated(network: ApiNetworkConfig): Promise<void> {
-  if (!network.enabled || network.plan !== "pro" || !network.updateUrl) return;
+  // The genuine desktop performs its own account/update work inside the guest.
+  // Never invoke the stored link from the host in official-runtime mode.
+  if (network.transport === "official-vm" || !network.enabled || network.plan !== "pro" || !network.updateUrl) return;
   if (network.lastActivatedAt && Date.now() - Date.parse(network.lastActivatedAt) < ACTIVATION_INTERVAL_MS) return;
   const key = network.updateUrl;
   if (!globalStore.__nomrehShecanActivation || globalStore.__nomrehShecanActivation.key !== key) {
@@ -792,14 +799,14 @@ export async function saveAndTestApiNetwork(
     ? await encryptSecret(suppliedUpdateUrl, UPDATE_URL_PURPOSE)
     : previous?.encrypted_update_url || "";
   let updateUrl = "";
-  if (input.enabled && input.plan === "pro" && encryptedUpdateUrl) {
+  if (input.enabled && input.transport !== "official-vm" && input.plan === "pro" && encryptedUpdateUrl) {
     try {
       updateUrl = suppliedUpdateUrl || await decryptSecret(encryptedUpdateUrl, UPDATE_URL_PURPOSE);
     } catch (error) {
       throw new ApiNetworkError("لینک ذخیره‌شده باز نشد؛ لینک به‌روزرسان را دوباره وارد کنید.", 400, { cause: error });
     }
   }
-  const network: ProviderNetworkConfig = { enabled: false, plan: input.plan, servers: input.servers };
+  const network: ProviderNetworkConfig = { enabled: false, plan: input.plan, servers: input.servers, transport: input.transport || "dns" };
   let enabled = false;
   let testStatus: "idle" | "success" | "error" = "idle";
   let testMessage = "شکن خاموش است؛ درخواست‌های AI مستقیم به سرویس‌دهنده ارسال می‌شوند.";
@@ -810,11 +817,13 @@ export async function saveAndTestApiNetwork(
 
   if (input.enabled) {
     try {
-      if (updateUrl) activatedAt = await activateUpdateUrl(updateUrl, input.servers, options.activationSettleMs ?? 60_000, options.dns5353Resolver, options.dotResolver);
+      if (input.transport !== "official-vm" && updateUrl) activatedAt = await activateUpdateUrl(updateUrl, input.servers, options.activationSettleMs ?? 60_000, options.dns5353Resolver, options.dotResolver);
       latency = await testGoogleThroughShecan(network);
       enabled = true;
       testStatus = "success";
-      testMessage = "DNS شکن و دسترسی Google Gemini از سرور تأیید شد. این تست بدون API Key انجام شده است.";
+      testMessage = input.transport === "official-vm"
+        ? "دسترسی Google Gemini از محیط برنامهٔ رسمی شکن تأیید شد؛ تست بدون API Key انجام شده است."
+        : "DNS شکن و دسترسی Google Gemini از سرور تأیید شد. این تست بدون API Key انجام شده است.";
       testedAt = now;
     } catch (error) {
       failure = error;
@@ -824,12 +833,13 @@ export async function saveAndTestApiNetwork(
     }
   }
 
-  const values = [input.plan, input.servers[0], input.servers[1], enabled ? 1 : 0, encryptedUpdateUrl, testStatus, testMessage, testedAt || null, latency ?? null, activatedAt || null, now, userId];
+  const transport = input.transport || "dns";
+  const values = [input.plan, input.servers[0], input.servers[1], transport, enabled ? 1 : 0, encryptedUpdateUrl, testStatus, testMessage, testedAt || null, latency ?? null, activatedAt || null, now, userId];
   (await import("./db")).getDb().prepare(`INSERT INTO api_network_settings
-    (id, plan, dns_primary, dns_secondary, enabled, encrypted_update_url, last_test_status, last_test_message, last_tested_at, last_test_latency_ms, last_activated_at, updated_at, updated_by)
-    VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    (id, plan, dns_primary, dns_secondary, transport, enabled, encrypted_update_url, last_test_status, last_test_message, last_tested_at, last_test_latency_ms, last_activated_at, updated_at, updated_by)
+    VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET plan=excluded.plan, dns_primary=excluded.dns_primary, dns_secondary=excluded.dns_secondary,
-      enabled=excluded.enabled, encrypted_update_url=excluded.encrypted_update_url, last_test_status=excluded.last_test_status,
+      transport=excluded.transport, enabled=excluded.enabled, encrypted_update_url=excluded.encrypted_update_url, last_test_status=excluded.last_test_status,
       last_test_message=excluded.last_test_message, last_tested_at=excluded.last_tested_at,
       last_test_latency_ms=excluded.last_test_latency_ms, last_activated_at=excluded.last_activated_at,
       updated_at=excluded.updated_at, updated_by=excluded.updated_by`).run(...values);

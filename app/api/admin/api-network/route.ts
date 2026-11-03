@@ -11,6 +11,7 @@ const schema = z.object({
   enabled: z.boolean(),
   plan: z.enum(["free", "pro"]),
   servers: z.tuple([z.string().trim().min(7).max(15), z.string().trim().min(7).max(15)]),
+  transport: z.enum(["dns", "official-vm"]).optional(),
   updateUrl: z.string().trim().max(2000).optional(),
 });
 

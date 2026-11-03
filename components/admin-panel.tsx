@@ -3,7 +3,7 @@
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Activity, BrainCircuit, CheckCircle2, CircleUserRound, Clock3, Eye, EyeOff, KeyRound, LoaderCircle, LockKeyhole, RefreshCw, ShieldCheck, ToggleLeft, ToggleRight, TriangleAlert, UserPlus, UserRoundCog, UsersRound, X, Zap } from "lucide-react";
 import { ApiConnection } from "./api-connection";
-import { ApiNetworkConnection } from "./api-network-connection";
+import { OfficialShecanConsole } from "./official-shecan-console";
 import { useApp } from "@/lib/app-context";
 import type { AuthUser } from "@/lib/types";
 import { faDate, faNumber } from "@/lib/utils";
@@ -96,7 +96,7 @@ export function AdminPanel() {
       <button className="admin-refresh" onClick={() => void load()} aria-label="به‌روزرسانی"><RefreshCw size={16} /></button>
     </div>
 
-    {tab === "connection" && <section className="card settings-card admin-connection-card"><div className="settings-card-heading"><span className="settings-heading-icon teal"><KeyRound size={20} /></span><div><h3>پیکربندی سراسری مدل</h3><p>تنها مدیر می‌تواند این مقادیر را ببیند یا تغییر دهد.</p></div></div><div className="settings-card-body"><ApiConnection /><div className="admin-network-divider"><span className="settings-heading-icon violet"><Zap size={19} /></span><div><h3>مسیر اختصاصی API با شکن</h3><p>اتصال اشتراک، آزمایش واقعی و کلید خاموش/روشن؛ بدون تغییر DNS کل هاست.</p></div></div><ApiNetworkConnection /><div className="admin-security-note"><ShieldCheck size={18} /><div><strong>مرز امنیتی نقش‌ها</strong><p>معلم فقط وضعیت «متصل / غیرفعال» را می‌بیند. نام مدل برای اجرای لازم است، اما کلید، آزمایش اتصال و صفحهٔ مدیریت هرگز در دسترس او نیست.</p></div></div></div></section>}
+    {tab === "connection" && <section className="card settings-card admin-connection-card"><div className="settings-card-heading"><span className="settings-heading-icon teal"><KeyRound size={20} /></span><div><h3>پیکربندی سراسری مدل</h3><p>تنها مدیر می‌تواند این مقادیر را ببیند یا تغییر دهد.</p></div></div><div className="settings-card-body"><ApiConnection /><div className="admin-network-divider"><span className="settings-heading-icon violet"><Zap size={19} /></span><div><h3>برنامهٔ رسمی شکن و مسیر اختصاصی AI</h3><p>اجرای واقعی برنامه، ورود در رابط خود شکن و اتصال فقط Providerها؛ بدون تغییر DNS کل هاست.</p></div></div><OfficialShecanConsole /><div className="admin-security-note"><ShieldCheck size={18} /><div><strong>مرز امنیتی نقش‌ها</strong><p>معلم فقط وضعیت «متصل / غیرفعال» را می‌بیند. نام مدل برای اجرای لازم است، اما کلید، آزمایش اتصال و صفحهٔ مدیریت هرگز در دسترس او نیست.</p></div></div></div></section>}
 
     {tab === "users" && <section className="card admin-users-card">
       <div className="admin-section-heading"><div><h3>حساب‌های معلم و بازبین</h3><p>هر کاربر فقط به کلاس‌ها و آزمون‌های فضای کاری خودش دسترسی دارد.</p></div><button className="btn btn-primary" onClick={openCreateUser}><UserPlus size={16} /> ساخت حساب معلم</button></div>

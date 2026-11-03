@@ -55,6 +55,7 @@ export interface ApiNetworkPublicStatus {
   enabled: boolean;
   plan: "free" | "pro";
   servers: [string, string];
+  transport: "dns" | "official-vm";
   hasUpdateUrl: boolean;
   updateUrlSource: "manual" | "account" | "none";
   hasAccountKey: boolean;

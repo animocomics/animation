@@ -2,7 +2,7 @@ import { isIPv4 } from "node:net";
 import { Resolver } from "node:dns/promises";
 import type { LookupOptions } from "node:dns";
 import type { TcpSocketConnectOpts } from "node:net";
-import { Agent } from "undici";
+import { Agent, ProxyAgent } from "undici";
 import type { ProviderNetworkConfig } from "../api-network";
 import { resolveShecanDoh, type ShecanDohRecord } from "./shecan-doh";
 import { resolveShecanDot } from "./shecan-dot";
@@ -42,6 +42,7 @@ interface CachedNetwork {
 
 interface NetworkGlobal {
   __nomrehProviderNetwork?: CachedNetwork;
+  __nomrehOfficialProxyAgent?: ProxyAgent;
 }
 
 const globalStore = globalThis as typeof globalThis & NetworkGlobal;
@@ -161,11 +162,34 @@ export function isProviderHostname(hostname: string): boolean {
   return PROVIDER_HOSTNAMES.has(hostname.toLowerCase());
 }
 
+async function officialProviderAgent(): Promise<ProxyAgent> {
+  const { getOfficialRuntimeStatus, officialRuntimePorts } = await import("./shecan-runtime");
+  const runtime = getOfficialRuntimeStatus();
+  if (!runtime.running || !runtime.appReady || !runtime.brokerReady) {
+    throw new ProviderNetworkError("محیط رسمی شکن آماده نیست؛ درخواست AI از مسیر دیگری ارسال نمی‌شود.", "connection");
+  }
+  if (!globalStore.__nomrehOfficialProxyAgent) {
+    const { proxy } = officialRuntimePorts();
+    globalStore.__nomrehOfficialProxyAgent = new ProxyAgent({
+      uri: `http://127.0.0.1:${proxy}`,
+      connect: { timeout: 20_000 },
+      requestTls: { timeout: 20_000 },
+    });
+  }
+  return globalStore.__nomrehOfficialProxyAgent;
+}
+
 export function closeProviderNetwork(): void {
   const current = globalStore.__nomrehProviderNetwork;
-  if (!current) return;
-  delete globalStore.__nomrehProviderNetwork;
-  closeCachedNetwork(current);
+  if (current) {
+    delete globalStore.__nomrehProviderNetwork;
+    closeCachedNetwork(current);
+  }
+  const official = globalStore.__nomrehOfficialProxyAgent;
+  if (official) {
+    delete globalStore.__nomrehOfficialProxyAgent;
+    void official.close().catch(() => undefined);
+  }
 }
 
 /** Fetch only a provider API through Shecan. Other application traffic never receives this dispatcher. */
@@ -179,6 +203,17 @@ export async function providerFetch(
   if (!network?.enabled || !isProviderHostname(hostname)) {
     if (!network?.enabled && isProviderHostname(hostname)) closeProviderNetwork();
     return fetch(url, init);
+  }
+  if (network.transport === "official-vm") {
+    try {
+      const dispatcher = await officialProviderAgent();
+      // ProxyAgent preserves the provider hostname for CONNECT, SNI and TLS.
+      // There is deliberately no direct/DNS fallback from the official guest.
+      return await fetch(url, { ...init, dispatcher } as RequestInit);
+    } catch (error) {
+      if (error instanceof ProviderNetworkError) throw error;
+      throw new ProviderNetworkError("ارتباط سرویس‌دهنده از برنامهٔ رسمی شکن برقرار نشد؛ درخواست به‌صورت مستقیم ارسال نشد.", "connection", { cause: error });
+    }
   }
   const entry = getNetwork(network);
   let lastError: unknown;

@@ -179,6 +179,45 @@
 .identity-assign-row { margin-top:9px; display:flex; gap:6px; }.identity-assign-row .select { flex:1; min-height:35px; font-size:9px; background:white; }
 .api-run-body > .btn { margin-bottom:12px; }
 
+.official-shecan { display:grid; gap:15px; }
+.official-shecan-heading { display:flex; align-items:flex-start; gap:11px; }
+.official-shecan-heading > span:first-child { width:40px; height:40px; display:grid; place-items:center; flex-shrink:0; border-radius:12px; color:var(--brand); background:var(--mint); }
+.official-shecan-heading > div { flex:1; min-width:0; }
+.official-shecan-heading h3 { font-size:13px; }
+.official-shecan-heading p { margin-top:4px; color:var(--muted); font-size:10px; line-height:1.85; }
+.official-shecan-security { display:flex; align-items:flex-start; gap:9px; padding:11px 12px; border:1px solid #dce8df; border-radius:11px; background:#f6faf7; color:var(--brand-dark); }
+.official-shecan-security svg { flex-shrink:0; margin-top:2px; }
+.official-shecan-security p { color:var(--muted); font-size:9px; line-height:1.9; }
+.official-shecan-toolbar { display:flex; flex-wrap:wrap; gap:8px; }
+.official-shecan-screen { position:relative; overflow:hidden; border:1px solid #29332f; border-radius:14px; background:#111714; direction:ltr; }
+.official-shecan-screen-bar { height:38px; padding:0 10px 0 6px; display:flex; align-items:center; justify-content:space-between; color:#c9d4ce; background:#202a25; font-size:9px; }
+.official-shecan-screen-bar > span { display:flex; align-items:center; gap:7px; }
+.official-shecan-screen-bar .icon-button { color:#d7e1db; }
+.live-dot { width:7px; height:7px; display:inline-block; border-radius:50%; background:#89958e; }
+.live-dot.online { background:#55d68a; box-shadow:0 0 0 3px rgba(85,214,138,.12); }
+.official-shecan-vnc { min-height:560px; display:grid; place-items:center; background:#111714; }
+.official-shecan-vnc canvas { display:block; max-width:100%; max-height:78vh; outline:none; }
+.official-shecan-vnc:fullscreen { background:#111714; }
+.official-shecan-vnc:fullscreen canvas { max-height:100vh; }
+.official-shecan-screen-wait { position:absolute; inset:38px 0 0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; color:#a8b5ad; background:#111714; font-size:10px; pointer-events:none; }
+.official-shecan-screen.connected .official-shecan-screen-wait { display:none; }
+.official-shecan-not-installed { padding:20px; display:flex; align-items:flex-start; gap:10px; border:1px dashed var(--line); border-radius:12px; color:var(--amber); background:#fffaf6; }
+.official-shecan-not-installed strong { color:var(--ink-2); font-size:11px; }
+.official-shecan-not-installed p { margin-top:4px; color:var(--muted); font-size:9px; }
+.official-ai-route { display:flex; align-items:flex-start; gap:10px; padding:13px; border:1px solid var(--line); border-radius:12px; background:#fafbfa; }
+.official-ai-route.enabled { border-color:#cce3d5; background:#f3faf5; }
+.official-ai-route > span { color:var(--brand); }
+.official-ai-route > div { flex:1; min-width:0; }
+.official-ai-route strong { font-size:10px; }
+.official-ai-route p { margin-top:4px; color:var(--muted); font-size:9px; line-height:1.8; }
+.official-ai-route small { display:block; margin-top:4px; color:var(--muted-2); font-size:8px; }
+.official-ai-route > .btn { flex-shrink:0; }
+.official-shecan-link-fallback { border:1px solid var(--line); border-radius:11px; background:#fff; }
+.official-shecan-link-fallback > summary { padding:11px 12px; display:flex; align-items:center; gap:7px; cursor:pointer; color:var(--ink-2); font-size:10px; font-weight:600; }
+.official-shecan-link-fallback > div { padding:0 12px 13px; display:grid; gap:10px; }
+.official-shecan-link-fallback p { color:var(--muted); font-size:9px; line-height:1.85; }
+.official-shecan-link-fallback .btn { justify-self:start; }
+
 @media (max-width:1200px) {
   .admin-stat-grid { grid-template-columns:1fr 1fr; }
   .classes-layout { grid-template-columns:210px minmax(0,1fr); }

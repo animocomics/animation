@@ -52,6 +52,7 @@ function createDatabase(): DatabaseConnection {
       plan TEXT NOT NULL CHECK(plan IN ('free', 'pro')),
       dns_primary TEXT NOT NULL,
       dns_secondary TEXT NOT NULL,
+      transport TEXT NOT NULL DEFAULT 'dns' CHECK(transport IN ('dns', 'official-vm')),
       enabled INTEGER NOT NULL DEFAULT 0,
       encrypted_update_url TEXT NOT NULL DEFAULT '',
       update_url_source TEXT NOT NULL DEFAULT 'manual',
@@ -95,6 +96,7 @@ function createDatabase(): DatabaseConnection {
   const networkColumns = database.prepare("PRAGMA table_info(api_network_settings)").all() as Array<{ name: string }>;
   const networkColumnNames = new Set(networkColumns.map((column) => column.name));
   const networkMigrations: Array<[string, string]> = [
+    ["transport", "TEXT NOT NULL DEFAULT 'dns'"],
     ["update_url_source", "TEXT NOT NULL DEFAULT 'manual'"],
     ["encrypted_account_key", "TEXT NOT NULL DEFAULT ''"],
     ["account_login", "TEXT NOT NULL DEFAULT ''"],

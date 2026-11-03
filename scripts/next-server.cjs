@@ -1,5 +1,6 @@
 const { createServer } = require("node:http");
 const next = require("next");
+const { attachShecanVncWebSocket } = require("./shecan-vnc-websocket.cjs");
 
 process.env.NODE_ENV = "production";
 const port = Number(process.env.PORT) || 3000;
@@ -9,6 +10,7 @@ const handle = app.getRequestHandler();
 
 app.prepare().then(() => {
   const server = createServer((request, response) => handle(request, response));
+  attachShecanVncWebSocket(server, port);
   server.listen(port, hostname, () => {
     console.log(`Nomreh is ready on ${hostname}:${port} with ${process.version}`);
   });
