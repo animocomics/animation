@@ -604,7 +604,7 @@ async function main() {
     const pathname = new URL(response.url()).pathname;
     if (pathname === "/api/admin/shecan-runtime/vnc-http") {
       vncDiagnostics.httpExchanges += 1;
-      if (response.status() >= 400 || vncDiagnostics.httpExchanges === 1) recordVncDiagnostic(`VNC HTTP response ${response.status()}`);
+      if (response.status() >= 400 || vncDiagnostics.httpExchanges === 1) recordVncDiagnostic(`VNC HTTP response ${response.status()}; code=${response.headers()["x-nomreh-vnc-error"] || "none"}`);
     }
     if (response.request().resourceType() !== "script") return;
     if (response.status() >= 400) loginScriptFailures.push(`${pathname} (HTTP ${response.status()})`);
