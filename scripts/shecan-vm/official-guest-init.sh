@@ -37,6 +37,7 @@ if [ "$network_ready" -ne 1 ]; then
 fi
 ifconfig eth0 10.0.2.15 netmask 255.255.255.0 up
 route add default gw 10.0.2.2
+rm -f /etc/resolv.conf
 printf 'nameserver 10.0.2.3\n' > /etc/resolv.conf
 echo NOMREH_OFFICIAL_GUEST_NETWORK_CONFIGURED > /dev/console
 

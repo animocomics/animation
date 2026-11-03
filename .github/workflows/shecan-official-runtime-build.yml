@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/shecan-official-runtime-build.yml
       - scripts/shecan-vm/build-official-runtime.sh
+      - scripts/shecan-vm/build-debian-rootfs.sh
       - scripts/shecan-vm/official-guest-init.sh
       - scripts/shecan-vm/run-official.sh
       - scripts/shecan-vm/rootfs-initramfs.py

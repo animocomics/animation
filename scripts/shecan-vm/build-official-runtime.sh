@@ -18,7 +18,9 @@ WORK=$(mktemp -d)
 RUNNER_PID=''
 VNC_PID=''
 trap 'if [[ -n "$RUNNER_PID" ]]; then kill "$RUNNER_PID" 2>/dev/null || true; fi; if [[ -n "$VNC_PID" ]]; then kill "$VNC_PID" 2>/dev/null || true; fi; rm -rf "$WORK" 2>/dev/null || true' EXIT
-mkdir -p "$WORK/rootfs/usr/local/bin" "$WORK/rootfs/etc" "$WORK/full"
+mkdir -p "$WORK/rootfs" "$WORK/full"
+bash "$SOURCE_ROOT/scripts/shecan-vm/build-debian-rootfs.sh" "$WORK/rootfs"
+mkdir -p "$WORK/rootfs/usr/local/bin" "$WORK/rootfs/etc"
 
 if ! bash "$SOURCE_ROOT/scripts/shecan-vm/build-probe.sh" "$SOURCE_ROOT" "$WORK/base.zip" > "$WORK/base-build.log" 2>&1; then
   cat "$WORK/base-build.log" >&2
@@ -65,23 +67,15 @@ zstd -q -d "$WORK/xvnc.zst" -o "$WORK/rootfs/usr/local/bin/Xvnc"
 chmod 0755 "$WORK/rootfs/usr/local/bin/Xvnc"
 install -m 0644 "$SOURCE_ROOT/scripts/shecan-vm/tinyproxy-nomreh.conf" "$WORK/rootfs/etc/tinyproxy-nomreh.conf"
 
-docker run --rm --platform linux/amd64 \
-  -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
-  -v "$WORK/rootfs:/out" \
-  alpine:3.24.2 \
-  sh -euo pipefail -c '
-    apk add --no-cache --root /out --initdb \
-      --repository https://dl-cdn.alpinelinux.org/alpine/v3.24/main \
-      --repository https://dl-cdn.alpinelinux.org/alpine/v3.24/community \
-      --keys-dir /etc/apk/keys \
-      alpine-baselayout busybox musl gcompat libc6-compat ca-certificates openresolv \
-      webkit2gtk-4.1 gtk+3.0 dbus tinyproxy font-noto-arabic >/dev/null
-    test -f /out/etc/passwd
-    grep -E '^root:[^:]*:0:0:' /out/etc/passwd >/dev/null
-    rm -rf /out/var/cache/apk/* /out/usr/share/man
-    chown -R "$HOST_UID:$HOST_GID" /out
-    chmod -R a+rX /out
-    chmod 0755 /out/usr/local/bin/shecan-* /out/usr/local/bin/Xvnc
+test -f "$WORK/rootfs/etc/passwd"
+grep -E '^root:[^:]*:0:0:' "$WORK/rootfs/etc/passwd" >/dev/null
+chmod 0755 "$WORK/rootfs/usr/local/bin"/shecan-* "$WORK/rootfs/usr/local/bin/Xvnc"
+docker run --rm --platform linux/amd64 -v "$WORK/rootfs:/out" debian:12-slim \
+  chroot /out /bin/bash -euo pipefail -c '
+    ldd /usr/local/bin/shecan-desktop
+    if ldd /usr/local/bin/shecan-desktop | grep -q "not found"; then exit 1; fi
+    test -x /usr/bin/dbus-run-session
+    test -x /usr/sbin/tinyproxy
   '
 
 du -sh "$WORK/full/nomreh-vm/official/qemu" "$WORK/full/nomreh-vm/official/glibc" "$WORK/rootfs"
@@ -120,7 +114,7 @@ links, or Nomreh API keys. No host service or host DNS configuration is used.
 - Xvnc: $XVNC_URL
 - Xvnc SHA-256: $XVNC_SHA256
 - QEMU/glibc/kernel: inherited from the validated harmless probe builder.
-- Alpine rootfs packages: Alpine v3.24 main/community, installed by APK.
+- Debian 12 (bookworm) glibc userland with distribution WebKitGTK, DBus and Tinyproxy.
 EOF
 
 NOMREH_VM_PROBE=1 NOMREH_VNC_PORT=15900 NOMREH_PROXY_PORT=18888 \
