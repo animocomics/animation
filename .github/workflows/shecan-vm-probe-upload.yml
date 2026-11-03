@@ -45,7 +45,7 @@ jobs:
         run: |
           set -euo pipefail
           archive="$RUNNER_TEMP/nomreh-deploy-shecan-vm-probe-v1.zip"
-          bash scripts/shecan-vm/build-probe.sh "$GITHUB_WORKSPACE" "$archive"
+          bash scripts/shecan-vm/build-probe.sh "$GITHUB_WORKSPACE" "$archive" 2>&1 | tee "$RUNNER_TEMP/shecan-vm-probe-build.log"
           sha256sum "$archive" > "$RUNNER_TEMP/shecan-vm-probe.sha256"
 
       - name: Prepare an isolated temporary browser
@@ -90,6 +90,9 @@ jobs:
               summary="$(cat "$RUNNER_TEMP/nomreh-plesk-vm-probe-upload.md")"
             elif [ "$BUILD_OUTCOME" != success ]; then
               summary='The harmless VM did not build or pass its local boot test. Nothing was uploaded and Plesk was not contacted.'
+              if [ -f "$RUNNER_TEMP/shecan-vm-probe-build.log" ]; then
+                summary="${summary}"$'\n\n```text\n'"$(tail -c 45000 "$RUNNER_TEMP/shecan-vm-probe-build.log")"$'\n```'
+              fi
             else
               summary='The local VM passed, but the controlled upload did not produce a report. No extraction or execution on Plesk was attempted.'
             fi

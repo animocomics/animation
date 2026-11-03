@@ -80,13 +80,17 @@ function labelValues(text, labels) {
 }
 
 async function main() {
-  if (!["diagnose", "upload", "extract", "build", "status", "disk", "os-info", "account-network", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
+  if (!["diagnose", "upload", "extract", "runtime-extract", "vm-probe", "build", "status", "disk", "os-info", "account-network", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
   const panel = normalizePanelUrl(process.env.PLESK_PANEL_URL || "");
   const readOnly = ACTION === "diagnose" || ACTION === "status" || ACTION === "account-network";
   const actionDescription = ACTION === "upload"
     ? "Controlled action: upload one validated application archive to Nomreh only. No extraction, build, restart, or settings change is attempted."
     : ACTION === "extract"
       ? "Controlled action: extract the validated archive inside the Nomreh application root only. Persistent data, uploads, environment files, build, restart, and settings changes are not touched."
+      : ACTION === "runtime-extract"
+        ? "Controlled action: extract only the validated nomreh-vm/probe runtime archive. No application source, persistent data, upload, environment file, build, restart, DNS, or other domain is touched."
+        : ACTION === "vm-probe"
+          ? "Controlled action: boot one diskless, networkless, credential-free VM for at most 120 seconds and require its explicit PASS marker. No Shecan binary, DNS, host network, application setting, build, or restart is involved."
       : ACTION === "disk"
         ? "Controlled read-only action: run Nomreh's disk report only. No build, deletion, restart, or settings change is attempted."
         : ACTION === "os-info"
@@ -447,7 +451,7 @@ async function main() {
         if (statusResult.error) lines.push(`- Status read error: ${sanitize(statusResult.error)}`);
         lines.push("- Read-only status request; no command, restart, or setting change was attempted.", "");
       }
-      if (["diagnose", "build", "status", "disk", "os-info", "account-network"].includes(ACTION) && nomrehConsoleLink && await nomrehConsoleLink.count()) {
+      if (["diagnose", "build", "status", "disk", "os-info", "account-network", "vm-probe"].includes(ACTION) && nomrehConsoleLink && await nomrehConsoleLink.count()) {
         const consoleResponsePromise = page.waitForResponse((item) => item.url().includes("/modules/nodejs/index.php/domain/console") && item.request().isNavigationRequest(), { timeout: 15000 }).catch(() => null);
         await nomrehConsoleLink.click({ timeout: 8000 }).catch(() => undefined);
         const consoleResponse = await consoleResponsePromise;
@@ -540,6 +544,35 @@ async function main() {
           if (!probeLines.some((line) => line.startsWith("SHECAN_ACCOUNT_NETWORK_COMPLETE"))) throw new Error("The credential-free Shecan account network probe did not complete within 100 seconds. No network or file setting was changed.");
           for (const line of probeLines.slice(0, 32)) lines.push(`- Account network: ${sanitize(line.slice(0, 350))}`);
           lines.push("- Account network and native-app capability probe completed; no DNS, file, application process, build, restart, OTP, login, persistent namespace, or settings change was attempted.", "");
+          actionCompleted = true;
+        }
+        if (ACTION === "vm-probe") {
+          if (!consoleBody.includes(`Node.js on ${DOMAIN}`) || !consoleBody.includes("/nomreh.arounidea.com")) {
+            throw new Error("The Node command console is not scoped to Nomreh. The harmless VM probe was not started.");
+          }
+          const commandInput = page.getByPlaceholder(/Pick a script or command/i).first();
+          const executeButton = page.locator("button[title='Execute command'], button[aria-label='Execute command']").first();
+          const outputElement = page.locator("pre.pul-console-output").first();
+          if (!await commandInput.count() || !await executeButton.count() || !await outputElement.count()) throw new Error("The Nomreh command controls were not found. The harmless VM probe was not started.");
+          const command = "exec -- sh nomreh-vm/probe/run-probe.sh";
+          lines.push("## Controlled harmless VM boot", "", "- The archive contains no Shecan executable, account, update link, credential, or AI key. QEMU runs with one CPU, 128 MiB RAM, no disk, and no NIC. The guest prints an explicit PASS and powers off; the host wrapper terminates it after at most 120 seconds. No DNS, host network, application source, build, restart, or setting is changed.", "");
+          await commandInput.fill(command);
+          if (await commandInput.inputValue() !== command) throw new Error("Plesk did not retain the exact harmless VM command. Nothing was executed.");
+          await executeButton.click({ timeout: 8000 });
+          const startedAt = Date.now();
+          let probeLines = [];
+          while (Date.now() - startedAt < 145_000) {
+            await page.waitForTimeout(1000);
+            const consoleOutput = await outputElement.innerText().catch(() => "");
+            const failure = consoleOutput.split(/\r?\n/).find((line) => /NOMREH_VM_PROBE_ERROR|npm ERR!|Command failed|exited with status [1-9]|No such file|Permission denied|undefined symbol|version `GLIBC_|could not|unable to/i.test(line));
+            if (failure) throw new Error(`The harmless Plesk VM probe could not run: ${sanitize(failure.slice(0, 300))}`);
+            probeLines = [...new Set(consoleOutput.split(/\r?\n/).map((line) => line.trim()).filter((line) => /^NOMREH_VM_PROBE_(?:BEGIN|KERNEL|ARCH|NO_NETWORK|SHECAN_INCLUDED|PASS)/.test(line)))];
+            if (probeLines.some((line) => line === "NOMREH_VM_PROBE_PASS")) break;
+          }
+          if (!probeLines.some((line) => line === "NOMREH_VM_PROBE_PASS")) throw new Error("The harmless Plesk VM did not print PASS within the bounded interval. No app execution or connectivity success is claimed.");
+          if (!probeLines.includes("NOMREH_VM_PROBE_NO_NETWORK yes") || !probeLines.includes("NOMREH_VM_PROBE_SHECAN_INCLUDED no")) throw new Error("The harmless VM safety markers were incomplete. No app execution or connectivity success is claimed.");
+          for (const line of probeLines.slice(0, 20)) lines.push(`- Harmless VM: ${sanitize(line.slice(0, 250))}`);
+          lines.push("- The real QEMU/kernel/glibc bundle booted on Plesk and the guest reported PASS. This proves only the networkless compatibility probe, not Shecan execution, remote display, login, activation, connectivity, or AI routing.", "");
           actionCompleted = true;
         }
         if (ACTION === "disk") {
@@ -677,7 +710,7 @@ async function main() {
           actionCompleted = true;
         }
       }
-      if (nomrehFilesPath && !["enable-runtime", "restart-runtime"].includes(ACTION)) {
+      if (nomrehFilesPath && !["enable-runtime", "restart-runtime", "vm-probe"].includes(ACTION)) {
         let filePath = nomrehFilesPath;
         for (let depth = 0; depth < 2; depth += 1) {
           let response = null;
@@ -1344,7 +1377,7 @@ async function main() {
             if (ACTION === "upload" && archivePresent) {
               throw new Error(`${ARCHIVE_NAME} already exists in the Nomreh application directory. Upload stopped without overwriting it.`);
             }
-            if (ACTION === "extract" && !archivePresent) {
+            if ((ACTION === "extract" || ACTION === "runtime-extract") && !archivePresent) {
               throw new Error(`${ARCHIVE_NAME} is not present in the Nomreh application directory. Extraction was not started.`);
             }
             const fileDetails = fileBody.split(/\r?\n/).map((line) => line.trim()).filter((line) => /package\.json|server\.js|next\.config|sqlite\.ts|plesk-node22|\.next\b|\.node-version/i.test(line) && !/secret|token|password|credential/i.test(line)).slice(0, 20);
@@ -1365,8 +1398,8 @@ async function main() {
             })).filter((item) => item.text || item.title).slice(0, 40));
             for (const control of toolbarButtons) lines.push(`- Toolbar button: ${sanitize(JSON.stringify(control))}`);
             if (toolbarButtons.length) lines.push("");
-            if (ACTION === "extract" && archivePresent) {
-              lines.push("## Controlled Nomreh archive extraction", "");
+            if ((ACTION === "extract" || ACTION === "runtime-extract") && archivePresent) {
+              lines.push(ACTION === "runtime-extract" ? "## Controlled isolated VM archive extraction" : "## Controlled Nomreh archive extraction", "");
               const archiveName = page.getByText(ARCHIVE_NAME, { exact: true }).first();
               const archiveRow = archiveName.locator("xpath=ancestor::*[.//input[@type='checkbox']][1]");
               const archiveCheckbox = archiveRow.locator("input[type='checkbox']").first();
@@ -1420,6 +1453,7 @@ async function main() {
                 await page.waitForTimeout(2000);
               }
               const verifiedBody = await page.locator("body").innerText().catch(() => "");
+              if (ACTION === "extract") {
               const serverLine = verifiedBody.split(/\r?\n/).map((line) => line.trim()).find((line) => /^server\.js\s/i.test(line));
               const packageLine = verifiedBody.split(/\r?\n/).map((line) => line.trim()).find((line) => /^package\.json\s/i.test(line));
               if (serverLine) lines.push(`- Extracted server.js: ${sanitize(serverLine)}`);
@@ -1479,6 +1513,37 @@ async function main() {
                 lines.push(`- Verified hosted runtime file: ${expected.file}; SHA-256 ${actualHash}`);
               }
               lines.push("- Extraction verified: the validated server.js is present in the Nomreh application root. No build or restart was attempted.", "");
+              }
+              if (ACTION === "runtime-extract") {
+                const isolatedEntries = await page.locator("a:visible").evaluateAll((anchors) => anchors.map((anchor) => (anchor.textContent || "").trim()));
+                if (!isolatedEntries.includes("nomreh-vm")) throw new Error("The isolated nomreh-vm directory was not visible after extraction. No VM was started.");
+                const vmEntry = page.locator("a:visible").filter({ hasText: /^nomreh-vm$/ }).last();
+                await vmEntry.click({ timeout: 8000 });
+                await page.waitForTimeout(1800);
+                const probeEntry = page.locator("a:visible").filter({ hasText: /^probe$/ }).last();
+                if (!await probeEntry.count()) throw new Error("The isolated nomreh-vm/probe directory was not visible after extraction. No VM was started.");
+                await probeEntry.click({ timeout: 8000 });
+                await page.waitForTimeout(1800);
+                const runnerEntry = page.getByText("run-probe.sh", { exact: true }).first();
+                if (!await runnerEntry.count()) throw new Error("The isolated run-probe.sh was not visible after extraction. No VM was started.");
+                const runnerRow = runnerEntry.locator("xpath=ancestor::*[.//input[@type='checkbox']][1]");
+                const runnerActions = runnerRow.locator("button[title='Actions'], button[aria-label='Actions']").first();
+                if (!await runnerActions.count()) throw new Error("The isolated probe Actions menu was not available for hash verification.");
+                await runnerActions.click({ timeout: 5000 });
+                await page.waitForTimeout(400);
+                const downloadChoice = page.locator("a:visible, button:visible").filter({ hasText: /^Download$/i }).first();
+                if (!await downloadChoice.count()) throw new Error("Download was not available for isolated probe hash verification.");
+                const downloadPromise = page.waitForEvent("download", { timeout: 10000 }).catch(() => null);
+                await downloadChoice.click({ timeout: 8000 });
+                const downloaded = await downloadPromise;
+                if (!downloaded) throw new Error("The isolated probe could not be downloaded for hash verification.");
+                const downloadedPath = await downloaded.path();
+                if (!downloadedPath) throw new Error("The isolated probe download was not materialized for hash verification.");
+                const actualHash = crypto.createHash("sha256").update(fs.readFileSync(downloadedPath)).digest("hex");
+                const expectedHash = crypto.createHash("sha256").update(fs.readFileSync("scripts/shecan-vm/run-probe.sh")).digest("hex");
+                if (actualHash !== expectedHash) throw new Error("The hosted isolated probe SHA-256 does not match the validated source. No VM was started.");
+                lines.push(`- Verified isolated runtime: nomreh-vm/probe/run-probe.sh; SHA-256 ${actualHash}`, "- Extraction stayed inside nomreh-vm/probe. No application source, persistent data, build, restart, DNS, or VM execution was attempted.", "");
+              }
               actionCompleted = true;
             }
             if (ACTION === "diagnose" && archivePresent) {
@@ -1654,11 +1719,15 @@ async function main() {
         lines.push("## Read-only Nomreh domain logs", "", "- Nomreh's scoped Logs tool was not exposed on the domain card; no alternate domain or log path was accessed.", "");
       }
     }
-    if (["upload", "extract", "build", "status", "disk", "os-info", "account-network", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Review the reported host state before further action; no live-success claim was made.`);
+    if (["upload", "extract", "runtime-extract", "vm-probe", "build", "status", "disk", "os-info", "account-network", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Review the reported host state before further action; no live-success claim was made.`);
     lines.push("## Result", "", ACTION === "upload"
       ? "The validated application archive was uploaded to Nomreh. Extraction, dependency installation, build, and Node.js enablement remain pending."
       : ACTION === "extract"
         ? "The validated application source was extracted and verified in the Nomreh application root. Dependency installation, build, and Node.js enablement remain pending."
+        : ACTION === "runtime-extract"
+          ? "The harmless isolated VM archive was extracted and its runner hash was verified inside nomreh-vm/probe. No application source or setting was changed and the VM remains unexecuted."
+          : ACTION === "vm-probe"
+            ? "The real networkless QEMU bundle printed PASS on Plesk. This does not yet prove Shecan execution, remote display, login, activation, connectivity, or AI-only routing."
         : ACTION === "build"
           ? "The validated Nomreh production build and runtime smoke tests succeeded. Node.js enablement and live validation remain pending."
           : ACTION === "status"
