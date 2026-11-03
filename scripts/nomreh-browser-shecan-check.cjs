@@ -6,6 +6,7 @@ const { chromium } = require("playwright");
 const ORIGIN = "https://nomreh.arounidea.com";
 const OUTPUT = process.env.NOMREH_BROWSER_SHECAN_OUTPUT || "";
 const UPDATE_URL = process.env.SHECAN_UPDATE_URL || "";
+const READ_ONLY = process.env.NOMREH_BROWSER_READ_ONLY === "1";
 // Repeat the real form check after the scoped IPv4 activation update.
 const lines = [
   "# Nomreh real-browser Shecan and provider check",
@@ -25,7 +26,7 @@ function clean(value) {
     .replace(/(?:nomreh_session|next-auth\.session-token)=[^\s;]+/gi, "[session]")
     .replace(/\s+/g, " ")
     .trim()
-    .slice(0, 300);
+    .slice(0, 1200);
 }
 
 function report() {
@@ -103,6 +104,12 @@ async function run() {
   } catch { /* The server performs the authoritative validation; never print the secret. */ }
   lines.push(`- Supplied SHECAN endpoint host only (path and token withheld): ${clean(suppliedHost)}.`);
   const beforeUsage = await usage(page);
+  if (READ_ONLY) {
+    lines.push("- Read-only stored-result inspection: no activation, provider test, or configuration mutation was requested.");
+    lines.push(`- Nomreh-recorded AI usage: jobs ${beforeUsage.jobs}; input tokens ${beforeUsage.input}; output tokens ${beforeUsage.output}; failed ${beforeUsage.failures}.`);
+    lines.push("", "Read-only inspection completed. No exam, grade, teacher data, provider setting, or Shecan setting was changed.");
+    return;
+  }
 
   const current = payloadOf(before)?.status;
   if (current?.plan !== "pro") {

@@ -5,3 +5,5 @@ build=41568626461
 disk=41568923069
 restart=41569096560
 methods=dns53,doh,dot,dns5353,direct-curl,ddns,shecan-ip
+mode=read-only
+previous-diagnostic=41569205561

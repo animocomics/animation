@@ -35,8 +35,17 @@ jobs:
           npm ci --ignore-scripts --no-audit --no-fund --package-lock=false
           npm install --no-save --package-lock=false --ignore-scripts --no-audit --no-fund playwright
           npx playwright install --with-deps chromium
-      - name: Run the real Shecan activation and provider test
+      - name: Select activation or read-only stored-result inspection
+        id: mode
+        run: |
+          if grep -Fxq 'mode=read-only' deploy/shecan-check.trigger; then
+            echo 'read_only=1' >> "$GITHUB_OUTPUT"
+          else
+            echo 'read_only=0' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Run controlled real-browser Shecan/provider inspection
         env:
+          NOMREH_BROWSER_READ_ONLY: ${{ steps.mode.outputs.read_only }}
           NOMREH_ADMIN_USERNAME: ${{ secrets.NOMREH_ADMIN_USERNAME }}
           NOMREH_ADMIN_PASSWORD: ${{ secrets.NOMREH_ADMIN_PASSWORD }}
           SHECAN_UPDATE_URL: ${{ secrets.SHECAN }}
