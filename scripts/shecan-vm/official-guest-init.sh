@@ -74,6 +74,7 @@ export NO_AT_BRIDGE=1
 export LIBGL_ALWAYS_SOFTWARE=1
 export WEBKIT_DISABLE_DMABUF_RENDERER=1
 export WEBKIT_DISABLE_COMPOSITING_MODE=1
+export GOTRACEBACK=single
 
 if grep -q 'nomreh_proxy=1' /proc/cmdline; then
   tinyproxy -d -c /etc/tinyproxy-nomreh.conf > /var/log/tinyproxy-nomreh.log 2>&1 &
@@ -105,7 +106,7 @@ sleep 15
 if ! kill -0 "$APP_PID" 2>/dev/null; then
   echo NOMREH_OFFICIAL_APP_ERROR PROCESS_EXITED > /dev/console
   if grep -q 'nomreh_probe=1' /proc/cmdline; then
-    tail -40 /var/log/shecan-desktop.log > /dev/console 2>&1 || true
+    head -120 /var/log/shecan-desktop.log > /dev/console 2>&1 || true
   fi
   poweroff -f
   while true; do sleep 60; done
