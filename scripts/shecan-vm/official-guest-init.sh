@@ -96,14 +96,42 @@ if grep -q 'nomreh_vnc_reverse=15500' /proc/cmdline; then
       # connection directly. rfbport=0 prevents any additional listener.
       x11vnc -display :0 -rfbport 0 -nopw -shared \
         -no6 -noipv6 -noxdamage -connect_or_exit 10.0.2.2:15500 \
-        >> /var/log/vnc-reverse.log 2>&1
-      reverse_status=$?
+        >> /var/log/vnc-reverse.log 2>&1 &
+      reverse_client_pid=$!
+      reverse_tcp=0
+      reverse_wait=0
+      # Bound only a connection that never reaches TCP. Once established, wait
+      # without a session timeout so an admin can keep the real desktop open.
+      while [ "$reverse_wait" -lt 25 ] && kill -0 "$reverse_client_pid" 2>/dev/null; do
+        if awk '$3 ~ /:3C8C$/ && $4 == "01" { found=1 } END { exit found ? 0 : 1 }' /proc/net/tcp; then
+          reverse_tcp=1
+          echo NOMREH_OFFICIAL_VNC_REVERSE_TCP_ESTABLISHED > /dev/console
+          break
+        fi
+        sleep 1
+        reverse_wait=$((reverse_wait + 1))
+      done
+      if [ "$reverse_tcp" -eq 1 ]; then
+        wait "$reverse_client_pid"
+        reverse_status=$?
+      elif kill -0 "$reverse_client_pid" 2>/dev/null; then
+        kill "$reverse_client_pid" 2>/dev/null || true
+        sleep 1
+        kill -KILL "$reverse_client_pid" 2>/dev/null || true
+        wait "$reverse_client_pid" 2>/dev/null || true
+        reverse_status=124
+      else
+        wait "$reverse_client_pid"
+        reverse_status=$?
+      fi
       reverse_reason=UNKNOWN
+      if [ "$reverse_status" -eq 124 ]; then reverse_reason=TIMEOUT; fi
       if grep -qi 'connection refused' /var/log/vnc-reverse.log; then reverse_reason=REFUSED; fi
       if grep -qi 'timed out\|timeout' /var/log/vnc-reverse.log; then reverse_reason=TIMEOUT; fi
       if grep -qi 'not found\|no such file' /var/log/vnc-reverse.log; then reverse_reason=NOT_FOUND; fi
       if grep -qi 'permission denied' /var/log/vnc-reverse.log; then reverse_reason=PERMISSION; fi
       if grep -qi 'could not\|unable\|failed\|error' /var/log/vnc-reverse.log && [ "$reverse_reason" = UNKNOWN ]; then reverse_reason=ERROR; fi
+      if [ "$reverse_status" -eq 124 ]; then echo NOMREH_OFFICIAL_VNC_REVERSE_TCP_NOT_ESTABLISHED > /dev/console; fi
       if [ "$reverse_attempt" -le 3 ] || [ $((reverse_attempt % 15)) -eq 0 ]; then
         echo "NOMREH_OFFICIAL_VNC_REVERSE_EXIT_${reverse_status}_${reverse_reason}" > /dev/console
       fi
@@ -112,18 +140,6 @@ if grep -q 'nomreh_vnc_reverse=15500' /proc/cmdline; then
     echo NOMREH_OFFICIAL_VNC_REVERSE_LOOP_EXIT > /dev/console
   ) &
   REVERSE_PID=$!
-  (
-    reverse_tcp=0
-    for attempt in $(seq 1 90); do
-      if awk '$3 ~ /:3C8C$/ && $4 == "01" { found=1 } END { exit found ? 0 : 1 }' /proc/net/tcp; then
-        reverse_tcp=1
-        echo NOMREH_OFFICIAL_VNC_REVERSE_TCP_ESTABLISHED > /dev/console
-        break
-      fi
-      sleep 1
-    done
-    if [ "$reverse_tcp" -ne 1 ]; then echo NOMREH_OFFICIAL_VNC_REVERSE_TCP_NOT_ESTABLISHED > /dev/console; fi
-  ) &
 fi
 
 if grep -q 'nomreh_proxy=1' /proc/cmdline; then
