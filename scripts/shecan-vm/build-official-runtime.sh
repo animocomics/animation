@@ -46,6 +46,8 @@ mkdir -p "$WORK/rpm-extracted" "$WORK/linux-root"
 cpio_file=$(find "$WORK/rpm-extracted" -type f -name '*.cpio' | head -n 1)
 test -n "$cpio_file"
 7z x -y -o"$WORK/linux-root" "$cpio_file" > "$WORK/rpm-cpio-extract.log"
+find "$WORK/linux-root" -type f -name '*.desktop' -exec sh -c \
+  'for file; do echo "OFFICIAL_DESKTOP_ENTRY $file"; grep -E "^(Name|Exec|Icon|Terminal|Type)=" "$file" || true; done' sh {} +
 for binary in shecan-desktop shecan-nextdns shecan-game shecan-updater; do
   test -x "$WORK/linux-root/usr/local/bin/$binary"
   install -m 0755 "$WORK/linux-root/usr/local/bin/$binary" "$WORK/rootfs/usr/local/bin/$binary"
@@ -141,11 +143,14 @@ fi
 # Do not open early host-forward connections before Xvnc and the official app
 # exist. Each framebuffer attempt now starts against the real running guest.
 set +e
-VNC_SMOKE_ATTEMPTS=180 node "$SOURCE_ROOT/scripts/shecan-vm/vnc-smoke.cjs" 15900 "$WORK/official-framebuffer.ppm" > "$WORK/vnc-smoke.log" 2>&1 &
+echo NOMREH_VNC_SMOKE_LAUNCHING
+VNC_SMOKE_TRACE=1 VNC_READ_TIMEOUT_MS=5000 VNC_SMOKE_ATTEMPTS=60 \
+  node "$SOURCE_ROOT/scripts/shecan-vm/vnc-smoke.cjs" 15900 "$WORK/official-framebuffer.ppm" > "$WORK/vnc-smoke.log" 2>&1 &
 VNC_PID=$!
 set -e
+echo "NOMREH_VNC_SMOKE_STARTED pid=$VNC_PID"
 vnc_status=1
-for ((attempt = 0; attempt < 300; attempt++)); do
+for ((attempt = 0; attempt < 180; attempt++)); do
   if ! kill -0 "$VNC_PID" 2>/dev/null; then
     set +e
     wait "$VNC_PID"

@@ -12,8 +12,10 @@ const outputPath = process.argv[3] || "";
 const attempts = Number(process.env.VNC_SMOKE_ATTEMPTS || 60);
 if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error("Invalid VNC port");
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const readTimeout = Number(process.env.VNC_READ_TIMEOUT_MS || 15000);
+const trace = (message) => { if (process.env.VNC_SMOKE_TRACE === "1") console.log(`NOMREH_VNC_TRACE ${message}`); };
 
-function waitForReadable(socket, timeout = 15000) {
+function waitForReadable(socket, timeout = readTimeout) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => finish(new Error("VNC read timeout")), timeout);
     const finish = (error) => {
@@ -65,8 +67,10 @@ async function connect() {
 
 async function capture() {
   const socket = await connect();
+  trace("connected");
   try {
     const version = await readExactly(socket, 12);
+    trace(`version=${version.toString("ascii").trim()}`);
     if (!/^RFB 003\.\d{3}\n$/.test(version.toString("ascii"))) throw new Error("Not an RFB 3.x server");
     socket.write(Buffer.from("RFB 003.008\n", "ascii"));
     const count = (await readExactly(socket, 1))[0];
@@ -75,10 +79,12 @@ async function capture() {
     if (!securityTypes.includes(1)) throw new Error("VNC None security is unavailable");
     socket.write(Buffer.from([1]));
     const result = await readExactly(socket, 4);
+    trace("security-complete");
     if (result.readUInt32BE(0) !== 0) throw new Error("VNC security negotiation failed");
     socket.write(Buffer.from([1])); // shared ClientInit
 
     const initial = await readExactly(socket, 24);
+    trace("server-init-received");
     const width = initial.readUInt16BE(0);
     const height = initial.readUInt16BE(2);
     const bits = initial[4];
@@ -106,6 +112,7 @@ async function capture() {
     request.writeUInt16BE(width, 6);
     request.writeUInt16BE(height, 8);
     socket.write(request);
+    trace(`update-requested width=${width} height=${height}`);
 
     let rectangles = 0;
     let updateHeader;
@@ -169,8 +176,10 @@ async function capture() {
 }
 
 (async () => {
+  trace(`client-begin port=${port} attempts=${attempts} read_timeout_ms=${readTimeout}`);
   let lastError;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    if (attempt === 1 || attempt % 5 === 0) console.log(`NOMREH_VNC_ATTEMPT_BEGIN ${attempt}`);
     try {
       const result = await capture();
       if (result.colors < 16 || result.maximum - result.minimum < 24) {

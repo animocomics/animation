@@ -80,16 +80,6 @@ export WEBKIT_DISABLE_DMABUF_RENDERER=1
 export WEBKIT_DISABLE_COMPOSITING_MODE=1
 export GOTRACEBACK=single
 
-twm > /var/log/twm.log 2>&1 &
-WM_PID=$!
-sleep 1
-if ! kill -0 "$WM_PID" 2>/dev/null; then
-  echo NOMREH_OFFICIAL_GUEST_ERROR WINDOW_MANAGER > /dev/console
-  head -40 /var/log/twm.log > /dev/console 2>&1 || true
-  poweroff -f
-  while true; do sleep 60; done
-fi
-
 if grep -q 'nomreh_proxy=1' /proc/cmdline; then
   tinyproxy -d -c /etc/tinyproxy-nomreh.conf > /var/log/tinyproxy-nomreh.log 2>&1 &
   TINYPROXY_PID=$!
@@ -126,21 +116,21 @@ if ! kill -0 "$APP_PID" 2>/dev/null; then
   while true; do sleep 60; done
 fi
 echo NOMREH_OFFICIAL_APP_PROCESS_ALIVE > /dev/console
-xwininfo -root -tree > /var/log/xwininfo.log 2>&1 || true
+timeout 5s xwininfo -root -tree > /var/log/xwininfo.log 2>&1 || true
+echo NOMREH_OFFICIAL_X11_INSPECTED > /dev/console
 
 if grep -q 'nomreh_probe=1' /proc/cmdline; then
   echo NOMREH_OFFICIAL_APP_BOOT_PASS > /dev/console
   # Leave enough time for software rendering under TCG and retain only the
   # credential-free initial-process logs if the framebuffer gate needs them.
   sleep 120
-  xwininfo -root -tree > /var/log/xwininfo.log 2>&1 || true
+  timeout 5s xwininfo -root -tree > /var/log/xwininfo.log 2>&1 || true
   echo NOMREH_OFFICIAL_PROBE_LOG_BEGIN > /dev/console
   head -100 /var/log/xwininfo.log > /dev/console 2>&1 || true
   head -120 /var/log/shecan-desktop.log > /dev/console 2>&1 || true
   head -60 /var/log/xvnc.log > /dev/console 2>&1 || true
   echo NOMREH_OFFICIAL_PROBE_LOG_END > /dev/console
   kill "$APP_PID" 2>/dev/null || true
-  kill "$WM_PID" 2>/dev/null || true
   kill "$XVNC_PID" 2>/dev/null || true
   if [ -n "$DBUS_SYSTEM_BUS_PID" ]; then kill "$DBUS_SYSTEM_BUS_PID" 2>/dev/null || true; fi
   sync
