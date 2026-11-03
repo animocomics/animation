@@ -1,0 +1,74 @@
+name: Diagnose official Shecan desktop with glibc offline
+
+on:
+  push:
+    branches: [arena/ccbdcb6e-animation]
+    paths:
+      - .github/workflows/shecan-official-glibc-probe.yml
+      - scripts/shecan-vm/official-container-probe.sh
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  glibc-diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download and verify the exact public official release
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/official-glibc"
+          mkdir -p "$work/rpm" "$work/root" "$work/context"
+          curl --fail --location --silent --show-error --retry 3 --retry-all-errors \
+            --user-agent 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/142.0 Safari/537.36' \
+            --cookie "$work/cookies" --cookie-jar "$work/cookies" \
+            --output "$work/package.rpm" 'https://dl.shecan.ir/download/linux/amd64?version=v3.0.30&format=rpm'
+          echo "59a300035e25a9dbe0b4e26f44333883bcb26b9e7ab1af5bac88310095f122b2  $work/package.rpm" | sha256sum --check
+          7z x -y -o"$work/rpm" "$work/package.rpm" >/dev/null
+          payload=$(find "$work/rpm" -type f -name '*.cpio' -print -quit)
+          test -n "$payload"
+          7z x -y -o"$work/root" "$payload" >/dev/null
+          for binary in shecan-desktop shecan-game shecan-nextdns shecan-updater; do
+            test -f "$work/root/usr/local/bin/$binary" && test ! -L "$work/root/usr/local/bin/$binary"
+            install -m 0755 "$work/root/usr/local/bin/$binary" "$work/context/$binary"
+          done
+          install -m 0755 scripts/shecan-vm/official-container-probe.sh "$work/context/probe.sh"
+          cat > "$work/context/Dockerfile" <<'DOCKERFILE'
+          FROM ubuntu:24.04
+          ENV DEBIAN_FRONTEND=noninteractive
+          RUN apt-get update -qq && apt-get install -y --no-install-recommends libwebkit2gtk-4.1-0 libgtk-3-0 libx11-6 xvfb x11-utils dbus-x11 fonts-noto-core ca-certificates && rm -rf /var/lib/apt/lists/*
+          COPY shecan-desktop shecan-game shecan-nextdns shecan-updater /usr/local/bin/
+          COPY probe.sh /probe.sh
+          DOCKERFILE
+      - name: Prepare glibc runtime on the disposable runner
+        run: docker build -q -t nomreh-official-glibc-probe "$RUNNER_TEMP/official-glibc/context"
+      - name: Run only inside an isolated offline, unprivileged container
+        id: probe
+        run: |
+          set -uo pipefail
+          docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
+            --read-only --tmpfs /tmp:rw,nosuid,nodev,size=256m --tmpfs /run:rw,nosuid,nodev,size=32m \
+            --memory 2g --pids-limit 128 --user 65534:65534 \
+            nomreh-official-glibc-probe /probe.sh 2>&1 | tee "$RUNNER_TEMP/glibc-probe.log"
+          exit "${PIPESTATUS[0]}"
+      - name: Publish only fixed diagnostic markers
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOME: ${{ steps.probe.outcome }}
+        run: |
+          set -euo pipefail
+          conclusion=failure
+          if [ "$OUTCOME" = success ]; then conclusion=success; fi
+          summary='The isolated diagnostic did not produce output; no Plesk host was contacted.'
+          if [ -f "$RUNNER_TEMP/glibc-probe.log" ]; then
+            summary="$(grep '^NOMREH_GLIBC_PROBE_' "$RUNNER_TEMP/glibc-probe.log" || true)"
+          fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name='Official Shecan offline glibc diagnostic' -f head_sha="${GITHUB_SHA}" \
+            -f status=completed -f conclusion="$conclusion" \
+            -f 'output[title]=Offline comparison only; not a Plesk deployment' \
+            --raw-field "output[summary]=${summary}" > /dev/null
