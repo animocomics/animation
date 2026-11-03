@@ -1,9 +1,10 @@
-source=6dafdc912a5bfcfdfbb7c7c5f22750512e2db517
-upload=41568294051
-extract=41568440406
-build=41568626461
-disk=41568923069
-restart=41569096560
+source=fa7509e40ff985c3655e00f811528e8c27a821bd
+upload=41570137552
+extract=41570297640
+build=41570444896
+disk=41570728828
+restart=41570892105
 methods=dns53,doh,dot,dns5353,direct-curl,ddns,shecan-ip
-mode=read-only
+mode=activate
 previous-diagnostic=41569205561
+read-only-evidence=41569834327
