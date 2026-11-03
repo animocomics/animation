@@ -1,0 +1,59 @@
+name: Build harmless graphical Shecan VM probe
+
+on:
+  push:
+    branches: [arena/f4b832aa-animation]
+    paths:
+      - .github/workflows/shecan-gui-probe-build.yml
+      - scripts/shecan-vm/gui-probe.c
+      - scripts/shecan-vm/guest-init.sh
+      - scripts/shecan-vm/rootfs-initramfs.py
+      - scripts/shecan-vm/run-gui.sh
+      - scripts/shecan-vm/build-gui-probe.sh
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+
+concurrency:
+  group: shecan-gui-probe-build
+  cancel-in-progress: false
+
+jobs:
+  graphical-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and boot WebKitGTK with no NIC and no Shecan binary
+        id: build
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/nomreh-deploy-shecan-gui-probe-v1.zip"
+          bash scripts/shecan-vm/build-gui-probe.sh "$GITHUB_WORKSPACE" "$archive" 2>&1 | tee "$RUNNER_TEMP/shecan-gui-probe-build.log"
+          sha256sum "$archive" > "$RUNNER_TEMP/shecan-gui-probe.sha256"
+      - name: Publish the sanitized graphical build result
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+        run: |
+          set -euo pipefail
+          conclusion=success
+          title='Real WebKitGTK/Xvnc boot without network or Shecan'
+          if [ "$BUILD_OUTCOME" != success ]; then
+            conclusion=failure
+            title='Graphical VM build or boot failed before Plesk'
+          fi
+          summary='No report was produced. Plesk was not contacted and no Shecan binary was included.'
+          if [ -f "$RUNNER_TEMP/shecan-gui-probe-build.log" ]; then
+            summary="$(tail -c 55000 "$RUNNER_TEMP/shecan-gui-probe-build.log")"
+          fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name="Harmless graphical VM build" \
+            -f head_sha="${GITHUB_SHA}" \
+            -f status=completed \
+            -f conclusion="$conclusion" \
+            -f "output[title]=${title}" \
+            --raw-field "output[summary]=${summary}" > /dev/null
