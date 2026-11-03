@@ -34,7 +34,7 @@ chmod 0755 "$WORK/context/Xvnc"
 cat > "$WORK/context/Dockerfile" <<'DOCKERFILE'
 FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update -qq && apt-get install -y --no-install-recommends libwebkit2gtk-4.1-0 libgtk-3-0 libx11-6 xvfb x11-utils dbus-x11 fonts-noto-core ca-certificates busybox-static && rm -rf /var/lib/apt/lists/* /usr/share/man/* /var/cache/apt/archives/*
+RUN apt-get update -qq && apt-get install -y --no-install-recommends libwebkit2gtk-4.1-0 libgtk-3-0 libx11-6 xvfb x11-utils dbus-x11 fonts-noto-core ca-certificates busybox-static socat && rm -rf /var/lib/apt/lists/* /usr/share/man/* /var/cache/apt/archives/*
 COPY shecan-desktop shecan-game shecan-nextdns shecan-updater Xvnc /usr/local/bin/
 DOCKERFILE
 docker build -q -t nomreh-official-glibc-vm-probe "$WORK/context"
@@ -65,10 +65,21 @@ The guest has no NIC or persistent disk; no credentials are included. License
 notices shipped in QEMU and Ubuntu packages are retained in this diagnostic.
 This is not a host deployment package.
 PROVENANCE
+INIT_SCRIPT="$SOURCE_ROOT/scripts/shecan-vm/guest-init-glibc-probe.sh"
+if [[ "${NOMREH_LOCAL_DISPLAY_PROBE:-0}" == 1 ]]; then
+  INIT_SCRIPT="$SOURCE_ROOT/scripts/shecan-vm/guest-init-display-probe.sh"
+fi
 python3 "$SOURCE_ROOT/scripts/shecan-vm/rootfs-initramfs.py" \
-  "$WORK/rootfs" "$SOURCE_ROOT/scripts/shecan-vm/guest-init-glibc-probe.sh" \
+  "$WORK/rootfs" "$INIT_SCRIPT" \
   "$WORK/full/nomreh-vm/gui/guest/initramfs-gui"
 install -m 0755 "$SOURCE_ROOT/scripts/shecan-vm/run-gui.sh" "$WORK/full/nomreh-vm/gui/run-gui.sh"
+if [[ "${NOMREH_LOCAL_DISPLAY_PROBE:-0}" == 1 ]]; then
+  : "${NOMREH_LOCAL_NOVNC_DIR:?Local noVNC checkout is required}"
+  install -m 0755 "$SOURCE_ROOT/scripts/shecan-vm/run-display-probe.sh" "$WORK/full/nomreh-vm/gui/run-display-probe.sh"
+  node "$SOURCE_ROOT/scripts/shecan-vm/display-probe.cjs" "$WORK/full/nomreh-vm/gui" "$NOMREH_LOCAL_NOVNC_DIR"
+  echo 'Local display diagnostic only; nothing was uploaded or deployed.'
+  exit 0
+fi
 set +e
 "$WORK/full/nomreh-vm/gui/run-gui.sh" > "$WORK/guest.log" 2>&1
 result=$?

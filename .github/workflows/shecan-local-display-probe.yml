@@ -1,0 +1,64 @@
+name: Test official Shecan noVNC display offline on runner
+
+on:
+  push:
+    branches: [arena/ccbdcb6e-animation]
+    paths:
+      - .github/workflows/shecan-local-display-probe.yml
+      - scripts/shecan-vm/guest-init-display-probe.sh
+      - scripts/shecan-vm/run-display-probe.sh
+      - scripts/shecan-vm/display-probe.cjs
+
+permissions:
+  contents: read
+  checks: write
+  actions: read
+
+jobs:
+  display-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require the successful official offline VM probe
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(gh api repos/${GITHUB_REPOSITORY}/actions/runs/41603512316 --jq '.status + " " + .conclusion')" = 'completed success'
+          grep -F -- '-nic none' scripts/shecan-vm/run-display-probe.sh >/dev/null
+      - name: Prepare temporary local browser and pinned noVNC source
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/display-deps"
+          cd "$RUNNER_TEMP/display-deps"
+          npm init -y >/dev/null
+          npm install --ignore-scripts --no-audit --no-fund playwright@1.64.1 ws@8.18.3
+          npx playwright install --with-deps chromium
+          git clone --quiet --depth 1 --branch v1.6.0 https://github.com/novnc/noVNC.git "$RUNNER_TEMP/novnc"
+          test "$(git -C "$RUNNER_TEMP/novnc" rev-parse HEAD)" = a8dfd6a3ea3c74244f5ebdaa5a7f1023007a7820
+      - name: Verify actual framebuffer in a local browser without guest network
+        id: probe
+        env:
+          NODE_PATH: ${{ runner.temp }}/display-deps/node_modules
+          NOMREH_LOCAL_NOVNC_DIR: ${{ runner.temp }}/novnc
+          NOMREH_LOCAL_DISPLAY_PROBE: '1'
+        run: |
+          set -euo pipefail
+          bash scripts/shecan-vm/build-official-glibc-vm.sh "$GITHUB_WORKSPACE" 2>&1 | tee "$RUNNER_TEMP/display-probe.log"
+      - name: Publish local-only diagnostic evidence
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOME: ${{ steps.probe.outcome }}
+        run: |
+          set -euo pipefail
+          conclusion=failure
+          if [ "$OUTCOME" = success ]; then conclusion=success; fi
+          summary='No display probe output was produced. Plesk was not contacted.'
+          if [ -f "$RUNNER_TEMP/display-probe.log" ]; then summary="$(tail -c 55000 "$RUNNER_TEMP/display-probe.log")"; fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name='Official Shecan local noVNC display diagnostic' -f head_sha="${GITHUB_SHA}" \
+            -f status=completed -f conclusion="$conclusion" \
+            -f 'output[title]=Runner-only browser and VM; not deployed' \
+            --raw-field "output[summary]=${summary}" > /dev/null
