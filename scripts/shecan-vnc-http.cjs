@@ -121,17 +121,20 @@ function listenerState(port) {
         if (!fields[1]?.endsWith(`:${hex}`) || fields[3] !== "0A") continue;
         const receiveQueue = Number.parseInt(String(fields[4] || "").split(":")[1] || "0", 16);
         const queue = Number.isFinite(receiveQueue) ? Math.min(receiveQueue, 9999) : 9999;
+        const address = String(fields[1] || "").split(":")[0];
+        const addressClass = table.endsWith("tcp6") ? "TCP6" : address === "0100007F" ? "LOOPBACK4" : address === "00000000" ? "ANY4" : "OTHER4";
         const inode = fields[9] || "";
         try {
           const dataDirectory = process.env.NOMREH_DATA_DIR || path.join(process.cwd(), "data");
           const pid = Number(fs.readFileSync(path.join(dataDirectory, "shecan-official", "guest.pid"), "utf8").trim());
           const command = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8");
-          if (!command.includes("qemu-system-x86_64") || !command.includes("initramfs-official")) return `OTHER_LISTENER_Q${queue}`;
+          if (!command.includes("qemu-system-x86_64") || !command.includes("initramfs-official")) return `OTHER_LISTENER_Q${queue}_${addressClass}`;
+          const forward = command.includes(`hostfwd=tcp:127.0.0.1:${port}-:5900`) ? "FWD_OK" : "FWD_BAD";
           for (const fd of fs.readdirSync(`/proc/${pid}/fd`)) {
-            if (fs.readlinkSync(`/proc/${pid}/fd/${fd}`) === `socket:[${inode}]`) return `QEMU_LISTENER_Q${queue}`;
+            if (fs.readlinkSync(`/proc/${pid}/fd/${fd}`) === `socket:[${inode}]`) return `QEMU_LISTENER_Q${queue}_${addressClass}_${forward}`;
           }
-          return `OTHER_LISTENER_Q${queue}`;
-        } catch { return `LISTENER_OWNER_UNKNOWN_Q${queue}`; }
+          return `OTHER_LISTENER_Q${queue}_${addressClass}`;
+        } catch { return `LISTENER_OWNER_UNKNOWN_Q${queue}_${addressClass}`; }
       }
     }
     return "NO_LISTENER";
