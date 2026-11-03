@@ -165,6 +165,19 @@ jobs:
           print('\nNo user credential was supplied; no app was executed; no host or DNS setting was contacted or changed.')
           PY
 
+      - name: Preserve only public text protocol sources for one day
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shecan-public-protocol-source
+          retention-days: 1
+          if-no-files-found: error
+          path: |
+            ${{ runner.temp }}/shecan-app-inspect/chrome-extension/*.js
+            ${{ runner.temp }}/shecan-app-inspect/chrome-extension/*.json
+            ${{ runner.temp }}/shecan-app-inspect/chrome-extension/README.md
+            ${{ runner.temp }}/shecan-app-inspect/windows-extracted/console-setup.ps1
+
       - name: Publish the sanitized inspection report
         if: always()
         env:
