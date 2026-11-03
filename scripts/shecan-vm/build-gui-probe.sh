@@ -31,6 +31,8 @@ while IFS= read -r -d '' binary; do
 done < <(find "$WORK/full/nomreh-vm/gui/qemu/bin" "$WORK/full/nomreh-vm/gui/qemu/lib" -type f -print0)
 echo 'QEMU/glibc size after stripping:'
 du -sh "$WORK/full/nomreh-vm/gui/qemu" "$WORK/full/nomreh-vm/gui/glibc"
+echo 'Largest QEMU files:'
+du -ah "$WORK/full/nomreh-vm/gui/qemu" | sort -h | tail -25
 
 # Install only runtime packages into the guest rootfs. Build headers and the
 # compiler stay in the disposable container and are never packed or deployed.
@@ -50,7 +52,7 @@ docker run --rm --platform linux/amd64 \
       --repository https://dl-cdn.alpinelinux.org/alpine/v3.24/community \
       --keys-dir /etc/apk/keys \
       busybox musl gcompat libc6-compat ca-certificates \
-      webkit2gtk-4.1 gtk+3.0 dbus tinyproxy mesa-dri-gallium font-noto-arabic >/dev/null
+      webkit2gtk-4.1 gtk+3.0 dbus tinyproxy font-noto-arabic >/dev/null
     rm -rf /out/var/cache/apk/* /out/usr/share/man
     chown -R "$HOST_UID:$HOST_GID" /out
     chmod -R a+rX /out
@@ -66,6 +68,8 @@ file "$WORK/rootfs/usr/local/bin/Xvnc"
 readelf -l "$WORK/rootfs/usr/local/bin/Xvnc" | grep -A1 interpreter || echo 'Xvnc has no external program interpreter.'
 
 du -sh "$WORK/rootfs"
+echo 'Largest guest rootfs files:'
+du -ah "$WORK/rootfs" | sort -h | tail -30
 python3 "$SOURCE_ROOT/scripts/shecan-vm/rootfs-initramfs.py" \
   "$WORK/rootfs" "$SOURCE_ROOT/scripts/shecan-vm/guest-init.sh" \
   "$WORK/full/nomreh-vm/gui/guest/initramfs-gui"
