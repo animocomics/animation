@@ -90,8 +90,11 @@ jobs:
             printf -v name 'script-%02d.js' "$index"
             if curl --silent --show-error --fail --location --max-time 45 --max-filesize 25000000 \
               --user-agent "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/142.0 Safari/537.36" \
-              --output "$name" "$url"; then
+              --cookie cookies.txt --cookie-jar cookies.txt --referer 'https://my.shecan.ir/panel/auth' \
+              --output "$name" "$url" 2> "$name.curl.log"; then
               printf '%s %s %s bytes\n' "$name" "$url" "$(stat -c %s "$name")" >> script-index.txt
+            else
+              printf '%s %s download failed: %s\n' "$name" "$url" "$(tail -n 1 "$name.curl.log" | sed -E 's#https?://[^ ]+#[url]#g')" >> script-index.txt
             fi
           done < scripts.txt
 
@@ -104,7 +107,7 @@ jobs:
           import os, re
           output = [Path('inventory.md').read_text(), '', '## Static script downloads', Path('script-index.txt').read_text(),
                     '', '## Public authentication and OTP source context']
-          keyword = re.compile(r'(?i)(one[ -]?time|\botp\b|\bsms\b|verification|verify|auth(?:entication)?|شماره همراه|کد تایید|کد تأیید|کد یکبار|یک.bar مصرف)')
+          keyword = re.compile(r'(?i)(one[ -]?time|\botp\b|\bsms\b|verification|verify|send.?code|request.?code|resend|شماره همراه|کد تایید|کد تأیید|کد یکبار|یک.bar مصرف)')
           seen = set()
           for path in sorted(Path('.').glob('script-*.js')):
               text = path.read_text(errors='replace')
