@@ -70,6 +70,13 @@ jobs:
           7z x -y -olinux-extracted linux.rpm > linux-extract.log 2>&1 || true
           tail -35 linux-extract.log || true
           find linux-extracted -maxdepth 7 -type f \( -iname '*shecan*' -o -name '*.so' -o -name 'package.json' -o -name '*.asar' \) -printf '%p %s bytes\n' | head -120 || true
+          cpio_file="$(find linux-extracted -type f -name '*.cpio' | head -n 1 || true)"
+          if [ -n "$cpio_file" ]; then
+            mkdir -p linux-root
+            7z x -y -olinux-root "$cpio_file" > linux-cpio-extract.log 2>&1 || true
+            tail -25 linux-cpio-extract.log || true
+            find linux-root -maxdepth 8 -type f \( -iname '*shecan*' -o -iname '*nxtdns*' -o -name '*.service' -o -name '*.json' -o -name '*.desktop' \) -printf '%p %s bytes\n' | head -120 || true
+          fi
 
       - name: Statically extract the official Android package without executing it
         run: |
@@ -112,7 +119,7 @@ jobs:
               data = path.read_bytes()[:100]
               printable = ''.join(chr(byte) if 32 <= byte < 127 else '.' for byte in data)
               print(f'{name}: {path.stat().st_size} bytes; first bytes {printable}')
-          roots = [Path('windows-app'), Path('windows-extracted'), Path('linux-extracted'), Path('android-app'), Path('chrome-extension')]
+          roots = [Path('windows-app'), Path('windows-extracted'), Path('linux-extracted'), Path('linux-root'), Path('android-app'), Path('chrome-extension')]
           for root in roots:
               files = [path for path in root.rglob('*') if path.is_file()] if root.exists() else []
               print(f'{root}: {len(files)} extracted files')
@@ -176,11 +183,12 @@ jobs:
           : > "$raw"
           echo '# Official Shecan full SNI matrix and Linux local-mode evidence; no credentials or API keys' >> "$report"
           echo '## Static Linux inventory; binaries were not executed' >> "$report"
-          find linux-extracted -type f -perm /111 -printf '%p %s bytes\n' 2>/dev/null | head -80 >> "$report" || true
+          find linux-root -type f -perm /111 -printf '%p %s bytes\n' 2>/dev/null | head -80 >> "$report" || true
           python - <<'PY' >> "$report"
           from pathlib import Path
-          needles = [b'127.0.0.1', b'localhost', b'socks5', b'tun2socks', b'shecan.service', b'nxtdns', b'administrator', b'root']
-          for path in Path('linux-extracted').rglob('*'):
+          import re
+          needles = [b'127.0.0.1', b'localhost', b'socks5', b'tun2socks', b'shecan.service', b'nxtdns', b'administrator', b'root', b'usage: shecan']
+          for path in Path('linux-root').rglob('*'):
               if not path.is_file() or path.stat().st_size > 120_000_000:
                   continue
               if not any(word in path.name.lower() for word in ['shecan', 'nxtdns', 'service']):
@@ -192,7 +200,23 @@ jobs:
               found = [needle.decode() for needle in needles if needle in data]
               if found:
                   print(f'{path}: literal presence only: {", ".join(found)}')
-          print('Literal presence is not evidence of a supported userspace/local-proxy mode.')
+              shown = 0
+              for needle in [b'socks5', b'tun2socks', b'shecan.service', b'usage: shecan']:
+                  start = 0
+                  while shown < 12:
+                      offset = data.find(needle, start)
+                      if offset < 0:
+                          break
+                      start = offset + len(needle)
+                      raw = data[max(0, offset - 180):offset + 500]
+                      text = ''.join(chr(byte) if 32 <= byte < 127 else ' ' for byte in raw)
+                      text = re.sub(r'\s+', ' ', text).strip()
+                      if re.search(r'(?i)(api[_-]?key|authorization|password|client[_-]?secret)', text):
+                          continue
+                      text = re.sub(r'([?&](?:token|key|secret|code)=)[^&\s]+', r'\1[redacted]', text, flags=re.I)
+                      print(f'{path} context {offset}: {text[:650]}')
+                      shown += 1
+          print('Literal presence or a nearby string is not evidence of a supported userspace/local-proxy mode.')
           PY
           echo '## Direct baselines' >> "$report"
           probe_sni() {
