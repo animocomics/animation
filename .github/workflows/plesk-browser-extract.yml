@@ -58,6 +58,7 @@ jobs:
           grep -F 'syncPublicStatic();' scripts/plesk-node22.cjs > /dev/null
           grep -F '"--include=dev", "--omit=optional"' scripts/plesk-node22.cjs > /dev/null
           grep -F 'webpackBuildWorker: false' next.config.mjs > /dev/null
+          grep -F 'await extractedActions.evaluate((element) => element.click());' scripts/plesk-browser-diagnostics.cjs > /dev/null
 
       - name: Prepare an isolated temporary browser
         if: steps.config.outputs.configured == 'true'

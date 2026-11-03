@@ -1520,7 +1520,12 @@ async function main() {
                   lines.push(`- Verification directory: ${sanitize(new URL(page.url()).pathname)}`, `- Verification entries: ${sanitize(visibleEntries.join(", "))}`);
                   throw new Error(`The ${name} File Manager entry was not available while verifying ${expectedFile}.`);
                 }
-                await entry.click({ timeout: 8000 });
+                await entry.click({ timeout: 8000 }).catch(async () => {
+                  // A completed/failed Plesk task toast may cover the row. Invoke
+                  // the same visible entry rather than changing server state or
+                  // suppressing the task's build/progress output.
+                  await entry.evaluate((element) => element.click());
+                });
                 await page.waitForTimeout(2500);
               };
               for (const expected of EXPECTED_DELTA) {
@@ -1542,12 +1547,16 @@ async function main() {
                 const extractedRow = extractedFile.locator("xpath=ancestor::*[.//input[@type='checkbox']][1]");
                 const extractedActions = extractedRow.locator("button[title='Actions'], button[aria-label='Actions']").first();
                 if (!await extractedActions.count()) throw new Error(`The Actions menu was not available for ${expected.file} hash verification.`);
-                await extractedActions.click({ timeout: 5000 });
+                await extractedActions.click({ timeout: 5000 }).catch(async () => {
+                  await extractedActions.evaluate((element) => element.click());
+                });
                 await page.waitForTimeout(400);
                 const downloadChoice = page.locator("a:visible, button:visible").filter({ hasText: /^Download$/i }).first();
                 if (!await downloadChoice.count()) throw new Error(`Download was not available for ${expected.file} hash verification.`);
                 const downloadPromise = page.waitForEvent("download", { timeout: 10000 }).catch(() => null);
-                await downloadChoice.click({ timeout: 8000 });
+                await downloadChoice.click({ timeout: 8000 }).catch(async () => {
+                  await downloadChoice.evaluate((element) => element.click());
+                });
                 const downloaded = await downloadPromise;
                 if (!downloaded) throw new Error(`The extracted ${expected.file} could not be downloaded for hash verification.`);
                 const downloadedPath = await downloaded.path();
@@ -1565,25 +1574,33 @@ async function main() {
                 const vmRow = vmText.locator("xpath=ancestor::*[.//input[@type='checkbox']][1]");
                 const vmEntry = vmRow.locator("a").first();
                 if (!await vmEntry.count()) throw new Error("The extracted nomreh-vm row was not available for scoped verification. No VM was started.");
-                await vmEntry.click({ timeout: 8000 });
+                await vmEntry.click({ timeout: 8000 }).catch(async () => {
+                  await vmEntry.evaluate((element) => element.click());
+                });
                 await page.waitForTimeout(1800);
                 const probeText = page.getByText(RUNTIME_DIRECTORY, { exact: true }).last();
                 const probeRow = probeText.locator("xpath=ancestor::*[.//input[@type='checkbox']][1]");
                 const probeEntry = probeRow.locator("a").first();
                 if (!await probeEntry.count()) throw new Error(`The isolated nomreh-vm/${RUNTIME_DIRECTORY} directory was not visible after extraction. No VM was started.`);
-                await probeEntry.click({ timeout: 8000 });
+                await probeEntry.click({ timeout: 8000 }).catch(async () => {
+                  await probeEntry.evaluate((element) => element.click());
+                });
                 await page.waitForTimeout(1800);
                 const runnerEntry = page.getByText(RUNTIME_RUNNER, { exact: true }).first();
                 if (!await runnerEntry.count()) throw new Error(`The isolated ${RUNTIME_RUNNER} was not visible after extraction. No VM was started.`);
                 const runnerRow = runnerEntry.locator("xpath=ancestor::*[.//input[@type='checkbox']][1]");
                 const runnerActions = runnerRow.locator("button[title='Actions'], button[aria-label='Actions']").first();
                 if (!await runnerActions.count()) throw new Error("The isolated probe Actions menu was not available for hash verification.");
-                await runnerActions.click({ timeout: 5000 });
+                await runnerActions.click({ timeout: 5000 }).catch(async () => {
+                  await runnerActions.evaluate((element) => element.click());
+                });
                 await page.waitForTimeout(400);
                 const downloadChoice = page.locator("a:visible, button:visible").filter({ hasText: /^Download$/i }).first();
                 if (!await downloadChoice.count()) throw new Error("Download was not available for isolated probe hash verification.");
                 const downloadPromise = page.waitForEvent("download", { timeout: 10000 }).catch(() => null);
-                await downloadChoice.click({ timeout: 8000 });
+                await downloadChoice.click({ timeout: 8000 }).catch(async () => {
+                  await downloadChoice.evaluate((element) => element.click());
+                });
                 const downloaded = await downloadPromise;
                 if (!downloaded) throw new Error("The isolated probe could not be downloaded for hash verification.");
                 const downloadedPath = await downloaded.path();
