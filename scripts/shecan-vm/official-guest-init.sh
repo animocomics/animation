@@ -75,6 +75,8 @@ export LIBGL_ALWAYS_SOFTWARE=1
 export WEBKIT_DISABLE_DMABUF_RENDERER=1
 export WEBKIT_DISABLE_COMPOSITING_MODE=1
 export GOTRACEBACK=single
+# Keep JavaScriptCore's GC signal away from Go's SIGUSR1 handler.
+export JSC_SIGNAL_FOR_GC=61
 
 if grep -q 'nomreh_proxy=1' /proc/cmdline; then
   tinyproxy -d -c /etc/tinyproxy-nomreh.conf > /var/log/tinyproxy-nomreh.log 2>&1 &
@@ -115,8 +117,13 @@ echo NOMREH_OFFICIAL_APP_PROCESS_ALIVE > /dev/console
 
 if grep -q 'nomreh_probe=1' /proc/cmdline; then
   echo NOMREH_OFFICIAL_APP_BOOT_PASS > /dev/console
-  # Leave enough time for the host-side real RFB framebuffer gate.
-  sleep 60
+  # Leave enough time for software rendering under TCG and retain only the
+  # credential-free initial-process logs if the framebuffer gate needs them.
+  sleep 120
+  echo NOMREH_OFFICIAL_PROBE_LOG_BEGIN > /dev/console
+  head -120 /var/log/shecan-desktop.log > /dev/console 2>&1 || true
+  head -60 /var/log/xvnc.log > /dev/console 2>&1 || true
+  echo NOMREH_OFFICIAL_PROBE_LOG_END > /dev/console
   kill "$APP_PID" 2>/dev/null || true
   kill "$XVNC_PID" 2>/dev/null || true
   if [ -n "$DBUS_SESSION_BUS_PID" ]; then kill "$DBUS_SESSION_BUS_PID" 2>/dev/null || true; fi

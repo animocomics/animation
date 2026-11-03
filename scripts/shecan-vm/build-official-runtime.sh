@@ -124,15 +124,15 @@ links, or Nomreh API keys. No host service or host DNS configuration is used.
 EOF
 
 NOMREH_VM_PROBE=1 NOMREH_VNC_PORT=15900 NOMREH_PROXY_PORT=18888 \
-  NOMREH_VM_MEMORY=2048M NOMREH_VM_TIMEOUT=240 \
+  NOMREH_VM_MEMORY=2048M NOMREH_VM_TIMEOUT=300 \
   "$RUNTIME/run-official.sh" > "$WORK/official-guest.log" 2>&1 &
 RUNNER_PID=$!
 set +e
-VNC_SMOKE_ATTEMPTS=120 node "$SOURCE_ROOT/scripts/shecan-vm/vnc-smoke.cjs" 15900 "$WORK/official-framebuffer.ppm" > "$WORK/vnc-smoke.log" 2>&1 &
+VNC_SMOKE_ATTEMPTS=180 node "$SOURCE_ROOT/scripts/shecan-vm/vnc-smoke.cjs" 15900 "$WORK/official-framebuffer.ppm" > "$WORK/vnc-smoke.log" 2>&1 &
 VNC_PID=$!
 set -e
 vnc_status=1
-for ((attempt = 0; attempt < 240; attempt++)); do
+for ((attempt = 0; attempt < 300; attempt++)); do
   if ! kill -0 "$VNC_PID" 2>/dev/null; then
     set +e
     wait "$VNC_PID"

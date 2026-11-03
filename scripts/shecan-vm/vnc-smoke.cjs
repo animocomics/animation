@@ -175,12 +175,14 @@ async function capture() {
       const result = await capture();
       if (result.colors < 16 || result.maximum - result.minimum < 24) {
         lastError = new Error(`framebuffer still uniform (colors=${result.colors})`);
+        if (attempt === 1 || attempt % 5 === 0) console.log(`NOMREH_VNC_FRAMEBUFFER_WAIT attempt=${attempt} colors=${result.colors} luminance_range=${result.maximum - result.minimum} width=${result.width} height=${result.height}`);
       } else {
         console.log(`NOMREH_VNC_FRAMEBUFFER_PASS width=${result.width} height=${result.height} colors=${result.colors} luminance_range=${result.maximum - result.minimum} sha256=${result.hash} bytes=${result.bytes}`);
         return;
       }
     } catch (error) {
       lastError = error;
+      if (attempt === 1 || attempt % 15 === 0) console.log(`NOMREH_VNC_FRAMEBUFFER_WAIT attempt=${attempt} error=${error instanceof Error ? error.message.slice(0, 160) : "unknown"}`);
     }
     await delay(1000);
   }
