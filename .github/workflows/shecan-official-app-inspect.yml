@@ -24,23 +24,24 @@ jobs:
           set -uo pipefail
           mkdir -p "$RUNNER_TEMP/shecan-app-inspect"
           cd "$RUNNER_TEMP/shecan-app-inspect"
-          if curl --fail --location --max-time 180 --output windows.bin https://dl.shecan.ir/download/windows/amd64; then
-            echo 'Official Windows package downloaded.'
-          else
-            echo 'Official Windows package download failed; no alternate source will be used.'
-          fi
-          if curl --fail --location --max-time 180 --output shecan.apk https://shecan.ir/shecan.apk; then
-            echo 'Official Android package downloaded.'
-          else
-            echo 'Official Android package download failed; no alternate source will be used.'
-          fi
-          for artifact in windows.bin shecan.apk; do
-            if [ -f "$artifact" ]; then
+          : > download-report.txt
+          download_official() {
+            local artifact="$1"
+            local url="$2"
+            echo "Official $artifact URL: $url" | tee -a download-report.txt
+            if curl --silent --show-error --fail --location --max-time 120 --output "$artifact" --write-out "HTTP %{http_code}; final origin $(printf '%s' "$url" | sed -E 's#(https?://[^/]+).*#\1#')\n" "$url" 2> "$artifact.curl.log" | tee -a download-report.txt; then
+              echo "Official $artifact package downloaded." | tee -a download-report.txt
               file "$artifact"
               stat -c "$artifact bytes=%s" "$artifact"
               sha256sum "$artifact"
+            else
+              local exit_code=$?
+              echo "Official $artifact download failed with curl exit $exit_code: $(tail -n 2 "$artifact.curl.log" | tr '\n' ' ')" | tee -a download-report.txt
+              rm -f "$artifact"
             fi
-          done
+          }
+          download_official windows.bin https://dl.shecan.ir/download/windows/amd64
+          download_official shecan.apk https://shecan.ir/shecan.apk
 
       - name: Statically extract the official Windows package without executing it
         run: |
@@ -77,6 +78,10 @@ jobs:
           import re
           from urllib.parse import urlsplit, urlunsplit
 
+          download_report = Path('download-report.txt')
+          if download_report.exists():
+              print('## Official download results')
+              print(download_report.read_text())
           print('## Official package inventory')
           for name in ['windows.bin', 'shecan.apk']:
               path = Path(name)
