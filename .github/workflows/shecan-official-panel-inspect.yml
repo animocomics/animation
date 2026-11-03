@@ -79,7 +79,7 @@ jobs:
               if parsed.scheme == 'https' and parsed.hostname == 'my.shecan.ir':
                   allowed.append(script)
                   output.append(script)
-          Path('scripts.txt').write_text('\n'.join(allowed[:24]))
+          Path('scripts.txt').write_text('\n'.join(allowed[:24]) + ('\n' if allowed else ''))
           Path('inventory.md').write_text('\n'.join(output))
           PY
           : > script-index.txt
