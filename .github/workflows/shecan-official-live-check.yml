@@ -49,6 +49,7 @@ jobs:
           NOMREH_ALLOW_DEMO_ACCOUNTS: "1"
           NOMREH_OFFICIAL_ONLY: "1"
           NOMREH_VALIDATE_OFFICIAL_RUNTIME: "1"
+          NOMREH_RESTART_ON_VNC_FAILURE: "1"
           NOMREH_E2E_OUTPUT: ${{ runner.temp }}/nomreh-official-live.md
           NODE_PATH: ${{ runner.temp }}/nomreh-official-e2e/node_modules
         run: node scripts/nomreh-admin-readiness.cjs
