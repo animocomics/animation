@@ -126,6 +126,20 @@ NOMREH_VM_PROBE=1 NOMREH_VNC_PORT=15900 NOMREH_PROXY_PORT=18888 \
   NOMREH_VM_MEMORY=2048M NOMREH_VM_TIMEOUT=300 \
   "$RUNTIME/run-official.sh" > "$WORK/official-guest.log" 2>&1 &
 RUNNER_PID=$!
+app_ready=0
+for ((attempt = 0; attempt < 300; attempt++)); do
+  if grep -q 'NOMREH_OFFICIAL_APP_PROCESS_ALIVE' "$WORK/official-guest.log"; then app_ready=1; break; fi
+  if grep -q 'NOMREH_OFFICIAL_APP_ERROR' "$WORK/official-guest.log"; then break; fi
+  if ! kill -0 "$RUNNER_PID" 2>/dev/null; then break; fi
+  sleep 1
+done
+if ((app_ready != 1)); then
+  echo 'Official guest did not reach its live application marker.' >&2
+  cat "$WORK/official-guest.log"
+  exit 1
+fi
+# Do not open early host-forward connections before Xvnc and the official app
+# exist. Each framebuffer attempt now starts against the real running guest.
 set +e
 VNC_SMOKE_ATTEMPTS=180 node "$SOURCE_ROOT/scripts/shecan-vm/vnc-smoke.cjs" 15900 "$WORK/official-framebuffer.ppm" > "$WORK/vnc-smoke.log" 2>&1 &
 VNC_PID=$!

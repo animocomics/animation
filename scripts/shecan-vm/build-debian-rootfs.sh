@@ -26,7 +26,7 @@ docker run --rm --platform linux/amd64 \
       apt-get update >/dev/null
       apt-get install -y --no-install-recommends \
         busybox-static net-tools kmod iproute2 ca-certificates openresolv \
-        libwebkit2gtk-4.1-0 libgtk-3-0 dbus dbus-x11 tinyproxy \
+        libwebkit2gtk-4.1-0 libgtk-3-0 dbus dbus-x11 tinyproxy x11-utils openbox \
         fonts-noto-core libgl1-mesa-dri libegl-mesa0 >/dev/null
       dbus-uuidgen --ensure=/etc/machine-id
       apt-get clean

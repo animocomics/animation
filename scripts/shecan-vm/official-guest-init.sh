@@ -68,6 +68,7 @@ fi
 DBUS_SYSTEM_BUS_PID=$(cat /run/dbus-system.pid)
 export DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket
 export DISPLAY=:0
+export GDK_BACKEND=x11
 export XDG_RUNTIME_DIR=/run/user/0
 export XDG_CONFIG_HOME=/root/.config
 export XDG_CACHE_HOME=/root/.cache
@@ -78,6 +79,16 @@ export LP_NUM_THREADS=1
 export WEBKIT_DISABLE_DMABUF_RENDERER=1
 export WEBKIT_DISABLE_COMPOSITING_MODE=1
 export GOTRACEBACK=single
+
+openbox --sm-disable > /var/log/openbox.log 2>&1 &
+OPENBOX_PID=$!
+sleep 1
+if ! kill -0 "$OPENBOX_PID" 2>/dev/null; then
+  echo NOMREH_OFFICIAL_GUEST_ERROR OPENBOX > /dev/console
+  head -40 /var/log/openbox.log > /dev/console 2>&1 || true
+  poweroff -f
+  while true; do sleep 60; done
+fi
 
 if grep -q 'nomreh_proxy=1' /proc/cmdline; then
   tinyproxy -d -c /etc/tinyproxy-nomreh.conf > /var/log/tinyproxy-nomreh.log 2>&1 &
@@ -115,17 +126,21 @@ if ! kill -0 "$APP_PID" 2>/dev/null; then
   while true; do sleep 60; done
 fi
 echo NOMREH_OFFICIAL_APP_PROCESS_ALIVE > /dev/console
+xwininfo -root -tree > /var/log/xwininfo.log 2>&1 || true
 
 if grep -q 'nomreh_probe=1' /proc/cmdline; then
   echo NOMREH_OFFICIAL_APP_BOOT_PASS > /dev/console
   # Leave enough time for software rendering under TCG and retain only the
   # credential-free initial-process logs if the framebuffer gate needs them.
   sleep 120
+  xwininfo -root -tree > /var/log/xwininfo.log 2>&1 || true
   echo NOMREH_OFFICIAL_PROBE_LOG_BEGIN > /dev/console
+  head -100 /var/log/xwininfo.log > /dev/console 2>&1 || true
   head -120 /var/log/shecan-desktop.log > /dev/console 2>&1 || true
   head -60 /var/log/xvnc.log > /dev/console 2>&1 || true
   echo NOMREH_OFFICIAL_PROBE_LOG_END > /dev/console
   kill "$APP_PID" 2>/dev/null || true
+  kill "$OPENBOX_PID" 2>/dev/null || true
   kill "$XVNC_PID" 2>/dev/null || true
   if [ -n "$DBUS_SYSTEM_BUS_PID" ]; then kill "$DBUS_SYSTEM_BUS_PID" 2>/dev/null || true; fi
   sync
