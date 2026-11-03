@@ -254,7 +254,7 @@ async function activateUpdateUrlWithFetch(updateUrl: string, servers: [string, s
     if (error instanceof ApiNetworkError) throw error;
     const code = safeNetworkCode(error);
     const serviceProbe = await probeUpdateService(updateUrl);
-    throw new ApiNetworkError(`فراخوانی لینک به‌روزرسان شکن ناموفق بود؛ لینک و دسترسی خروجی سرور به shecan.ir را بررسی کنید.${code ? ` کد فنی: ${code}.` : ""} بررسی بدون لینک محرمانه: ${serviceProbe}.`, 502, { cause: error });
+    throw new ApiNetworkError(`فراخوانی لینک به‌روزرسان شکن ناموفق بود. بررسی بدون لینک محرمانه: ${serviceProbe}. لینک و دسترسی خروجی سرور به shecan.ir را بررسی کنید.${code ? ` کد فنی: ${code}.` : ""}`, 502, { cause: error });
   } finally {
     await Promise.all(agents.map((agent) => agent.close().catch(() => undefined)));
   }
@@ -500,7 +500,7 @@ async function curlUpdateStatusWithFallback(
     catch (error) {
       if (error instanceof ApiNetworkError) throw error;
       lastError = error;
-      directCurlNote = safeNetworkCode(error) === "TIMEOUT" ? "TIMEOUT" : "FAILED";
+      directCurlNote = safeNetworkCode(error) || "FAILED";
     }
   }
   const details = `DoH=${dohNote || "SKIP"};DoT=${dotNote || "SKIP"};DNS5353=${dns5353Note || "SKIP"};direct=${directCurlNote || "SKIP"};DDNS=${verifiedDdnsNote || "SKIP"}`;

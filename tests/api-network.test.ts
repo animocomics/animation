@@ -793,7 +793,8 @@ test("all official activation fallbacks report separate results and direct curl 
     child.stderr = new EventEmitter();
     child.stdin = Object.assign(new EventEmitter(), { end: (value: string) => {
       configs.push(value);
-      process.nextTick(() => child.emit("close", 28));
+      const exitCode = configs.length >= 3 ? 6 : 28;
+      process.nextTick(() => child.emit("close", exitCode));
     } });
     child.kill = () => undefined;
     return child as unknown as ReturnType<typeof childProcess.spawn>;
@@ -813,7 +814,7 @@ test("all official activation fallbacks report separate results and direct curl 
     ), (error: unknown) => {
       assert(error instanceof Error);
       assert.match(error.message, /CURL_DDNS_TIMEOUT/);
-      assert.match(error.message, /DoH=TIMEOUT;DoT=TIMEOUT;DNS5353=TIMEOUT;direct=TIMEOUT;DDNS=RETRIED/);
+      assert.match(error.message, /DoH=TIMEOUT;DoT=TIMEOUT;DNS5353=TIMEOUT;direct=CURL_DNS_FAILED;DDNS=RETRIED/);
       assert.match(error.message, /DDNS=HTTP_404;IP=HTTP_200/);
       assert(!error.message.includes(updateUrl));
       return true;
