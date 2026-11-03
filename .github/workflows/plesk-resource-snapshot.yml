@@ -1,6 +1,6 @@
 name: Plesk Nomreh read-only memory snapshot
 
-# The inline resource probe is validated before dispatch.
+# Inline probe avoids shell-dependent backslash processing.
 
 on:
   push:
