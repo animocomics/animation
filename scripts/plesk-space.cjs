@@ -2,13 +2,15 @@
 "use strict";
 
 // Read-only disk report for Plesk. It never deletes files, follows symlinks,
-// reads user content, or scans other domains.
+// reads user content, or scans outside the verified current subscription home.
 const fs = require("node:fs");
 const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 const APP_ROOT = path.resolve(__dirname, "..");
 const DATA_DIR = path.resolve(APP_ROOT, process.env.NOMREH_DATA_DIR || "../nomreh-data");
+const SUBSCRIPTION_ROOT = path.dirname(APP_ROOT);
+const SUBSCRIPTION_LIMIT_KIB = 4 * 1024 * 1024;
 
 function formatMiB(kibibytes) {
   return `${(kibibytes / 1024).toFixed(1)} MiB`;
@@ -23,6 +25,21 @@ function diskUsage(target) {
   }
   const kibibytes = Number(result.stdout.trim().split(/\s+/, 1)[0]);
   return Number.isFinite(kibibytes) ? formatMiB(kibibytes) : "unavailable";
+}
+
+function subscriptionUsage() {
+  // Plesk subscription homes are direct children of vhosts. Refuse to run a
+  // broader scan if this structural guard is not true on the current host.
+  if (path.basename(path.dirname(SUBSCRIPTION_ROOT)) !== "vhosts" || SUBSCRIPTION_ROOT === APP_ROOT) {
+    return { text: "unavailable (current subscription scope was not verified)" };
+  }
+  const result = spawnSync("du", ["-sk", "--", SUBSCRIPTION_ROOT], { encoding: "utf8", timeout: 300000 });
+  if (result.error || result.status !== 0) {
+    const message = result.error ? result.error.message : String(result.stderr || "du failed").trim();
+    return { text: `unavailable (${message})` };
+  }
+  const kibibytes = Number(result.stdout.trim().split(/\s+/, 1)[0]);
+  return Number.isFinite(kibibytes) ? { text: formatMiB(kibibytes), kibibytes } : { text: "unavailable" };
 }
 
 function freeSpace(target) {
@@ -53,6 +70,19 @@ console.log("");
 report("Persistent data total", DATA_DIR);
 report("  Local Node runtime", path.join(DATA_DIR, "runtime"));
 report("  Teacher uploads", path.join(DATA_DIR, "uploads"));
+
+console.log("");
+console.log(`Current subscription root: ${SUBSCRIPTION_ROOT}`);
+const subscription = subscriptionUsage();
+console.log(`All domains in current subscription total: ${subscription.text}`);
+if (typeof subscription.kibibytes === "number") {
+  const remaining = SUBSCRIPTION_LIMIT_KIB - subscription.kibibytes;
+  if (remaining >= 0) {
+    console.log(`4 GiB current-subscription budget remaining: ${formatMiB(remaining)}`);
+  } else {
+    console.log(`4 GiB current-subscription budget EXCEEDED by: ${formatMiB(-remaining)}`);
+  }
+}
 
 const runtimeRoot = path.join(DATA_DIR, "runtime");
 if (fs.existsSync(runtimeRoot)) {
