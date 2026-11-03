@@ -84,7 +84,7 @@ REVERSE_PID=''
 if grep -q 'nomreh_vnc_reverse=15500' /proc/cmdline; then
   (
     while kill -0 "$XVNC_PID" 2>/dev/null; do
-      timeout 8s tigervncconfig -display :0 -connect 10.0.2.2:15500 > /dev/null 2>&1 || true
+      timeout 8s tigervncconfig -display :0 -connect 10.0.2.2:15500 >> /var/log/vnc-reverse.log 2>&1 || true
       sleep 5
     done
   ) &
@@ -141,6 +141,7 @@ if grep -q 'nomreh_probe=1' /proc/cmdline; then
   head -100 /var/log/xwininfo.log > /dev/console 2>&1 || true
   head -120 /var/log/shecan-desktop.log > /dev/console 2>&1 || true
   head -60 /var/log/xvnc.log > /dev/console 2>&1 || true
+  head -80 /var/log/vnc-reverse.log > /dev/console 2>&1 || true
   echo NOMREH_OFFICIAL_PROBE_LOG_END > /dev/console
   kill "$APP_PID" 2>/dev/null || true
   if [ -n "$REVERSE_PID" ]; then kill "$REVERSE_PID" 2>/dev/null || true; fi
