@@ -2,7 +2,7 @@ name: Build harmless graphical Shecan VM probe
 
 on:
   push:
-    branches: [arena/f4b832aa-animation]
+    branches: [arena/ccbdcb6e-animation]
     paths:
       - .github/workflows/shecan-gui-probe-build.yml
       - scripts/shecan-vm/gui-probe.c
