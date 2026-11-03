@@ -52,6 +52,19 @@ fi
 unzip -q "$WORK/base.zip" -d "$WORK/full"
 mv "$WORK/full/nomreh-vm/probe" "$WORK/full/nomreh-vm/gui"
 rm -f "$WORK/full/nomreh-vm/gui/guest/initramfs-probe" "$WORK/full/nomreh-vm/gui/run-probe.sh"
+# Strip only disposable QEMU copies; preserve bundled notices and firmware.
+while IFS= read -r -d '' binary; do
+  if readelf -h "$binary" >/dev/null 2>&1; then strip --strip-unneeded "$binary"; fi
+done < <(find "$WORK/full/nomreh-vm/gui/qemu/bin" "$WORK/full/nomreh-vm/gui/qemu/lib" -type f -print0)
+cat > "$WORK/full/nomreh-vm/gui/THIRD_PARTY.md" <<'PROVENANCE'
+# Local offline official desktop diagnostic
+
+This disposable image includes the official Shecan Linux desktop and support
+executables, Ubuntu runtime packages, Xvnc, QEMU, glibc and the Alpine kernel.
+The guest has no NIC or persistent disk; no credentials are included. License
+notices shipped in QEMU and Ubuntu packages are retained in this diagnostic.
+This is not a host deployment package.
+PROVENANCE
 python3 "$SOURCE_ROOT/scripts/shecan-vm/rootfs-initramfs.py" \
   "$WORK/rootfs" "$SOURCE_ROOT/scripts/shecan-vm/guest-init-glibc-probe.sh" \
   "$WORK/full/nomreh-vm/gui/guest/initramfs-gui"
@@ -65,4 +78,5 @@ if ((result != 0)); then echo "Local VM returned status $result" >&2; exit "$res
 for marker in 'NOMREH_OFFICIAL_PROBE_WINDOW_OBSERVED yes' 'NOMREH_OFFICIAL_PROBE_NO_NETWORK yes' 'NOMREH_OFFICIAL_PROBE_NO_CREDENTIALS yes' 'NOMREH_OFFICIAL_PROBE_PASS'; do
   grep -Fx "$marker" <(tr -d '\r' < "$WORK/guest.log") >/dev/null
 done
-echo 'Local glibc VM probe complete; no archive was prepared, uploaded, or deployed.'
+python3 "$SOURCE_ROOT/scripts/shecan-vm/package-probe.py" "$WORK/full/nomreh-vm/gui" "$WORK/local-packages"
+echo 'Local glibc VM and package verification complete; no archive was uploaded or deployed.'
