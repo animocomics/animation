@@ -83,8 +83,8 @@ python3 "$SOURCE_ROOT/scripts/shecan-vm/rootfs-initramfs.py" \
   "$WORK/rootfs" "$SOURCE_ROOT/scripts/shecan-vm/official-guest-init.sh" \
   "$WORK/full/nomreh-vm/official/guest/initramfs-official"
 INITRAMFS_BYTES=$(stat -c %s "$WORK/full/nomreh-vm/official/guest/initramfs-official")
-if ((INITRAMFS_BYTES > 190 * 1024 * 1024)); then
-  echo "Official guest initramfs exceeds the 190 MiB pre-boot budget: $INITRAMFS_BYTES" >&2
+if ((INITRAMFS_BYTES > 200 * 1024 * 1024)); then
+  echo "Official guest initramfs exceeds the 200 MiB pre-boot budget: $INITRAMFS_BYTES" >&2
   exit 1
 fi
 install -m 0755 "$SOURCE_ROOT/scripts/shecan-vm/run-official.sh" "$WORK/full/nomreh-vm/official/run-official.sh"

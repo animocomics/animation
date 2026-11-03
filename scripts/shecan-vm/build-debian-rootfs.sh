@@ -32,12 +32,28 @@ docker run --rm --platform linux/amd64 \
       apt-get clean
     "
     echo NOMREH_DEBIAN_PACKAGES_READY
-    # The guest explicitly disables WebKit compositing/DMABUF. Do not carry
-    # hundreds of MiB of hardware DRI drivers and LLVM into the initramfs.
+    # Keep only the Mesa software renderer and its LLVM dependency. Hardware
+    # drivers are unnecessary in QEMU; removing swrast itself breaks EGL.
     du -sh /out/usr/lib/x86_64-linux-gnu/dri /out/usr/lib/x86_64-linux-gnu/libLLVM-15.so.1 2>/dev/null || true
-    rm -rf /out/usr/lib/x86_64-linux-gnu/dri
-    rm -f /out/usr/lib/x86_64-linux-gnu/libLLVM*.so* /out/usr/lib/x86_64-linux-gnu/libgallium*.so*
-    echo NOMREH_DEBIAN_GPU_DRIVERS_PRUNED
+    for driver in /out/usr/lib/x86_64-linux-gnu/dri/*; do
+      [ -e "$driver" ] || [ -L "$driver" ] || continue
+      case "${driver##*/}" in
+        swrast_dri.so|libgallium_dri.so) ;;
+        *) rm -f -- "$driver" ;;
+      esac
+    done
+    # Retain Persian/Arabic, Latin and symbol fonts without carrying every
+    # Noto script into the initramfs.
+    if [ -d /out/usr/share/fonts/truetype/noto ]; then
+      find /out/usr/share/fonts/truetype/noto -type f ! \( \
+        -name "NotoSans-Regular.ttf" -o -name "NotoSans-Bold.ttf" -o \
+        -name "NotoSans-Italic.ttf" -o -name "NotoSans-BoldItalic.ttf" -o \
+        -name "NotoSansArabic-*.ttf" -o -name "NotoSansArabicUI-*.ttf" -o \
+        -name "NotoNaskhArabic-*.ttf" -o -name "NotoSansSymbols-Regular.ttf" -o \
+        -name "NotoSansSymbols2-Regular.ttf" \) -delete
+    fi
+    chroot /out /usr/bin/fc-cache -f >/dev/null
+    echo NOMREH_DEBIAN_SOFTWARE_RENDERING_READY
     rm -f /out/usr/sbin/policy-rc.d
     ln -sf /bin/busybox /out/sbin/poweroff
     echo NOMREH_DEBIAN_POWEROFF_READY
