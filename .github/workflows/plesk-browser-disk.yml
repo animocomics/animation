@@ -1,6 +1,6 @@
 name: Plesk Nomreh read-only disk report
 
-# Recheck after the harmless VM archive and isolated extraction.
+# Fresh preflight snapshot before any proposed staged VM transfer.
 # Verify the subscription total again after exact probe-artifact cleanup.
 
 on:
@@ -18,7 +18,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: plesk-nomreh-browser-disk
+  group: plesk-nomreh-browser
   cancel-in-progress: false
 
 jobs:
@@ -67,6 +67,12 @@ jobs:
           npm init -y > /dev/null
           npm install --ignore-scripts --no-audit --no-fund playwright@1.64.1
           npx playwright install --with-deps chromium
+
+      - name: Test the panel origin policy before contacting Plesk
+        if: steps.config.outputs.configured == 'true'
+        env:
+          NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
+        run: node scripts/test-plesk-origin-policy.cjs
 
       - name: Run and verify the read-only Nomreh disk report
         id: disk
