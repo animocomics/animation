@@ -12,6 +12,9 @@ const MAX_QUEUE_BYTES = 8 * 1024 * 1024;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const MAX_SESSIONS = 4;
 const sessions = new Map();
+const reverseSockets = [];
+const reverseWaiters = [];
+let reverseServer = null;
 
 function cookieHash(request) {
   return crypto.createHash("sha256").update(String(request.headers.cookie || "")).digest("hex");
@@ -111,6 +114,62 @@ function requireSession(request) {
   return session;
 }
 
+function configuredReversePort() {
+  const port = Number(process.env.NOMREH_VNC_REVERSE_PORT ?? 15500);
+  if (port === 0) return 0;
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) throw Object.assign(new Error("Invalid reverse VNC port"), { statusCode: 503, vncCode: "VNC_REVERSE_CONFIG" });
+  return port;
+}
+
+function ensureReverseServer(port) {
+  if (reverseServer) return;
+  const server = net.createServer((socket) => {
+    if (!["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(String(socket.remoteAddress || ""))) {
+      socket.destroy();
+      return;
+    }
+    socket.setNoDelay(true);
+    socket.pause();
+    socket.on("error", () => undefined);
+    socket.once("close", () => {
+      const index = reverseSockets.indexOf(socket);
+      if (index >= 0) reverseSockets.splice(index, 1);
+    });
+    const waiter = reverseWaiters.shift();
+    if (waiter) {
+      clearTimeout(waiter.timer);
+      waiter.resolve(socket);
+    } else if (reverseSockets.length < MAX_SESSIONS) {
+      reverseSockets.push(socket);
+    } else {
+      socket.destroy();
+    }
+  });
+  reverseServer = server;
+  server.once("error", (error) => {
+    if (reverseServer === server) reverseServer = null;
+    for (const waiter of reverseWaiters.splice(0)) {
+      clearTimeout(waiter.timer);
+      waiter.reject(Object.assign(new Error("Reverse VNC listener is unavailable"), { statusCode: 503, vncCode: "VNC_REVERSE_LISTENER", cause: error }));
+    }
+  });
+  server.listen({ host: "127.0.0.1", port, exclusive: true });
+}
+
+function takeReverseSocket(port) {
+  ensureReverseServer(port);
+  if (reverseSockets.length) return Promise.resolve(reverseSockets.shift());
+  return new Promise((resolve, reject) => {
+    const waiter = { resolve, reject, timer: null };
+    waiter.timer = setTimeout(() => {
+      const index = reverseWaiters.indexOf(waiter);
+      if (index >= 0) reverseWaiters.splice(index, 1);
+      reject(Object.assign(new Error("Reverse VNC connection timed out"), { statusCode: 503, vncCode: "VNC_REVERSE_TIMEOUT" }));
+    }, 20000);
+    reverseWaiters.push(waiter);
+  });
+}
+
 function listenerState(port) {
   const hex = port.toString(16).toUpperCase().padStart(4, "0");
   try {
@@ -151,29 +210,37 @@ async function createSession(request, response, applicationPort) {
     throw error;
   }
   request.nomrehVncStage = "VNC_CONFIG";
-  const port = Number(process.env.NOMREH_VNC_PORT || 15900);
-  if (!Number.isInteger(port) || port < 1024 || port > 65535) throw Object.assign(new Error("Invalid VNC port"), { statusCode: 503 });
-  request.nomrehVncStage = "VNC_CONNECT";
-  const socket = net.createConnection({ host: "127.0.0.1", port });
-  socket.setNoDelay(true);
-  await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => finish(new Error("VNC connection timeout")), 8000);
-    function finish(error) {
-      clearTimeout(timer);
-      socket.off("connect", onConnect);
-      socket.off("error", onError);
-      if (error) reject(error); else resolve();
-    }
-    const onConnect = () => finish();
-    const onError = (error) => finish(error);
-    socket.once("connect", onConnect);
-    socket.once("error", onError);
-  }).catch((error) => {
-    socket.destroy();
-    const rawCode = error.message === "VNC connection timeout" ? "TIMEOUT" : String(error.code || "UNKNOWN");
-    const code = /^[A-Z0-9_]+$/.test(rawCode) ? rawCode : "UNKNOWN";
-    throw Object.assign(new Error("VNC is unavailable"), { statusCode: 503, vncCode: `VNC_CONNECT_${code}_${listenerState(port)}`, cause: error });
-  });
+  const reversePort = configuredReversePort();
+  let socket;
+  if (reversePort) {
+    request.nomrehVncStage = "VNC_REVERSE";
+    socket = await takeReverseSocket(reversePort);
+  } else {
+    const port = Number(process.env.NOMREH_VNC_PORT || 15900);
+    if (!Number.isInteger(port) || port < 1024 || port > 65535) throw Object.assign(new Error("Invalid VNC port"), { statusCode: 503 });
+    request.nomrehVncStage = "VNC_CONNECT";
+    socket = net.createConnection({ host: "127.0.0.1", port });
+    socket.setNoDelay(true);
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => finish(new Error("VNC connection timeout")), 8000);
+      function finish(error) {
+        clearTimeout(timer);
+        socket.off("connect", onConnect);
+        socket.off("error", onError);
+        if (error) reject(error); else resolve();
+      }
+      const onConnect = () => finish();
+      const onError = (error) => finish(error);
+      socket.once("connect", onConnect);
+      socket.once("error", onError);
+    }).catch((error) => {
+      socket.destroy();
+      const rawCode = error.message === "VNC connection timeout" ? "TIMEOUT" : String(error.code || "UNKNOWN");
+      const code = /^[A-Z0-9_]+$/.test(rawCode) ? rawCode : "UNKNOWN";
+      throw Object.assign(new Error("VNC is unavailable"), { statusCode: 503, vncCode: `VNC_CONNECT_${code}_${listenerState(port)}`, cause: error });
+    });
+  }
+  socket.pause();
   request.nomrehVncStage = "SESSION_CREATE";
   const id = crypto.randomBytes(16).toString("hex");
   const session = { id, socket, cookieHash: cookieHash(request), chunks: [], queued: 0, closed: false, destroyed: false, exchanging: false, notify: null, idleTimer: null };
@@ -196,6 +263,7 @@ async function createSession(request, response, applicationPort) {
   socket.once("error", closed);
   request.once("aborted", () => destroySession(session));
   sendJson(response, 200, { session: id });
+  socket.resume();
 }
 
 async function exchange(session, request, response) {
@@ -257,6 +325,15 @@ function handleShecanVncHttp(request, response, applicationPort) {
 
 function closeShecanVncHttpSessions() {
   for (const session of [...sessions.values()]) destroySession(session);
+  for (const socket of reverseSockets.splice(0)) socket.destroy();
+  for (const waiter of reverseWaiters.splice(0)) {
+    clearTimeout(waiter.timer);
+    waiter.reject(Object.assign(new Error("Reverse VNC listener closed"), { statusCode: 503, vncCode: "VNC_REVERSE_CLOSED" }));
+  }
+  if (reverseServer) {
+    reverseServer.close();
+    reverseServer = null;
+  }
 }
 
 module.exports = { handleShecanVncHttp, closeShecanVncHttpSessions, HTTP_CHANNEL_PATH };

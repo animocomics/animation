@@ -16,31 +16,37 @@ function listen(server: http.Server | net.Server): Promise<number> {
   });
 }
 
-test("authenticated HTTP raw channel bridges both VNC directions without WebSocket upgrade", async () => {
-  const oldPort = process.env.NOMREH_VNC_PORT;
+test("authenticated HTTP raw channel accepts reverse VNC and bridges both directions", async () => {
+  const oldReversePort = process.env.NOMREH_VNC_REVERSE_PORT;
   const restoreAuth = createVncAuthFixture();
+  const reservation = net.createServer();
+  const reversePort = await listen(reservation);
+  await new Promise<void>((resolve) => reservation.close(() => resolve()));
+  process.env.NOMREH_VNC_REVERSE_PORT = String(reversePort);
   const targetSockets = new Set<net.Socket>();
   const targetFrames: Buffer[] = [];
-  const target = net.createServer((socket) => {
+  let targetStopped = false;
+  const connectTarget = () => {
+    if (targetStopped) return;
+    const socket = net.createConnection({ host: "127.0.0.1", port: reversePort });
     targetSockets.add(socket);
+    socket.setNoDelay(true);
+    socket.on("connect", () => socket.write("RFB 003.008\n"));
     socket.on("data", (chunk) => {
       targetFrames.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
       socket.write(Buffer.from([1, 1]));
     });
-    socket.on("close", () => targetSockets.delete(socket));
-    socket.write("RFB 003.008\n");
-  });
-  const vncPort = await listen(target);
-  process.env.NOMREH_VNC_PORT = String(vncPort);
+    socket.on("error", () => undefined);
+    socket.on("close", () => {
+      targetSockets.delete(socket);
+      if (!targetStopped) setTimeout(connectTarget, 20);
+    });
+  };
+  connectTarget();
   const application = http.createServer((request, response) => {
     if (handleShecanVncHttp(request, response, applicationPort)) return;
-    if (request.url !== "/api/admin/shecan-runtime" || request.headers.cookie !== "nomreh_session=valid-admin") {
-      response.writeHead(401, { "Content-Type": "application/json" });
-      response.end("{\"error\":\"unauthorized\"}");
-      return;
-    }
-    response.writeHead(200, { "Content-Type": "application/json" });
-    response.end(JSON.stringify({ runtime: { appReady: true }, network: {} }));
+    response.writeHead(404);
+    response.end();
   });
   const applicationPort = await listen(application);
   const endpoint = `http://127.0.0.1:${applicationPort}${HTTP_CHANNEL_PATH}`;
@@ -74,12 +80,13 @@ test("authenticated HTTP raw channel bridges both VNC directions without WebSock
     assert.equal(closed.status, 204);
     session = "";
   } finally {
+    targetStopped = true;
     closeShecanVncHttpSessions();
     for (const socket of targetSockets) socket.destroy();
     application.closeAllConnections();
     await new Promise<void>((resolve) => application.close(() => resolve()));
-    await new Promise<void>((resolve) => target.close(() => resolve()));
-    if (oldPort === undefined) delete process.env.NOMREH_VNC_PORT; else process.env.NOMREH_VNC_PORT = oldPort;
+    if (oldReversePort === undefined) delete process.env.NOMREH_VNC_REVERSE_PORT;
+    else process.env.NOMREH_VNC_REVERSE_PORT = oldReversePort;
     restoreAuth();
   }
 });
