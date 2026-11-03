@@ -1,6 +1,6 @@
 name: Plesk Nomreh archive extraction
 
-# Validated application source: fa7509e40ff985c3655e00f811528e8c27a821bd
+# Validated application source: 9ac5e8c98977575a9bbba7701ae956dd7893d4a8
 # Hosted delta verification stays in the live File Manager session without AJAX-resetting navigation.
 
 on:
@@ -49,7 +49,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          upload_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41570137552" --jq '.status + " " + .conclusion')"
+          upload_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41577894215" --jq '.status + " " + .conclusion')"
           test "$upload_state" = "completed success"
           grep -F 'Nomreh Passenger-aware launcher is active for this build.' scripts/plesk-node22.cjs > /dev/null
           grep -F 'return [mainFile];' scripts/plesk-node22.cjs > /dev/null
@@ -73,9 +73,9 @@ jobs:
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
           PLESK_BROWSER_ACTION: extract
-          PLESK_ARCHIVE_NAME: nomreh-deploy-shecan-ddns-v27-delta.zip
-          PLESK_DELTA_SOURCE: fa7509e40ff985c3655e00f811528e8c27a821bd
-          PLESK_DELTA_FILES: lib/server/api-network.ts
+          PLESK_ARCHIVE_NAME: nomreh-deploy-shecan-account-v28-delta.zip
+          PLESK_DELTA_SOURCE: 9ac5e8c98977575a9bbba7701ae956dd7893d4a8
+          PLESK_DELTA_FILES: app/api/admin/shecan-account/route.ts,app/features.css,components/api-network-connection.tsx,lib/server/api-network.ts,lib/server/db.ts,lib/server/shecan-account.ts,lib/types.ts
           PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-plesk-extract.md
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
         run: node scripts/plesk-browser-diagnostics.cjs
