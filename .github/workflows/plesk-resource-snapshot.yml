@@ -44,7 +44,9 @@ jobs:
         if: steps.config.outputs.configured == 'true'
         env:
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
-        run: node scripts/test-plesk-origin-policy.cjs
+        run: |
+          set -o pipefail
+          node scripts/test-plesk-origin-policy.cjs 2>&1 | tee "$RUNNER_TEMP/origin-test.log"
       - name: Read only memory and process limits through Nomreh console
         id: snapshot
         if: steps.config.outputs.configured == 'true'
@@ -66,6 +68,9 @@ jobs:
           set -euo pipefail
           conclusion=failure
           summary='No resource snapshot was confirmed; no VM was started.'
+          if [ -f "$RUNNER_TEMP/origin-test.log" ]; then
+            summary="Local synthetic origin test: $(tail -c 2000 "$RUNNER_TEMP/origin-test.log")"
+          fi
           if [ "$CONFIGURED" = true ] && [ "$OUTCOME" = success ] && [ -f "$RUNNER_TEMP/resource-report.md" ]; then
             summary="$(grep '^- Resource: NOMREH_RESOURCE_' "$RUNNER_TEMP/resource-report.md")"
             conclusion=success
