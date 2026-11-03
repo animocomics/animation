@@ -50,12 +50,12 @@ jobs:
           set -euo pipefail
           build_state=""
           for attempt in 1 2 3 4 5; do
-            build_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41586863418" --jq '.status + " " + .conclusion')"
+            build_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41597387222" --jq '.status + " " + .conclusion')"
             if [ "$build_state" = "completed success" ]; then break; fi
             sleep 3
           done
           test "$build_state" = "completed success"
-          cleanup_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41587501549" --jq '.status + " " + .conclusion')"
+          cleanup_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41595580745" --jq '.status + " " + .conclusion')"
           test "$cleanup_state" = "completed success"
 
       - name: Prepare an isolated temporary browser
