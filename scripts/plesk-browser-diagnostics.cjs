@@ -82,10 +82,12 @@ function labelValues(text, labels) {
 }
 
 async function main() {
-  if (!["diagnose", "upload", "extract", "runtime-extract", "vm-probe", "cleanup-vm-probe", "build", "status", "disk", "os-info", "resource-check", "account-network", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
+  if (!["diagnose", "upload", "extract", "runtime-extract", "vm-probe", "cleanup-vm-probe", "build", "status", "disk", "os-info", "resource-check", "account-network", "host-probe-stage", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
   const panel = normalizePanelUrl(process.env.PLESK_PANEL_URL || "");
   const readOnly = ACTION === "diagnose" || ACTION === "status" || ACTION === "account-network" || ACTION === "resource-check";
-  const actionDescription = ACTION === "upload"
+  const actionDescription = ACTION === "host-probe-stage"
+    ? "Controlled offline probe stage only: fresh scoped quota check and hash-verified exact files. No VM execution, DNS, networking, build, restart, or settings change."
+    : ACTION === "upload"
     ? "Controlled action: upload one validated application archive to Nomreh only. No extraction, build, restart, or settings change is attempted."
     : ACTION === "extract"
       ? "Controlled action: extract the validated archive inside the Nomreh application root only. Persistent data, uploads, environment files, build, restart, and settings changes are not touched."
@@ -462,7 +464,7 @@ async function main() {
         if (statusResult.error) lines.push(`- Status read error: ${sanitize(statusResult.error)}`);
         lines.push("- Read-only status request; no command, restart, or setting change was attempted.", "");
       }
-      if (["diagnose", "build", "status", "disk", "os-info", "resource-check", "account-network", "vm-probe", "cleanup-vm-probe"].includes(ACTION) && nomrehConsoleLink && await nomrehConsoleLink.count()) {
+      if (["diagnose", "build", "status", "disk", "os-info", "resource-check", "account-network", "host-probe-stage", "vm-probe", "cleanup-vm-probe"].includes(ACTION) && nomrehConsoleLink && await nomrehConsoleLink.count()) {
         const consoleResponsePromise = page.waitForResponse((item) => item.url().includes("/modules/nodejs/index.php/domain/console") && item.request().isNavigationRequest(), { timeout: 15000 }).catch(() => null);
         await nomrehConsoleLink.click({ timeout: 8000 }).catch(() => undefined);
         const consoleResponse = await consoleResponsePromise;
@@ -584,6 +586,37 @@ async function main() {
           if (!probeLines.some((line) => line.startsWith("SHECAN_ACCOUNT_NETWORK_COMPLETE"))) throw new Error("The credential-free Shecan account network probe did not complete within 100 seconds. No network or file setting was changed.");
           for (const line of probeLines.slice(0, 32)) lines.push(`- Account network: ${sanitize(line.slice(0, 350))}`);
           lines.push("- Account network and native-app capability probe completed; no DNS, file, application process, build, restart, OTP, login, persistent namespace, or settings change was attempted.", "");
+          actionCompleted = true;
+        }
+        if (ACTION === "host-probe-stage") {
+          if (!consoleBody.includes(`Node.js on ${DOMAIN}`) || !consoleBody.includes("/nomreh.arounidea.com")) throw new Error("The console is not scoped to Nomreh; no staged operation was started.");
+          const phase = process.env.PLESK_HOST_PROBE_STAGE || "";
+          if (!/^(?:preflight-base-upload|extract-base|preflight-part-upload-00[0-2]|extract-part-00[0-2]|assemble)$/.test(phase)) throw new Error("The host probe stage is invalid.");
+          const manifestPath = process.env.PLESK_HOST_PROBE_MANIFEST || "";
+          if (!manifestPath || !fs.statSync(manifestPath).isFile()) throw new Error("The independently verified manifest is unavailable.");
+          const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+          require("./shecan-vm/staged-host-probe.cjs").checkManifest(manifest);
+          const commandInput = page.getByPlaceholder(/Pick a script or command/i).first();
+          const executeButton = page.locator("button[title='Execute command'], button[aria-label='Execute command']").first();
+          const outputElement = page.locator("pre.pul-console-output").first();
+          if (!await commandInput.count() || !await executeButton.count() || !await outputElement.count()) throw new Error("The scoped console controls were not found.");
+          const nonce = crypto.randomBytes(12).toString("hex");
+          const { command, prefix } = require("./shecan-vm/build-host-stage-command.cjs").buildHostStageCommand(phase, manifest, nonce);
+          lines.push("## Controlled offline probe stage", "", `- Stage: ${phase}`, "- Fresh quota measurements are checked inside the scoped command immediately before changes. Exact archives are removed only after hash verification; no VM is started.", "");
+          await commandInput.fill(command);
+          if (await commandInput.inputValue() !== command) throw new Error("The staged command was not retained exactly; it was not executed.");
+          await executeButton.click({ timeout: 8000 });
+          const startedAt = Date.now(); let result = "";
+          while (Date.now() - startedAt < 330000) {
+            await page.waitForTimeout(1000);
+            const output = await outputElement.innerText().catch(() => "");
+            const resultLine = output.split(/\r?\n/).map((line) => line.trim()).find((line) => line.startsWith(prefix + "_PASS ") || line.startsWith(prefix + "_FAIL "));
+            if (resultLine) { result = resultLine; break; }
+          }
+          if (!result) throw new Error("The staged operation did not report completion; inspect host state before retrying.");
+          if (result.startsWith(prefix + "_FAIL ")) throw new Error(`The staged operation stopped safely: ${result.slice((prefix + "_FAIL ").length)}`);
+          const data = JSON.parse(result.slice((prefix + "_PASS ").length));
+          lines.push(`- Stage verified: ${phase}`, `- Stage result: ${JSON.stringify(data)}`, "");
           actionCompleted = true;
         }
         if (ACTION === "vm-probe") {
@@ -789,7 +822,7 @@ async function main() {
           actionCompleted = true;
         }
       }
-      if (nomrehFilesPath && !["enable-runtime", "restart-runtime", "vm-probe", "cleanup-vm-probe"].includes(ACTION)) {
+      if (nomrehFilesPath && !["enable-runtime", "restart-runtime", "vm-probe", "cleanup-vm-probe", "host-probe-stage"].includes(ACTION)) {
         let filePath = nomrehFilesPath;
         for (let depth = 0; depth < 2; depth += 1) {
           let response = null;
@@ -1803,9 +1836,11 @@ async function main() {
         lines.push("## Read-only Nomreh domain logs", "", "- Nomreh's scoped Logs tool was not exposed on the domain card; no alternate domain or log path was accessed.", "");
       }
     }
-    if (["upload", "extract", "runtime-extract", "vm-probe", "cleanup-vm-probe", "build", "status", "disk", "os-info", "resource-check", "account-network", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Review the reported host state before further action; no live-success claim was made.`);
+    if (["upload", "extract", "runtime-extract", "vm-probe", "cleanup-vm-probe", "build", "status", "disk", "os-info", "resource-check", "account-network", "host-probe-stage", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Review the reported host state before further action; no live-success claim was made.`);
     lines.push("## Result", "", ACTION === "upload"
       ? "The validated application archive was uploaded to Nomreh. Extraction, dependency installation, build, and Node.js enablement remain pending."
+      : ACTION === "host-probe-stage"
+        ? "The specified scoped offline probe stage reported completion. This is not an execution, display, login, or provider success claim."
       : ACTION === "extract"
         ? "The validated application source was extracted and verified in the Nomreh application root. Dependency installation, build, and Node.js enablement remain pending."
         : ACTION === "runtime-extract"

@@ -1,0 +1,83 @@
+name: Plesk offline probe preflight
+
+# Read-only only. A separate reviewed workflow is required for any upload.
+on:
+  push:
+    branches: [arena/ccbdcb6e-animation]
+    paths: [.github/workflows/shecan-host-preflight.yml]
+
+permissions:
+  contents: read
+  checks: write
+  actions: read
+
+concurrency:
+  group: plesk-nomreh-browser
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require successful local staging and independent verification
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(gh api repos/${GITHUB_REPOSITORY}/actions/runs/41616711277 --jq '.status + " " + .conclusion')" = 'completed success'
+          test "$(gh api repos/${GITHUB_REPOSITORY}/actions/runs/41616711370 --jq '.status + " " + .conclusion')" = 'completed success'
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests/shecan-vm -v
+      - uses: actions/download-artifact@v4
+        with:
+          name: official-offline-host-probe
+          path: ${{ runner.temp }}/packages
+          github-token: ${{ github.token }}
+          run-id: 41614976333
+      - name: Independently validate downloaded archives before contacting Plesk
+        run: python3 scripts/shecan-vm/verify-probe-packages.py "$RUNNER_TEMP/packages" "$RUNNER_TEMP/verified.json"
+      - name: Prepare isolated browser
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/plesk-browser"
+          cd "$RUNNER_TEMP/plesk-browser"
+          npm init -y >/dev/null
+          npm install --ignore-scripts --no-audit --no-fund playwright@1.64.1
+          npx playwright install --with-deps chromium
+      - name: Test panel origin policy
+        env:
+          NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
+        run: node scripts/test-plesk-origin-policy.cjs
+      - name: Read-only quota and exact-target preflight on Nomreh
+        id: preflight
+        env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+          PLESK_BROWSER_ACTION: host-probe-stage
+          PLESK_HOST_PROBE_STAGE: preflight-base-upload
+          PLESK_HOST_PROBE_MANIFEST: ${{ runner.temp }}/verified.json
+          PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/preflight-report.md
+          NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
+        run: node scripts/plesk-browser-diagnostics.cjs
+      - name: Publish preflight result only
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOME: ${{ steps.preflight.outcome }}
+        run: |
+          set -euo pipefail
+          conclusion=failure
+          summary='Preflight did not complete. No upload, extraction or execution was attempted.'
+          if [ "$OUTCOME" = success ] && [ -f "$RUNNER_TEMP/preflight-report.md" ]; then
+            conclusion=success
+            summary="$(grep -E '^- Stage (verified|result):' "$RUNNER_TEMP/preflight-report.md")"$'\nNo upload, extraction or execution was attempted.'
+          elif [ -f "$RUNNER_TEMP/preflight-report.md" ]; then
+            summary="$(tail -n 8 "$RUNNER_TEMP/preflight-report.md")"
+          fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name='Plesk offline probe read-only preflight' -f head_sha="${GITHUB_SHA}" \
+            -f status=completed -f conclusion="$conclusion" \
+            -f 'output[title]=Scoped Plesk quota preflight only; no transfer' \
+            --raw-field "output[summary]=${summary}" >/dev/null

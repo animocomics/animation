@@ -67,6 +67,21 @@ try{const run=require(process.argv[1]);const result=run.installStage(m,process.a
         self.assertFalse(list(guest.glob('initramfs-gui.part-*')))
         self.assertNotEqual(self.stage('assemble').returncode, 0)
 
+    def test_encoded_console_command_runs_and_fails_closed(self):
+        helper = ROOT / 'scripts/shecan-vm/build-host-stage-command.cjs'
+        js = "const x=require(process.argv[1]),fs=require('fs');console.log(JSON.stringify(x.buildHostStageCommand(process.argv[2],JSON.parse(fs.readFileSync(process.argv[3])),'0123456789abcdef01234567')))"
+        def command(phase):
+            result = subprocess.run(['node', '-e', js, str(helper), phase, str(self.manifest_path)], text=True, capture_output=True, check=True)
+            return json.loads(result.stdout)
+        built = command('preflight-base-upload')
+        result = subprocess.run(built['command'].removeprefix('exec -- '), cwd=self.app, shell=True, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(built['prefix'] + '_PASS ', result.stdout)
+        result = subprocess.run(command('extract-base')['command'].removeprefix('exec -- '), cwd=self.app, shell=True, text=True, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(built['prefix'] + '_FAIL ', result.stdout)
+        self.assertFalse((self.app / 'nomreh-vm').exists())
+
     def test_quota_hash_and_existing_targets_fail_closed(self):
         b = self.manifest['base']
         self.assertIn('QUOTA_HEADROOM_INSUFFICIENT', self.stage('preflight-base-upload', high=True).stderr)
