@@ -1,0 +1,55 @@
+name: Probe official Shecan desktop in offline glibc VM
+
+on:
+  push:
+    branches: [arena/ccbdcb6e-animation]
+    paths:
+      - .github/workflows/shecan-official-glibc-vm.yml
+      - scripts/shecan-vm/build-official-glibc-vm.sh
+      - scripts/shecan-vm/guest-init-glibc-probe.sh
+
+permissions:
+  contents: read
+  checks: write
+  actions: read
+
+jobs:
+  glibc-vm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require prior actual offline glibc window evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(gh api repos/${GITHUB_REPOSITORY}/actions/runs/41602006137 --jq '.status + " " + .conclusion')" = 'completed success'
+          gh api 'repos/${{ github.repository }}/commits/5474f3770358011ed2af18b8ce5e2046e9d0b71f/check-runs?per_page=100' \
+            --jq '.check_runs[] | select(.name == "Official Shecan offline glibc diagnostic" and .conclusion == "success") | .output.summary' > "$RUNNER_TEMP/prior-glibc.txt"
+          grep -Fx 'NOMREH_GLIBC_PROBE_WINDOW_OBSERVED yes' "$RUNNER_TEMP/prior-glibc.txt" >/dev/null
+          grep -Fx 'NOMREH_GLIBC_PROBE_NO_NETWORK yes' "$RUNNER_TEMP/prior-glibc.txt" >/dev/null
+          grep -Fx 'NOMREH_GLIBC_PROBE_NO_CREDENTIALS yes' "$RUNNER_TEMP/prior-glibc.txt" >/dev/null
+          grep -Fx 'NOMREH_GLIBC_PROBE_PASS' "$RUNNER_TEMP/prior-glibc.txt" >/dev/null
+          grep -F -- '-nic none' scripts/shecan-vm/run-gui.sh >/dev/null
+      - name: Run the isolated, networkless VM test on the runner only
+        id: probe
+        run: |
+          set -euo pipefail
+          bash scripts/shecan-vm/build-official-glibc-vm.sh "$GITHUB_WORKSPACE" 2>&1 | tee "$RUNNER_TEMP/glibc-vm.log"
+      - name: Publish local-only result
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOME: ${{ steps.probe.outcome }}
+        run: |
+          set -euo pipefail
+          conclusion=failure
+          if [ "$OUTCOME" = success ]; then conclusion=success; fi
+          summary='No diagnostic output was produced. Plesk was not contacted.'
+          if [ -f "$RUNNER_TEMP/glibc-vm.log" ]; then summary="$(tail -c 55000 "$RUNNER_TEMP/glibc-vm.log")"; fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name='Official Shecan offline glibc VM' -f head_sha="${GITHUB_SHA}" \
+            -f status=completed -f conclusion="$conclusion" \
+            -f 'output[title]=Offline glibc VM probe on runner only' \
+            --raw-field "output[summary]=${summary}" > /dev/null
