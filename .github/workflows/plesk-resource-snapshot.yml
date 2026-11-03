@@ -1,6 +1,6 @@
 name: Plesk Nomreh read-only memory snapshot
 
-# The local test checks redirect interception and the origin-restricted CONNECT proxy.
+# Read-only snapshot also checks whether unzip is available within Nomreh.
 
 on:
   push:
