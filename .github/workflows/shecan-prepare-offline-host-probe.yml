@@ -1,0 +1,64 @@
+name: Prepare bounded official desktop host probe
+
+on:
+  push:
+    branches: [arena/ccbdcb6e-animation]
+    paths: [.github/workflows/shecan-prepare-offline-host-probe.yml]
+
+permissions:
+  contents: read
+  checks: write
+  actions: read
+
+jobs:
+  prepare-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require actual offline browser framebuffer evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(gh api repos/${GITHUB_REPOSITORY}/actions/runs/41613104364 --jq '.status + " " + .conclusion')" = 'completed success'
+          gh api 'repos/${{ github.repository }}/commits/fb929b63f4d791f607e3d40608fba9d8e955b9a4/check-runs?per_page=100' \
+            --jq '.check_runs[] | select(.name == "Official Shecan cached local display" and .conclusion == "success") | .output.summary' > "$RUNNER_TEMP/prior-display.txt"
+          for marker in NOMREH_NOVNC_BROWSER_CONNECTED NOMREH_NOVNC_FRAMEBUFFER_NONBLANK NOMREH_NOVNC_GUEST_NO_NETWORK NOMREH_NOVNC_NO_CREDENTIALS; do
+            grep -Fx "$marker yes" "$RUNNER_TEMP/prior-display.txt" >/dev/null
+          done
+          grep -Fx NOMREH_NOVNC_LOCAL_PASS "$RUNNER_TEMP/prior-display.txt" >/dev/null
+      - name: Test package verification rules
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests/shecan-vm -v
+      - name: Rebuild and run the official VM before preparing packages
+        id: build
+        env:
+          NOMREH_PACKAGE_DIR: ${{ runner.temp }}/host-probe-packages
+        run: |
+          set -euo pipefail
+          bash scripts/shecan-vm/build-official-glibc-vm.sh "$GITHUB_WORKSPACE" 2>&1 | tee "$RUNNER_TEMP/prepare-probe.log"
+      - name: Save the no-credentials packages as a short-lived private artifact
+        if: steps.build.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: official-offline-host-probe
+          path: ${{ runner.temp }}/host-probe-packages
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+      - name: Publish preparation evidence
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOME: ${{ steps.build.outcome }}
+        run: |
+          set -euo pipefail
+          conclusion=failure
+          if [ "$OUTCOME" = success ]; then conclusion=success; fi
+          summary='No preparation report was produced. Plesk was not contacted.'
+          if [ -f "$RUNNER_TEMP/prepare-probe.log" ]; then summary="$(tail -c 50000 "$RUNNER_TEMP/prepare-probe.log")"; fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name='Official Shecan bounded host probe preparation' -f head_sha="${GITHUB_SHA}" \
+            -f status=completed -f conclusion="$conclusion" \
+            -f 'output[title]=Private artifact preparation only; no Plesk deployment' \
+            --raw-field "output[summary]=${summary}" >/dev/null

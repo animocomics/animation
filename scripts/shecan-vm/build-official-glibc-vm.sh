@@ -94,4 +94,11 @@ for marker in 'NOMREH_OFFICIAL_PROBE_WINDOW_OBSERVED yes' 'NOMREH_OFFICIAL_PROBE
   grep -Fx "$marker" <(tr -d '\r' < "$WORK/guest.log") >/dev/null
 done
 python3 "$SOURCE_ROOT/scripts/shecan-vm/package-probe.py" "$WORK/full/nomreh-vm/gui" "$WORK/local-packages"
+if [[ -n "${NOMREH_PACKAGE_DIR:-}" ]]; then
+  mkdir -p "$NOMREH_PACKAGE_DIR"
+  if [[ -n "$(find "$NOMREH_PACKAGE_DIR" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
+    echo 'Package output directory is not empty.' >&2; exit 1
+  fi
+  cp -a "$WORK/local-packages/." "$NOMREH_PACKAGE_DIR/"
+fi
 echo 'Local glibc VM and package verification complete; no archive was uploaded or deployed.'

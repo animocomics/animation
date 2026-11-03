@@ -52,7 +52,7 @@ def pack(runtime, destination, part_size=DEFAULT_PART):
         raise ValueError('Unexpected runtime entry')
     destination.mkdir(parents=True, exist_ok=True)
 
-    base = destination / 'nomreh-gui-base.zip'
+    base = destination / 'nomreh-deploy-gui-probe-base.zip'
     with zipfile.ZipFile(base, 'x', compression=zipfile.ZIP_DEFLATED, compresslevel=9, allowZip64=True, strict_timestamps=False) as archive:
         for entry in sorted(runtime.rglob('*')):
             if entry == source or entry.is_dir() and not entry.is_symlink():
@@ -86,7 +86,7 @@ def pack(runtime, destination, part_size=DEFAULT_PART):
                 break
             total_hash.update(data)
             part_name = f'initramfs-gui.part-{index:03}'
-            zip_name = f'nomreh-gui-part-{index:03}.zip'
+            zip_name = f'nomreh-deploy-gui-probe-part-{index:03}.zip'
             target = destination / zip_name
             with zipfile.ZipFile(target, 'x', compression=zipfile.ZIP_STORED) as archive:
                 archive.writestr(f'{PREFIX}/guest/{part_name}', data)
