@@ -175,17 +175,27 @@ export async function providerFetch(
   network?: ProviderNetworkConfig,
   dns5353Resolver: typeof resolveShecanDns5353 = resolveShecanDns5353,
 ): Promise<Response> {
-  const hostname = new URL(url).hostname.toLowerCase();
-  if (!network?.enabled || !isProviderHostname(hostname)) {
-    if (!network?.enabled && isProviderHostname(hostname)) closeProviderNetwork();
-    return fetch(url, init);
+  let target: URL;
+  try { target = new URL(url); }
+  catch { throw new ProviderNetworkError("نشانی سرویس‌دهنده معتبر نیست.", "connection"); }
+  const hostname = target.hostname.toLowerCase();
+  if (target.protocol !== "https:" || target.username || target.password || target.port || !isProviderHostname(hostname)) {
+    throw new ProviderNetworkError("نشانی سرویس‌دهنده در فهرست مجاز HTTPS نیست.", "connection");
+  }
+  // Never allow fetch to follow a redirect to an unchecked origin, including
+  // when a caller supplies a different redirect mode. A 3xx is returned to
+  // the caller as a non-success response, not followed or retried directly.
+  const safeInit: RequestInit = { ...init, redirect: "manual" };
+  if (!network?.enabled) {
+    closeProviderNetwork();
+    return fetch(url, safeInit);
   }
   const entry = getNetwork(network);
   let lastError: unknown;
   try {
     // Resolve before fetch so DNS failures remain distinguishable and cannot silently fall back to a direct request.
     await entry.resolve(hostname);
-    return await fetch(url, { ...init, dispatcher: entry.agent } as RequestInit);
+    return await fetch(url, { ...safeInit, dispatcher: entry.agent } as RequestInit);
   } catch (error) {
     lastError = error;
   }
@@ -206,7 +216,7 @@ export async function providerFetch(
         entry.fallbackAgents.set(address, agent);
       }
       try {
-        return await fetch(url, { ...init, dispatcher: agent } as RequestInit);
+        return await fetch(url, { ...safeInit, dispatcher: agent } as RequestInit);
       } catch (error) {
         lastError = error;
       }

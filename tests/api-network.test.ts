@@ -135,25 +135,52 @@ test("Shecan DoH pins only the official transport address, preserves TLS identit
   }
 });
 
-test("providerFetch attaches an AI-only dispatcher when enabled and stays direct otherwise", async () => {
+test("providerFetch enforces an HTTPS provider allowlist, blocks redirects, and scopes its dispatcher", async () => {
   const originalFetch = globalThis.fetch;
   const originalResolve = Resolver.prototype.resolve4;
-  const seen: Array<{ url: string; dispatcher: unknown }> = [];
+  const seen: Array<{ url: string; dispatcher: unknown; redirect?: RequestRedirect }> = [];
   Resolver.prototype.resolve4 = (async () => [{ address: "203.0.113.20", ttl: 60 }]) as unknown as typeof Resolver.prototype.resolve4;
   globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
-    seen.push({ url, dispatcher: (init as RequestInit & { dispatcher?: unknown } | undefined)?.dispatcher });
+    seen.push({ url, dispatcher: (init as RequestInit & { dispatcher?: unknown } | undefined)?.dispatcher, redirect: init?.redirect });
     return Response.json({ ok: true });
   }) as typeof fetch;
   const network = { enabled: true, plan: "free" as const, servers: ["198.51.100.10", "198.51.100.11"] as [string, string] };
   try {
-    await providerFetch("https://api.z.ai/api/paas/v4/chat/completions", {}, network);
-    await providerFetch("https://example.com/ordinary-site", {}, network);
+    await providerFetch("https://api.z.ai/api/paas/v4/chat/completions", { redirect: "follow" }, network);
+    for (const url of ["https://example.com/ordinary-site", "http://api.z.ai/", "https://api.z.ai:444/", "https://user@api.z.ai/"]) {
+      await assert.rejects(providerFetch(url, {}, network), ProviderNetworkError);
+    }
     await providerFetch("https://api.openai.com/v1/responses", {}, { ...network, enabled: false });
+    assert.equal(seen.length, 2, "rejected destinations must never reach fetch");
     assert.ok(seen[0].dispatcher, "enabled provider call should have a dedicated dispatcher");
-    assert.equal(seen[1].dispatcher, undefined, "ordinary traffic must not inherit the provider dispatcher");
-    assert.equal(seen[2].dispatcher, undefined, "disabled network must preserve direct provider behavior");
+    assert.equal(seen[0].redirect, "manual", "redirects cannot escape the allowlist");
+    assert.equal(seen[1].redirect, "manual");
+    assert.equal(seen[1].dispatcher, undefined, "disabled network must preserve direct provider behavior");
   } finally {
+    globalThis.fetch = originalFetch;
+    Resolver.prototype.resolve4 = originalResolve;
+  }
+});
+
+test("provider redirects are returned without following or falling back to direct traffic", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalResolve = Resolver.prototype.resolve4;
+  const calls: Array<{ dispatcher: unknown; redirect?: RequestRedirect }> = [];
+  Resolver.prototype.resolve4 = (async () => [{ address: "203.0.113.21", ttl: 60 }]) as unknown as typeof Resolver.prototype.resolve4;
+  globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+    calls.push({ dispatcher: (init as RequestInit & { dispatcher?: unknown } | undefined)?.dispatcher, redirect: init?.redirect });
+    return new Response(null, { status: 302, headers: { location: "https://example.com/" } });
+  }) as typeof fetch;
+  const network = { enabled: true, plan: "pro" as const, servers: ["198.51.100.12", "198.51.100.13"] as [string, string] };
+  try {
+    const response = await providerFetch("https://api.openai.com/v1/responses", { redirect: "follow" }, network, async () => { throw new Error("unexpected retry"); });
+    assert.equal(response.status, 302);
+    assert.equal(calls.length, 1);
+    assert.ok(calls[0].dispatcher);
+    assert.equal(calls[0].redirect, "manual");
+  } finally {
+    closeProviderNetwork();
     globalThis.fetch = originalFetch;
     Resolver.prototype.resolve4 = originalResolve;
   }
