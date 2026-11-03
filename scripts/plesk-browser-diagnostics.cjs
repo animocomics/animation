@@ -15,7 +15,7 @@ const ACTION = process.env.PLESK_BROWSER_ACTION || "diagnose";
 const UPLOAD_ARCHIVE = process.env.PLESK_UPLOAD_ARCHIVE || "";
 const ARCHIVE_NAME = process.env.PLESK_ARCHIVE_NAME || "nomreh-deploy.zip";
 if (!/^nomreh-deploy(?:-[a-z0-9-]+)?\.zip$/.test(ARCHIVE_NAME)) throw new Error("The Nomreh deployment archive name is invalid.");
-const OFFICIAL_RUNTIME_ARCHIVE = ARCHIVE_NAME === "nomreh-deploy-shecan-official-v1.zip";
+const OFFICIAL_RUNTIME_ARCHIVE = /^nomreh-deploy-shecan-official-v[0-9]+\.zip$/.test(ARCHIVE_NAME);
 const RUNTIME_DIRECTORY = OFFICIAL_RUNTIME_ARCHIVE ? "official" : "probe";
 const RUNTIME_RUNNER = OFFICIAL_RUNTIME_ARCHIVE ? "run-official.sh" : "run-probe.sh";
 const OUTPUT = process.env.PLESK_DIAGNOSTICS_OUTPUT || path.join(os.tmpdir(), "nomreh-plesk-browser-diagnostics.md");
