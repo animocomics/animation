@@ -519,7 +519,7 @@ async function officialRuntimeReadiness(page, validateOfficialRuntime) {
   const runtimeResponse = await context.request.get(`${ORIGIN}/api/admin/shecan-runtime`);
   const runtimePayload = await runtimeResponse.json().catch(() => ({}));
   if (!runtimeResponse.ok() || typeof runtimePayload.runtime?.installed !== "boolean") throw new Error("The authenticated official-runtime status API was not operational.");
-  lines.push(`- Official runtime installed: ${runtimePayload.runtime.installed ? "yes" : "no"}; running: ${runtimePayload.runtime.running ? "yes" : "no"}; app-ready: ${runtimePayload.runtime.appReady ? "yes" : "no"}; supervisor: ${runtimePayload.runtime.supervisorRunning === true ? "yes" : runtimePayload.runtime.supervisorRunning === false ? "no" : "unknown"}.`);
+  lines.push(`- Official runtime installed: ${runtimePayload.runtime.installed ? "yes" : "no"}; running: ${runtimePayload.runtime.running ? "yes" : "no"}; app-ready: ${runtimePayload.runtime.appReady ? "yes" : "no"}; supervisor: ${runtimePayload.runtime.supervisorRunning === true ? "yes" : runtimePayload.runtime.supervisorRunning === false ? "no" : "unknown"}; started-at: ${clean(runtimePayload.runtime.startedAt || "unknown")}.`);
   if (validateOfficialRuntime) {
     if (!runtimePayload.runtime.installed) throw new Error("The official runtime is not installed; live admin framebuffer validation cannot start.");
     if (!runtimePayload.runtime.appReady) {
@@ -551,6 +551,7 @@ async function officialRuntimeReadiness(page, validateOfficialRuntime) {
     let connected = await page.locator(".official-shecan-screen.connected").waitFor({ state: "visible", timeout: 120_000 }).then(() => true).catch(() => false);
     if (!connected && process.env.NOMREH_RESTART_ON_VNC_FAILURE === "1" && vncDiagnostics.events.some((event) => /VNC_(?:CONNECT|REVERSE)/.test(event))) {
       lines.push("- The first authenticated noVNC attempt reached a classified VNC transport failure; restarting only the isolated official guest once while the authenticated reverse listener remains available.");
+      const beforeRestartStartedAt = currentRuntime.startedAt;
       const restartResponse = await context.request.post(`${ORIGIN}/api/admin/shecan-runtime`, { data: { action: "restart" } });
       if (![200, 202].includes(restartResponse.status())) throw new Error(`The isolated official runtime restart returned HTTP ${restartResponse.status()}.`);
       const restartDeadline = Date.now() + 360_000;
@@ -564,7 +565,8 @@ async function officialRuntimeReadiness(page, validateOfficialRuntime) {
         if (currentRuntime.phase === "error") throw new Error(`The official runtime entered its sanitized error state after restart: ${clean(currentRuntime.message)}`);
       }
       if (!currentRuntime.appReady || !currentRuntime.brokerReady) throw new Error("The official runtime did not become app/broker ready after the controlled restart.");
-      lines.push("- The isolated official guest became app/broker ready after its controlled restart; opening a fresh authenticated console.");
+      if (beforeRestartStartedAt && currentRuntime.startedAt === beforeRestartStartedAt) throw new Error("The controlled restart did not replace the official guest instance.");
+      lines.push(`- The isolated official guest became app/broker ready after its controlled restart; new started-at=${clean(currentRuntime.startedAt || "unknown")}; opening a fresh authenticated console.`);
       await page.goto(`${ORIGIN}/admin`, { waitUntil: "domcontentloaded", timeout: 30000 });
       connected = await page.locator(".official-shecan-screen.connected").waitFor({ state: "visible", timeout: 120_000 }).then(() => true).catch(() => false);
     }
