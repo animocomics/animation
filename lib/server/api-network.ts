@@ -21,6 +21,7 @@ const TEST_HOST = "generativelanguage.googleapis.com";
 // against current public DNS. The original secret URL, SNI and certificate
 // checks remain unchanged; stale answers are still tried and reported first.
 const DDNS_SHECAN_IPV4 = ["185.143.234.133", "185.143.233.133"] as const;
+const NDDNS_SHECAN_IPV4 = "188.245.62.250";
 
 export type { ProviderNetworkConfig } from "../api-network";
 
@@ -201,7 +202,10 @@ function fixedIpv4Lookup(address: string): NonNullable<TcpSocketConnectOpts["loo
 }
 
 function verifiedUpdateAddresses(hostname: string): string[] {
-  return hostname.toLowerCase() === "ddns.shecan.ir" ? [...DDNS_SHECAN_IPV4] : [];
+  const normalized = hostname.toLowerCase();
+  if (normalized === "ddns.shecan.ir") return [...DDNS_SHECAN_IPV4];
+  if (normalized === "nddns.shecan.ir") return [NDDNS_SHECAN_IPV4];
+  return [];
 }
 
 async function activateUpdateUrlWithFetch(updateUrl: string, servers: [string, string]): Promise<void> {
@@ -637,13 +641,12 @@ async function nativeUpdateStatusWithFallback(updateUrl: string, servers: [strin
   throw lastError || Object.assign(new Error("Shecan native HTTPS did not return a response"), { code: "NO_RESPONSE" });
 }
 
-async function activateUpdateUrl(
+async function activateUpdateUrlExact(
   updateUrl: string,
   servers: [string, string],
-  settleMs = 60_000,
   dns5353Resolver: typeof resolveShecanDns5353 = resolveShecanDns5353,
   dotResolver: typeof resolveShecanDot = resolveShecanDot,
-): Promise<string> {
+): Promise<void> {
   try {
     await activateUpdateUrlWithFetch(updateUrl, servers);
   } catch (error) {
@@ -672,6 +675,66 @@ async function activateUpdateUrl(
         const details = typeof rawDetails === "string" && /^[A-Za-z0-9_=;.-]{1,300}$/.test(rawDetails) ? ` مسیرها: ${rawDetails}.` : "";
         throw new ApiNetworkError(`روش رسمی curl (${curlCode}) و HTTPS مستقل (${nativeCode}) به شکن نرسیدند.${details} ${error.message}`, 502, { cause: nativeError });
       }
+    }
+  }
+}
+
+function officialNddnsUpdateUrl(updateUrl: string): string | null {
+  const current = new URL(updateUrl);
+  if (current.hostname !== "ddns.shecan.ir" || current.pathname !== "/update" || !current.searchParams.has("password")) return null;
+  current.hostname = "nddns.shecan.ir";
+  return current.toString();
+}
+
+async function activateOfficialNddnsUpdate(updateUrl: string): Promise<void> {
+  let directError: unknown;
+  try {
+    const response = await fetch(updateUrl, { cache: "no-store", redirect: "manual", signal: AbortSignal.timeout(15_000) });
+    await response.body?.cancel().catch(() => undefined);
+    if (response.status >= 300 && response.status < 400) {
+      throw new ApiNetworkError("سرویس nddns شکن تغییرمسیر غیرمنتظره برگرداند؛ لینک دنبال نشد.", 502);
+    }
+    if (response.status < 200 || response.status >= 300) {
+      throw new ApiNetworkError(`سرویس رسمی nddns لینک به‌روزرسان را نپذیرفت (HTTP ${response.status}).`, 400);
+    }
+    return;
+  } catch (error) {
+    if (error instanceof ApiNetworkError) throw error;
+    directError = error;
+  }
+  try {
+    const status = await nativeUpdateStatus(updateUrl, fixedIpv4Lookup(NDDNS_SHECAN_IPV4));
+    if (status < 200 || status >= 300) {
+      throw new ApiNetworkError(`سرویس رسمی nddns لینک به‌روزرسان را نپذیرفت (HTTP ${status}).`, 400);
+    }
+  } catch (error) {
+    if (error instanceof ApiNetworkError) throw error;
+    throw new ApiNetworkError(`سرویس رسمی nddns نیز از مسیر مستقیم (${safeNetworkCode(directError) || "NO_RESPONSE"}) و آدرس رسمی فعلی (${safeNetworkCode(error) || "NO_RESPONSE"}) پاسخ نداد.`, 502, { cause: error });
+  }
+}
+
+export async function activateUpdateUrl(
+  updateUrl: string,
+  servers: [string, string],
+  settleMs = 60_000,
+  dns5353Resolver: typeof resolveShecanDns5353 = resolveShecanDns5353,
+  dotResolver: typeof resolveShecanDot = resolveShecanDot,
+  primaryActivator: typeof activateUpdateUrlExact = activateUpdateUrlExact,
+  alternateActivator: typeof activateOfficialNddnsUpdate = activateOfficialNddnsUpdate,
+): Promise<string> {
+  try {
+    await primaryActivator(updateUrl, servers, dns5353Resolver, dotResolver);
+  } catch (error) {
+    if (!(error instanceof ApiNetworkError) || error.status !== 502) throw error;
+    const alternate = officialNddnsUpdateUrl(updateUrl);
+    if (!alternate) throw error;
+    // The current official desktop uses nddns.shecan.ir/update. Retry the same
+    // secret path/query there without changing the user's stored original URL.
+    try { await alternateActivator(alternate); }
+    catch (alternateError) {
+      if (alternateError instanceof ApiNetworkError && alternateError.status !== 502) throw alternateError;
+      const message = alternateError instanceof Error ? alternateError.message : "پاسخی دریافت نشد.";
+      throw new ApiNetworkError(`${error.message} ${message}`, 502, { cause: alternateError });
     }
   }
   // Shecan's official Linux/Windows instructions ask for about one minute of

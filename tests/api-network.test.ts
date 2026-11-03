@@ -191,6 +191,32 @@ test("Pro provider fetch retries through documented DNS 5353 without direct fall
   }
 });
 
+test("Pro provider fetch retries an official SNI node without changing the provider hostname", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalResolve = Resolver.prototype.resolve4;
+  const seen: Array<{ url: string; dispatcher: unknown }> = [];
+  Resolver.prototype.resolve4 = (async () => [{ address: "203.0.113.60", ttl: 60 }]) as unknown as typeof Resolver.prototype.resolve4;
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    seen.push({ url: String(input), dispatcher: (init as RequestInit & { dispatcher?: unknown } | undefined)?.dispatcher });
+    if (seen.length === 1) throw Object.assign(new Error("mock cached route timeout"), { code: "UND_ERR_CONNECT_TIMEOUT" });
+    return Response.json({ ok: true });
+  }) as typeof fetch;
+  const network = { enabled: true, plan: "pro" as const, servers: ["198.51.100.60", "198.51.100.61"] as [string, string] };
+  try {
+    const response = await providerFetch("https://generativelanguage.googleapis.com/v1beta/models", {}, network, async () => []);
+    assert.deepEqual(await response.json(), { ok: true });
+    assert.equal(seen.length, 2);
+    assert(seen.every((call) => new URL(call.url).hostname === "generativelanguage.googleapis.com"));
+    assert.ok(seen[0].dispatcher);
+    assert.ok(seen[1].dispatcher);
+    assert.notEqual(seen[0].dispatcher, seen[1].dispatcher);
+  } finally {
+    closeProviderNetwork();
+    globalThis.fetch = originalFetch;
+    Resolver.prototype.resolve4 = originalResolve;
+  }
+});
+
 test("Pro update link is encrypted, activation and Google are tested before enable, and disable is immediate", async () => {
   const originalFetch = globalThis.fetch;
   const originalResolve = Resolver.prototype.resolve4;
@@ -828,6 +854,34 @@ test("all official activation fallbacks report separate results and direct curl 
     childProcess.spawn = originalSpawn;
     Resolver.prototype.resolve4 = originalResolve;
   }
+});
+
+test("official nddns fallback preserves the exact secret query and only follows a primary network failure", async () => {
+  const { activateUpdateUrl, ApiNetworkError } = await import("../lib/server/api-network");
+  const updateUrl = "https://ddns.shecan.ir/update?password=unit-test-secret";
+  let alternateUrl = "";
+  const activatedAt = await activateUpdateUrl(
+    updateUrl,
+    ["198.51.100.70", "198.51.100.71"],
+    0,
+    async () => [],
+    async () => [],
+    async () => { throw new ApiNetworkError("mock primary timeout", 502); },
+    async (candidate) => { alternateUrl = candidate; },
+  );
+  assert.ok(activatedAt);
+  assert.equal(alternateUrl, "https://nddns.shecan.ir/update?password=unit-test-secret");
+  let alternateAttempts = 0;
+  await assert.rejects(activateUpdateUrl(
+    updateUrl,
+    ["198.51.100.70", "198.51.100.71"],
+    0,
+    async () => [],
+    async () => [],
+    async () => { throw new ApiNetworkError("mock rejected token", 400); },
+    async () => { alternateAttempts += 1; },
+  ), /mock rejected token/);
+  assert.equal(alternateAttempts, 0, "an upstream HTTP rejection must not be retried as a connectivity failure");
 });
 
 test.after(() => {

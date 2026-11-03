@@ -188,6 +188,27 @@ test("an account without a usable active order can log in but cannot fabricate a
   assert.equal(status.enabled, false);
 });
 
+test("account probe can use an official SNI node without changing the Shecan hostname", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    calls.push({ url: String(input), init });
+    if (calls.length === 1) throw Object.assign(new Error("mock direct timeout"), { code: "UND_ERR_CONNECT_TIMEOUT" });
+    return Response.json({ error: "unauthorized" }, { status: 401 });
+  }) as typeof fetch;
+  try {
+    const { probeShecanAccountService } = await import("../lib/server/shecan-account");
+    assert.deepEqual(await probeShecanAccountService(), { reachable: true, httpStatus: 401 });
+    assert.equal(calls.length, 2);
+    assert(calls.every((call) => new URL(call.url).hostname === "my.shecan.ir"));
+    assert.equal(calls[0].init?.redirect, "manual");
+    assert.equal((calls[0].init as RequestInit & { dispatcher?: unknown }).dispatcher, undefined);
+    assert.ok((calls[1].init as RequestInit & { dispatcher?: unknown }).dispatcher);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test.after(async () => {
   try { (globalThis as typeof globalThis & { __nomrehDatabase?: { close: () => void } }).__nomrehDatabase?.close(); } catch { /* already closed */ }
   rmSync(dataDirectory, { recursive: true, force: true });

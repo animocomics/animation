@@ -7,6 +7,7 @@ import type { ProviderNetworkConfig } from "../api-network";
 import { resolveShecanDoh, type ShecanDohRecord } from "./shecan-doh";
 import { resolveShecanDot } from "./shecan-dot";
 import { resolveShecanDns5353 } from "./shecan-dns5353";
+import { fixedShecanIpv4Lookup, SHECAN_SNI_FALLBACK_IPV4 } from "./shecan-sni";
 
 const PROVIDER_HOSTNAMES = new Set([
   "api.openai.com",
@@ -132,13 +133,6 @@ export function createShecanLookup(
   return { lookup, resolve };
 }
 
-function fixedIpv4Lookup(address: string): Lookup {
-  return (_hostname, options: LookupOptions, callback: LookupCallback) => {
-    if (options.all) callback(null, [{ address, family: 4 }]);
-    else callback(null, address, 4);
-  };
-}
-
 function closeCachedNetwork(network: CachedNetwork): void {
   void network.agent.close().catch(() => undefined);
   for (const agent of network.fallbackAgents.values()) void agent.close().catch(() => undefined);
@@ -205,11 +199,33 @@ export async function providerFetch(
       let agent = entry.fallbackAgents.get(address);
       if (!agent) {
         agent = new Agent({
-          connect: { lookup: fixedIpv4Lookup(address), timeout: 20_000 },
+          connect: { lookup: fixedShecanIpv4Lookup(address), timeout: 20_000 },
           keepAliveTimeout: 10_000,
           keepAliveMaxTimeout: 60_000,
         });
         entry.fallbackAgents.set(address, agent);
+      }
+      try {
+        return await fetch(url, { ...init, dispatcher: agent } as RequestInit);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+  }
+  // The official desktop also health-checks the SNI nodes published in
+  // proxies.json. If every DNS transport is unavailable, try those nodes only
+  // for this provider hostname, retaining its TLS identity and certificate.
+  if (network.plan === "pro") {
+    for (const address of SHECAN_SNI_FALLBACK_IPV4) {
+      const key = `sni:${address}`;
+      let agent = entry.fallbackAgents.get(key);
+      if (!agent) {
+        agent = new Agent({
+          connect: { lookup: fixedShecanIpv4Lookup(address), timeout: 8_000 },
+          keepAliveTimeout: 10_000,
+          keepAliveMaxTimeout: 60_000,
+        });
+        entry.fallbackAgents.set(key, agent);
       }
       try {
         return await fetch(url, { ...init, dispatcher: agent } as RequestInit);
