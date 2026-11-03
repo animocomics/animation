@@ -110,14 +110,18 @@ function requireSession(request) {
 }
 
 async function createSession(request, response, applicationPort) {
+  request.nomrehVncStage = "SESSION_LIMIT";
   if (sessions.size >= MAX_SESSIONS) throw Object.assign(new Error("Too many VNC sessions"), { statusCode: 429 });
+  request.nomrehVncStage = "AUTH";
   try { await authorizeUpgrade(request, applicationPort); }
   catch (error) {
-    error.vncCode = error.vncCode || "AUTH_UNCLASSIFIED";
+    error.vncCode = error.vncCode || `AUTH_UNCLASSIFIED_${String(request.nomrehVncStage || "AUTH").replace(/[^A-Z_]/g, "").slice(0, 32) || "AUTH"}`;
     throw error;
   }
+  request.nomrehVncStage = "VNC_CONFIG";
   const port = Number(process.env.NOMREH_VNC_PORT || 15900);
   if (!Number.isInteger(port) || port < 1024 || port > 65535) throw Object.assign(new Error("Invalid VNC port"), { statusCode: 503 });
+  request.nomrehVncStage = "VNC_CONNECT";
   const socket = net.createConnection({ host: "127.0.0.1", port });
   socket.setNoDelay(true);
   await new Promise((resolve, reject) => {
@@ -136,6 +140,7 @@ async function createSession(request, response, applicationPort) {
     socket.destroy();
     throw Object.assign(new Error("VNC is unavailable"), { statusCode: 503, cause: error });
   });
+  request.nomrehVncStage = "SESSION_CREATE";
   const id = crypto.randomBytes(16).toString("hex");
   const session = { id, socket, cookieHash: cookieHash(request), chunks: [], queued: 0, closed: false, destroyed: false, exchanging: false, notify: null, idleTimer: null };
   sessions.set(id, session);
@@ -181,6 +186,7 @@ async function exchange(session, request, response) {
 }
 
 async function handle(request, response, applicationPort) {
+  request.nomrehVncStage = "ORIGIN";
   const originFailure = originError(request);
   if (originFailure) {
     sendJson(response, 403, { error: "Same-origin admin VNC access is required" }, originFailure);
@@ -190,6 +196,7 @@ async function handle(request, response, applicationPort) {
     await createSession(request, response, applicationPort);
     return;
   }
+  request.nomrehVncStage = "SESSION_LOOKUP";
   const session = requireSession(request);
   if (request.method === "DELETE") {
     destroySession(session);
@@ -198,6 +205,7 @@ async function handle(request, response, applicationPort) {
     return;
   }
   if (request.method !== "POST") throw Object.assign(new Error("Unsupported VNC method"), { statusCode: 405 });
+  request.nomrehVncStage = "EXCHANGE";
   await exchange(session, request, response);
 }
 
@@ -207,7 +215,8 @@ function handleShecanVncHttp(request, response, applicationPort) {
   if (pathname !== HTTP_CHANNEL_PATH) return false;
   void handle(request, response, applicationPort).catch((error) => {
     const status = [400, 401, 403, 405, 409, 410, 413, 429].includes(error.statusCode) ? error.statusCode : 503;
-    sendJson(response, status, { error: "The authenticated VNC HTTP channel failed" }, error.vncCode || "RUNTIME");
+    const stage = String(request.nomrehVncStage || "UNKNOWN").replace(/[^A-Z_]/g, "").slice(0, 32) || "UNKNOWN";
+    sendJson(response, status, { error: "The authenticated VNC HTTP channel failed" }, error.vncCode || `RUNTIME_${status}_${stage}`);
   });
   return true;
 }

@@ -36,19 +36,24 @@ function sessionToken(request) {
  * role, active-account, expiry, origin, or per-session cookie checks.
  */
 async function authorizeUpgrade(request) {
+  request.nomrehVncStage = "AUTH_TOKEN";
   const token = sessionToken(request);
   if (!token) throw authError(401, `AUTH_401_SESSION${request.headers.cookie ? "" : "_NO_COOKIE"}`);
   const dataDirectory = process.env.NOMREH_DATA_DIR || path.join(process.cwd(), "data");
   let database;
   try {
+    request.nomrehVncStage = "AUTH_DB_OPEN";
     database = new DatabaseSync(path.join(dataDirectory, "nomreh.db"), { readOnly: true });
     database.exec("PRAGMA busy_timeout = 2000");
+    request.nomrehVncStage = "AUTH_DB_QUERY";
     const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
     const row = database.prepare(`SELECT u.role
       FROM sessions s JOIN users u ON u.id = s.user_id
       WHERE s.token_hash = ? AND s.expires_at > ? AND u.active = 1`).get(tokenHash, new Date().toISOString());
+    request.nomrehVncStage = "AUTH_ROLE";
     if (!row) throw authError(401, "AUTH_401_SESSION");
     if (row.role !== "admin") throw authError(403, "AUTH_403_ROLE");
+    request.nomrehVncStage = "AUTHORIZED";
   } catch (error) {
     if (error.vncCode) throw error;
     throw authError(503, "AUTH_STORAGE", "Admin session storage is unavailable");
