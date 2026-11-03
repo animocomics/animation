@@ -31,8 +31,17 @@ test("Plesk bootstrap pins Node 22 and delegates both build and production start
   assert.equal(packageJson.dependencies["better-sqlite3"], undefined);
   assert.match(launcher, /require\("node:sqlite"\)/);
   assert.match(launcher, /NEXT_TEST_WASM: "1"/);
-  const nextConfig = fs.readFileSync(path.join(root, "next.config.ts"), "utf8");
+  assert.match(launcher, /--include=dev", "--omit=optional/);
+  assert.match(launcher, /XDG_CACHE_HOME: path\.join\(APP_ROOT, "\.next", "cache"\)/);
+  assert.equal(packageJson.dependencies["@napi-rs/canvas-linux-x64-gnu"], "0.1.100");
+  assert.equal(packageJson.dependencies.typescript, undefined);
+  assert.equal(packageJson.devDependencies["@typescript/typescript-linux-x64"], "7.0.2");
+  assert.equal(packageJson.devDependencies["@esbuild/linux-x64"], "0.28.2");
+  const compaction = fs.readFileSync(path.join(root, "scripts", "compact-production.cjs"), "utf8");
+  assert.match(compaction, /prune", "--omit=dev", "--omit=optional/);
+  const nextConfig = fs.readFileSync(path.join(root, "next.config.mjs"), "utf8");
   assert.match(nextConfig, /webpackBuildWorker: false/);
+  assert.equal(fs.existsSync(path.join(root, "next.config.ts")), false);
   assert.match(packageJson.engines.node, />=22/);
   assert.match(server, /major >= 22/);
   assert.match(server, /launchServer\(\)/);

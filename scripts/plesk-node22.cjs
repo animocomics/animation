@@ -352,7 +352,10 @@ async function ensureRuntime() {
 
 function installDependencies(runtime) {
   console.log("Installing application dependencies with the domain-local Node 22…");
-  runRuntimeNpm(runtime, ["install", "--ignore-scripts", "--engine-strict=false", "--no-audit", "--no-fund"]);
+  // Install build-time types/test tools explicitly, but omit unused optional
+  // native alternatives. Plesk builds with Next's WASM compiler; the required
+  // glibc canvas binary is a direct production dependency, not an optional one.
+  runRuntimeNpm(runtime, ["install", "--include=dev", "--omit=optional", "--ignore-scripts", "--engine-strict=false", "--no-audit", "--no-fund"]);
 }
 
 function stashObsoleteRouteConflicts(root = APP_ROOT) {
@@ -489,7 +492,12 @@ async function build() {
     // generated public directory aside, then restore it for the guarded sync.
     routeStash = stashObsoleteRouteConflicts();
     staticStash = stashPublicStaticForBuild();
-    runRuntimeNpm(runtime, ["run", "build"], { NEXT_TEST_WASM: "1" });
+    runRuntimeNpm(runtime, ["run", "build"], {
+      NEXT_TEST_WASM: "1",
+      // Keep the downloadable WASM compiler in Nomreh's own regenerable build
+      // cache, never in a subscription-wide cache shared with other domains.
+      XDG_CACHE_HOME: path.join(APP_ROOT, ".next", "cache"),
+    });
     if (!fs.existsSync(path.join(APP_ROOT, ".next", "BUILD_ID"))) throw new Error("The production build did not create .next/BUILD_ID; nothing was compacted.");
     restorePublicStaticAfterBuild(staticStash, true);
     progress("Publishing Next.js static assets for nginx");

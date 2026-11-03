@@ -6,7 +6,7 @@ on:
       - arena/f4b832aa-animation
     paths:
       - .github/workflows/legacy-build.yml
-      - next.config.ts
+      - next.config.mjs
       - package.json
       - package-lock.json
       - scripts/compact-production.cjs
