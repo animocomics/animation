@@ -22,6 +22,11 @@ function clean(value) {
   return String(value || "").replace(/[\u0000-\u001f\u007f<>]/g, " ").replace(/https?:\/\/\S+/gi, "[link]").replace(/\s+/g, " ").trim().slice(0, 350);
 }
 
+function officialTransportMarkers(runtime) {
+  const markers = (runtime?.markers || []).filter((marker) => /^NOMREH_OFFICIAL_(?:VNC_REVERSE|XVNC|APP|X11)/.test(marker));
+  return markers.filter((marker, index) => marker !== markers[index - 1]).slice(-8);
+}
+
 function report() {
   const text = lines.join("\n");
   if (OUTPUT) fs.writeFileSync(OUTPUT, text, { mode: 0o600 });
@@ -547,7 +552,7 @@ async function officialRuntimeReadiness(page, validateOfficialRuntime) {
     }
     if (currentRuntime.supervisorRunning !== true) throw new Error("The independent official runtime supervisor did not become active.");
     lines.push("- The isolated official guest reported its real app and loopback AI broker ready; the independent always-on supervisor is active. No login, OTP, update-link, or provider request was submitted.");
-    const reverseMarkers = (currentRuntime.markers || []).filter((marker) => /^NOMREH_OFFICIAL_(?:VNC_REVERSE|XVNC|APP|X11)/.test(marker)).slice(-10);
+    const reverseMarkers = officialTransportMarkers(currentRuntime);
     lines.push(`- Official guest safe markers: ${clean(reverseMarkers.join(" | ") || "none")}.`);
     await page.goto(`${ORIGIN}/admin`, { waitUntil: "domcontentloaded", timeout: 30000 });
     let connected = await page.locator(".official-shecan-screen.connected").waitFor({ state: "visible", timeout: 120_000 }).then(() => true).catch(() => false);
@@ -555,7 +560,7 @@ async function officialRuntimeReadiness(page, validateOfficialRuntime) {
       await page.waitForTimeout(3000);
       const diagnosticResponse = await context.request.get(`${ORIGIN}/api/admin/shecan-runtime`);
       const diagnosticPayload = await diagnosticResponse.json().catch(() => ({}));
-      const diagnosticMarkers = (diagnosticPayload.runtime?.markers || []).filter((marker) => /^NOMREH_OFFICIAL_(?:VNC_REVERSE|XVNC|APP|X11)/.test(marker)).slice(-14);
+      const diagnosticMarkers = officialTransportMarkers(diagnosticPayload.runtime);
       lines.push(`- Official guest markers after the first console attempt: ${clean(diagnosticMarkers.join(" | ") || "none")}.`);
     }
     if (!connected && process.env.NOMREH_RESTART_ON_VNC_FAILURE === "1" && vncDiagnostics.events.some((event) => /VNC_(?:CONNECT|REVERSE)/.test(event))) {
@@ -576,7 +581,7 @@ async function officialRuntimeReadiness(page, validateOfficialRuntime) {
       if (!currentRuntime.appReady || !currentRuntime.brokerReady) throw new Error("The official runtime did not become app/broker ready after the controlled restart.");
       if (beforeRestartStartedAt && currentRuntime.startedAt === beforeRestartStartedAt) throw new Error("The controlled restart did not replace the official guest instance.");
       lines.push(`- The isolated official guest became app/broker ready after its controlled restart; new started-at=${clean(currentRuntime.startedAt || "unknown")}; opening a fresh authenticated console.`);
-      const postRestartReverseMarkers = (currentRuntime.markers || []).filter((marker) => /^NOMREH_OFFICIAL_(?:VNC_REVERSE|XVNC|APP|X11)/.test(marker)).slice(-10);
+      const postRestartReverseMarkers = officialTransportMarkers(currentRuntime);
       lines.push(`- Post-restart official guest safe markers: ${clean(postRestartReverseMarkers.join(" | ") || "none")}.`);
       await page.goto(`${ORIGIN}/admin`, { waitUntil: "domcontentloaded", timeout: 30000 });
       connected = await page.locator(".official-shecan-screen.connected").waitFor({ state: "visible", timeout: 120_000 }).then(() => true).catch(() => false);
@@ -584,7 +589,7 @@ async function officialRuntimeReadiness(page, validateOfficialRuntime) {
     if (!connected) {
       const finalRuntimeResponse = await context.request.get(`${ORIGIN}/api/admin/shecan-runtime`);
       const finalRuntimePayload = await finalRuntimeResponse.json().catch(() => ({}));
-      const finalReverseMarkers = (finalRuntimePayload.runtime?.markers || []).filter((marker) => /^NOMREH_OFFICIAL_(?:VNC_REVERSE|XVNC|APP|X11)/.test(marker)).slice(-14);
+      const finalReverseMarkers = officialTransportMarkers(finalRuntimePayload.runtime);
       lines.push(`- Official guest markers after the final console attempt: ${clean(finalReverseMarkers.join(" | ") || "none")}.`);
       const alert = await page.locator(".api-network-error").innerText().catch(() => "");
       const canvasCount = await page.locator(".official-shecan-vnc canvas").count();
