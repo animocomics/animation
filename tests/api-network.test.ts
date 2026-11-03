@@ -257,6 +257,23 @@ test("Pro update link is encrypted, activation and Google are tested before enab
   }
 });
 
+test("provider configuration preserves official-vm instead of silently degrading to DNS", async () => {
+  const { saveAndTestApiNetwork } = await import("../lib/server/api-network");
+  const { getProviderNetworkConfig } = await import("../lib/server/provider-config");
+  const { getDb } = await import("../lib/server/db");
+  const admin = getDb().prepare("SELECT id FROM users WHERE role='admin' ORDER BY created_at LIMIT 1").get() as { id: string };
+  const servers: [string, string] = ["178.22.122.101", "185.51.200.1"];
+  try {
+    await saveAndTestApiNetwork({ enabled: false, plan: "pro", servers, transport: "official-vm" }, admin.id);
+    getDb().prepare("UPDATE api_network_settings SET enabled=1, encrypted_update_url='' WHERE id=1").run();
+    const network = await getProviderNetworkConfig();
+    assert.equal(network.enabled, true);
+    assert.equal(network.transport, "official-vm");
+  } finally {
+    await saveAndTestApiNetwork({ enabled: false, plan: "pro", servers, transport: "dns" }, admin.id);
+  }
+});
+
 test("Pro activation accepts HTTP headers without waiting for an unterminated body", async () => {
   const originalFetch = globalThis.fetch;
   const originalResolve = Resolver.prototype.resolve4;

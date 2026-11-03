@@ -34,7 +34,7 @@ export async function getProviderNetworkConfig(): Promise<ProviderNetworkConfig>
   try {
     const network = await getApiNetworkConfig();
     if (network.enabled) await ensureApiNetworkActivated(network);
-    return { enabled: network.enabled, plan: network.plan, servers: network.servers };
+    return { enabled: network.enabled, plan: network.plan, servers: network.servers, transport: network.transport };
   } catch (error) {
     if (error instanceof ApiNetworkError) throw new ProviderError(error.message, error.status);
     throw error;
