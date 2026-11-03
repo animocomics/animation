@@ -551,6 +551,13 @@ async function officialRuntimeReadiness(page, validateOfficialRuntime) {
     lines.push(`- Official guest safe markers: ${clean(reverseMarkers.join(" | ") || "none")}.`);
     await page.goto(`${ORIGIN}/admin`, { waitUntil: "domcontentloaded", timeout: 30000 });
     let connected = await page.locator(".official-shecan-screen.connected").waitFor({ state: "visible", timeout: 120_000 }).then(() => true).catch(() => false);
+    if (!connected) {
+      await page.waitForTimeout(3000);
+      const diagnosticResponse = await context.request.get(`${ORIGIN}/api/admin/shecan-runtime`);
+      const diagnosticPayload = await diagnosticResponse.json().catch(() => ({}));
+      const diagnosticMarkers = (diagnosticPayload.runtime?.markers || []).filter((marker) => /^NOMREH_OFFICIAL_(?:VNC_REVERSE|XVNC|APP|X11)/.test(marker)).slice(-14);
+      lines.push(`- Official guest markers after the first console attempt: ${clean(diagnosticMarkers.join(" | ") || "none")}.`);
+    }
     if (!connected && process.env.NOMREH_RESTART_ON_VNC_FAILURE === "1" && vncDiagnostics.events.some((event) => /VNC_(?:CONNECT|REVERSE)/.test(event))) {
       lines.push("- The first authenticated noVNC attempt reached a classified VNC transport failure; restarting only the isolated official guest once while the authenticated reverse listener remains available.");
       const beforeRestartStartedAt = currentRuntime.startedAt;
@@ -575,6 +582,10 @@ async function officialRuntimeReadiness(page, validateOfficialRuntime) {
       connected = await page.locator(".official-shecan-screen.connected").waitFor({ state: "visible", timeout: 120_000 }).then(() => true).catch(() => false);
     }
     if (!connected) {
+      const finalRuntimeResponse = await context.request.get(`${ORIGIN}/api/admin/shecan-runtime`);
+      const finalRuntimePayload = await finalRuntimeResponse.json().catch(() => ({}));
+      const finalReverseMarkers = (finalRuntimePayload.runtime?.markers || []).filter((marker) => /^NOMREH_OFFICIAL_(?:VNC_REVERSE|XVNC|APP|X11)/.test(marker)).slice(-14);
+      lines.push(`- Official guest markers after the final console attempt: ${clean(finalReverseMarkers.join(" | ") || "none")}.`);
       const alert = await page.locator(".api-network-error").innerText().catch(() => "");
       const canvasCount = await page.locator(".official-shecan-vnc canvas").count();
       lines.push(`- noVNC connection diagnostics: events=${vncDiagnostics.events.join(" | ") || "none"}; sent-frames=${vncDiagnostics.sent}; received-frames=${vncDiagnostics.received}; HTTP-exchanges=${vncDiagnostics.httpExchanges}; canvases=${canvasCount}; alert=${clean(alert) || "none"}.`);
