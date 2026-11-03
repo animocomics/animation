@@ -1,6 +1,6 @@
 declare module "@novnc/novnc" {
   export default class RFB {
-    constructor(target: HTMLElement, url: string, options?: { shared?: boolean });
+    constructor(target: HTMLElement, urlOrChannel: string | object, options?: { shared?: boolean });
     scaleViewport: boolean;
     clipViewport: boolean;
     showDotCursor: boolean;

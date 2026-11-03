@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type RFB from "@novnc/novnc";
+import { OfficialVncHttpChannel } from "./official-vnc-http-channel";
 import { CheckCircle2, Expand, Eye, EyeOff, Link2, LoaderCircle, LockKeyhole, MonitorUp, Play, Power, RefreshCw, ShieldCheck, Square, TriangleAlert, Wifi } from "lucide-react";
 import { useApp } from "../lib/app-context";
 import { readJsonResponse } from "../lib/http-response";
@@ -75,8 +76,8 @@ export function OfficialShecanConsole() {
       if (cancelled || !screenRef.current) return;
       rfbRef.current?.disconnect();
       screenRef.current.replaceChildren();
-      const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-      const client = new RfbClient(screenRef.current, `${protocol}://${window.location.host}/api/admin/shecan-runtime/vnc`, { shared: true });
+      const channel = new OfficialVncHttpChannel("/api/admin/shecan-runtime/vnc-http");
+      const client = new RfbClient(screenRef.current, channel, { shared: true });
       client.scaleViewport = true;
       client.clipViewport = true;
       client.showDotCursor = true;

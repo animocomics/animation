@@ -26,7 +26,7 @@ test("VNC WebSocket requires same-origin admin authorization and only bridges th
   const targetFrames: Buffer[] = [];
   const target = net.createServer((socket) => {
     targetSockets.add(socket);
-    socket.on("data", (chunk) => targetFrames.push(chunk));
+    socket.on("data", (chunk) => targetFrames.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
     socket.on("close", () => targetSockets.delete(socket));
     socket.write("RFB 003.008\n");
   });

@@ -157,4 +157,4 @@ function attachShecanVncWebSocket(server, applicationPort) {
   return wss;
 }
 
-module.exports = { attachShecanVncWebSocket, UPGRADE_PATH };
+module.exports = { attachShecanVncWebSocket, authorizeUpgrade, UPGRADE_PATH };
