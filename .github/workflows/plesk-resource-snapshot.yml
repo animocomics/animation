@@ -1,6 +1,6 @@
 name: Plesk Nomreh read-only memory snapshot
 
-# Read-only check gates on multi-hop redirect origin enforcement.
+# The local test verifies CDP-level interception of every redirect hop.
 
 on:
   push:

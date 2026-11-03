@@ -23,8 +23,8 @@ async function main() {
   const browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
   try {
     const context = await browser.newContext({ ignoreHTTPSErrors: true, serviceWorkers: "block" });
-    await restrictToPanelOrigin(context, panelOrigin);
     const page = await context.newPage();
+    await restrictToPanelOrigin(page, panelOrigin);
     await page.goto(`${panelOrigin}/internal-redirect`);
     assert.equal(await page.locator("body").innerText(), "panel");
     await page.goto(`${panelOrigin}/subresource`, { waitUntil: "load" });

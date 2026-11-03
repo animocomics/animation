@@ -124,8 +124,8 @@ async function main() {
     // origin. Reject redirects, subresources and requests to every other origin
     // in this isolated browser context before they can bypass TLS validation.
     const context = await browser.newContext({ ignoreHTTPSErrors: true, serviceWorkers: "block", viewport: { width: 1680, height: 1050 } });
-    await restrictToPanelOrigin(context, panel);
     const page = await context.newPage();
+    await restrictToPanelOrigin(page, panel);
     page.setDefaultTimeout(15000);
     let loginPageLoaded = false;
     for (let attempt = 1; attempt <= 2 && !loginPageLoaded; attempt += 1) {
