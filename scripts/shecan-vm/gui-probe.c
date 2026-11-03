@@ -17,6 +17,7 @@ static gboolean quit_failure(gpointer data) {
 }
 
 static void loaded(WebKitWebView *view, WebKitLoadEvent event, gpointer data) {
+  (void)view;
   if (event != WEBKIT_LOAD_FINISHED) return;
   g_print("NOMREH_GUI_PROBE_WEBKIT_LOAD_FINISHED\n");
   g_print("NOMREH_GUI_PROBE_NO_NETWORK yes\n");
