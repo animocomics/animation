@@ -538,7 +538,7 @@ async function main() {
             if (probeLines.some((line) => line.startsWith("SHECAN_ACCOUNT_NETWORK_COMPLETE"))) break;
           }
           if (!probeLines.some((line) => line.startsWith("SHECAN_ACCOUNT_NETWORK_COMPLETE"))) throw new Error("The credential-free Shecan account network probe did not complete within 100 seconds. No network or file setting was changed.");
-          for (const line of probeLines.slice(0, 24)) lines.push(`- Account network: ${sanitize(line.slice(0, 350))}`);
+          for (const line of probeLines.slice(0, 32)) lines.push(`- Account network: ${sanitize(line.slice(0, 350))}`);
           lines.push("- Account network and native-app capability probe completed; no DNS, file, application process, build, restart, OTP, login, persistent namespace, or settings change was attempted.", "");
           actionCompleted = true;
         }
