@@ -48,6 +48,15 @@ jobs:
         run: |
           set -uo pipefail
           log="$RUNNER_TEMP/nomreh-legacy-build.log"
+          # Docker Hub occasionally returns a transient manifest 502. Retry the
+          # immutable public base image pull before the actual build, without
+          # changing the pinned runtime or weakening build verification.
+          pulled=false
+          for attempt in 1 2 3; do
+            if docker pull centos:7 > "$RUNNER_TEMP/centos-pull.log" 2>&1; then pulled=true; break; fi
+            sleep 10
+          done
+          if [ "$pulled" != true ]; then tail -60 "$RUNNER_TEMP/centos-pull.log" > "$log"; exit 1; fi
           docker run --rm \
             --volume "$GITHUB_WORKSPACE:/work" \
             --volume "$RUNNER_TEMP/nomreh-legacy-data:/nomreh-data-legacy-check" \

@@ -54,20 +54,27 @@ jobs:
         if: steps.config.outputs.configured == 'true'
         run: |
           set -euo pipefail
-          source_sha=ace9343483097fad4a72b33725bb4e29024a25fb
-          archive="$RUNNER_TEMP/nomreh-deploy-production-compaction-v33.zip"
-          expected='next.config.mjs package.json package-lock.json scripts/compact-production.cjs scripts/plesk-node22.cjs'
+          source_sha=7f49e0fa01d57b5ec6040931c63ce5287292b6c9
+          archive="$RUNNER_TEMP/nomreh-deploy-official-shecan-v34.zip"
+          expected='app/api/admin/api-network/route.ts app/api/admin/shecan-runtime/route.ts app/features.css components/admin-panel.tsx components/official-shecan-console.tsx lib/api-network.ts lib/server/api-network.ts lib/server/db.ts lib/server/provider-network.ts lib/server/shecan-runtime.ts lib/types.ts package-lock.json package.json scripts/next-server.cjs scripts/plesk-space.cjs scripts/shecan-vnc-websocket.cjs types/novnc.d.ts'
           git archive --format=zip --output="$archive" "$source_sha" $expected
           for required in $expected; do
             unzip -Z1 "$archive" | grep -Fx "$required" > /dev/null
           done
-          test "$(unzip -Z1 "$archive" | grep -vc '/$')" -eq 5
+          test "$(unzip -Z1 "$archive" | grep -vc '/$')" -eq 17
           git show "$source_sha:scripts/plesk-node22.cjs" | grep -F 'Nomreh Passenger-aware launcher is active for this build.' > /dev/null
           git show "$source_sha:scripts/plesk-node22.cjs" | grep -F 'return [mainFile];' > /dev/null
           git show "$source_sha:scripts/plesk-node22.cjs" | grep -F 'syncPublicStatic();' > /dev/null
           git show "$source_sha:scripts/plesk-node22.cjs" | grep -F '"--include=dev", "--omit=optional"' > /dev/null
           git show "$source_sha:next.config.mjs" | grep -F 'webpackBuildWorker: false' > /dev/null
           git show "$source_sha:package.json" | grep -F '"@napi-rs/canvas-linux-x64-gnu": "0.1.100"' > /dev/null
+          git show "$source_sha:components/admin-panel.tsx" | grep -F '<OfficialShecanConsole />' > /dev/null
+          if git show "$source_sha:components/admin-panel.tsx" | grep -F '<ApiNetworkConnection />' > /dev/null; then
+            echo 'The rejected substitute OTP panel is still mounted in admin.' >&2
+            exit 1
+          fi
+          git show "$source_sha:scripts/next-server.cjs" | grep -F 'attachShecanVncWebSocket(server, port)' > /dev/null
+          git show "$source_sha:lib/server/provider-network.ts" | grep -F 'network.transport === "official-vm"' > /dev/null
           if unzip -Z1 "$archive" | grep -E '(^|/)(nomreh-data|node_modules|\.next|uploads?)(/|$)|(^|/)\.env$|(^|/)\.env\.(local|production|development|test)$'; then
             echo 'Sensitive, persistent, uploaded, or generated content was included in the archive.' >&2
             exit 1
@@ -97,8 +104,8 @@ jobs:
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
           PLESK_BROWSER_ACTION: upload
-          PLESK_ARCHIVE_NAME: nomreh-deploy-production-compaction-v33.zip
-          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-production-compaction-v33.zip
+          PLESK_ARCHIVE_NAME: nomreh-deploy-official-shecan-v34.zip
+          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-official-shecan-v34.zip
           PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-plesk-upload.md
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
         run: node scripts/plesk-browser-diagnostics.cjs

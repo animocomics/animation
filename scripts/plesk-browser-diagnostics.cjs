@@ -15,6 +15,9 @@ const ACTION = process.env.PLESK_BROWSER_ACTION || "diagnose";
 const UPLOAD_ARCHIVE = process.env.PLESK_UPLOAD_ARCHIVE || "";
 const ARCHIVE_NAME = process.env.PLESK_ARCHIVE_NAME || "nomreh-deploy.zip";
 if (!/^nomreh-deploy(?:-[a-z0-9-]+)?\.zip$/.test(ARCHIVE_NAME)) throw new Error("The Nomreh deployment archive name is invalid.");
+const OFFICIAL_RUNTIME_ARCHIVE = ARCHIVE_NAME === "nomreh-deploy-shecan-official-v1.zip";
+const RUNTIME_DIRECTORY = OFFICIAL_RUNTIME_ARCHIVE ? "official" : "probe";
+const RUNTIME_RUNNER = OFFICIAL_RUNTIME_ARCHIVE ? "run-official.sh" : "run-probe.sh";
 const OUTPUT = process.env.PLESK_DIAGNOSTICS_OUTPUT || path.join(os.tmpdir(), "nomreh-plesk-browser-diagnostics.md");
 const DELTA_SOURCE = process.env.PLESK_DELTA_SOURCE || "";
 const DELTA_FILES = (process.env.PLESK_DELTA_FILES || "").split(",").map((item) => item.trim()).filter(Boolean);
@@ -88,7 +91,7 @@ async function main() {
     : ACTION === "extract"
       ? "Controlled action: extract the validated archive inside the Nomreh application root only. Persistent data, uploads, environment files, build, restart, and settings changes are not touched."
       : ACTION === "runtime-extract"
-        ? "Controlled action: extract only the validated nomreh-vm/probe runtime archive. No application source, persistent data, upload, environment file, build, restart, DNS, or other domain is touched."
+        ? `Controlled action: extract only the validated nomreh-vm/${RUNTIME_DIRECTORY} runtime archive. No application source, persistent data, upload, environment file, build, restart, DNS, or other domain is touched.`
         : ACTION === "vm-probe"
           ? "Controlled action: boot one diskless, networkless, credential-free VM for at most 120 seconds and require its explicit PASS marker. No Shecan binary, DNS, host network, application setting, build, or restart is involved."
           : ACTION === "cleanup-vm-probe"
@@ -1564,14 +1567,14 @@ async function main() {
                 if (!await vmEntry.count()) throw new Error("The extracted nomreh-vm row was not available for scoped verification. No VM was started.");
                 await vmEntry.click({ timeout: 8000 });
                 await page.waitForTimeout(1800);
-                const probeText = page.getByText("probe", { exact: true }).last();
+                const probeText = page.getByText(RUNTIME_DIRECTORY, { exact: true }).last();
                 const probeRow = probeText.locator("xpath=ancestor::*[.//input[@type='checkbox']][1]");
                 const probeEntry = probeRow.locator("a").first();
-                if (!await probeEntry.count()) throw new Error("The isolated nomreh-vm/probe directory was not visible after extraction. No VM was started.");
+                if (!await probeEntry.count()) throw new Error(`The isolated nomreh-vm/${RUNTIME_DIRECTORY} directory was not visible after extraction. No VM was started.`);
                 await probeEntry.click({ timeout: 8000 });
                 await page.waitForTimeout(1800);
-                const runnerEntry = page.getByText("run-probe.sh", { exact: true }).first();
-                if (!await runnerEntry.count()) throw new Error("The isolated run-probe.sh was not visible after extraction. No VM was started.");
+                const runnerEntry = page.getByText(RUNTIME_RUNNER, { exact: true }).first();
+                if (!await runnerEntry.count()) throw new Error(`The isolated ${RUNTIME_RUNNER} was not visible after extraction. No VM was started.`);
                 const runnerRow = runnerEntry.locator("xpath=ancestor::*[.//input[@type='checkbox']][1]");
                 const runnerActions = runnerRow.locator("button[title='Actions'], button[aria-label='Actions']").first();
                 if (!await runnerActions.count()) throw new Error("The isolated probe Actions menu was not available for hash verification.");
@@ -1586,9 +1589,9 @@ async function main() {
                 const downloadedPath = await downloaded.path();
                 if (!downloadedPath) throw new Error("The isolated probe download was not materialized for hash verification.");
                 const actualHash = crypto.createHash("sha256").update(fs.readFileSync(downloadedPath)).digest("hex");
-                const expectedHash = crypto.createHash("sha256").update(fs.readFileSync("scripts/shecan-vm/run-probe.sh")).digest("hex");
-                if (actualHash !== expectedHash) throw new Error("The hosted isolated probe SHA-256 does not match the validated source. No VM was started.");
-                lines.push(`- Verified isolated runtime: nomreh-vm/probe/run-probe.sh; SHA-256 ${actualHash}`, "- Extraction stayed inside nomreh-vm/probe. No application source, persistent data, build, restart, DNS, or VM execution was attempted.", "");
+                const expectedHash = crypto.createHash("sha256").update(fs.readFileSync(`scripts/shecan-vm/${RUNTIME_RUNNER}`)).digest("hex");
+                if (actualHash !== expectedHash) throw new Error("The hosted isolated runtime SHA-256 does not match the validated source. No VM was started.");
+                lines.push(`- Verified isolated runtime: nomreh-vm/${RUNTIME_DIRECTORY}/${RUNTIME_RUNNER}; SHA-256 ${actualHash}`, `- Extraction stayed inside nomreh-vm/${RUNTIME_DIRECTORY}. No application source, persistent data, build, restart, DNS, or VM execution was attempted.`, "");
               }
               actionCompleted = true;
             }
@@ -1686,7 +1689,8 @@ async function main() {
                 if (!UPLOAD_ARCHIVE || !fs.existsSync(UPLOAD_ARCHIVE)) throw new Error("The validated Nomreh deployment archive is not available to the browser runner.");
                 if (!fileInputs.length) throw new Error("Plesk did not provide its file upload input. No archive was sent.");
                 const archiveSize = fs.statSync(UPLOAD_ARCHIVE).size;
-                if (archiveSize > 90 * 1024 * 1024) throw new Error("The deployment archive exceeds the 90 MB safety limit.");
+                const archiveLimit = OFFICIAL_RUNTIME_ARCHIVE ? 220 * 1024 * 1024 : 90 * 1024 * 1024;
+                if (archiveSize > archiveLimit) throw new Error(`The deployment archive exceeds the ${OFFICIAL_RUNTIME_ARCHIVE ? 220 : 90} MB safety limit.`);
                 lines.push("## Controlled Nomreh archive upload", "", `- Archive: ${ARCHIVE_NAME}`, `- Archive bytes: ${archiveSize}`, "");
                 await page.locator("input[type='file']").first().setInputFiles(UPLOAD_ARCHIVE);
                 await page.waitForTimeout(2000);
@@ -1771,7 +1775,7 @@ async function main() {
       : ACTION === "extract"
         ? "The validated application source was extracted and verified in the Nomreh application root. Dependency installation, build, and Node.js enablement remain pending."
         : ACTION === "runtime-extract"
-          ? "The harmless isolated VM archive was extracted and its runner hash was verified inside nomreh-vm/probe. No application source or setting was changed and the VM remains unexecuted."
+          ? `The isolated VM archive was extracted and its runner hash was verified inside nomreh-vm/${RUNTIME_DIRECTORY}. No application source or setting was changed and the VM remains unexecuted.`
           : ACTION === "vm-probe"
             ? "The real networkless QEMU bundle printed PASS on Plesk. This does not yet prove Shecan execution, remote display, login, activation, connectivity, or AI-only routing."
             : ACTION === "cleanup-vm-probe"
