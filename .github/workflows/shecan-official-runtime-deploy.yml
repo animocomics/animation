@@ -40,7 +40,7 @@ jobs:
         if: steps.config.outputs.configured == 'true'
         run: |
           set -euo pipefail
-          archive="$RUNNER_TEMP/nomreh-deploy-shecan-official-v12.zip"
+          archive="$RUNNER_TEMP/nomreh-deploy-shecan-official-v13.zip"
           grep -F 'test -x /usr/bin/x11vnc' scripts/shecan-vm/build-official-runtime.sh > /dev/null
           grep -F 'NOMREH_OFFICIAL_VNC_REVERSE_ATTEMPT_' scripts/shecan-vm/official-guest-init.sh > /dev/null
           grep -F 'const OFFICIAL_RUNTIME_ARCHIVE = /^nomreh-deploy-shecan-official-v[0-9]+' scripts/plesk-browser-diagnostics.cjs > /dev/null
@@ -75,8 +75,8 @@ jobs:
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
           PLESK_BROWSER_ACTION: upload
-          PLESK_ARCHIVE_NAME: nomreh-deploy-shecan-official-v12.zip
-          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-shecan-official-v12.zip
+          PLESK_ARCHIVE_NAME: nomreh-deploy-shecan-official-v13.zip
+          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-shecan-official-v13.zip
           PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-official-upload.md
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
         run: node scripts/plesk-browser-diagnostics.cjs
@@ -88,7 +88,7 @@ jobs:
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
           PLESK_BROWSER_ACTION: runtime-extract
-          PLESK_ARCHIVE_NAME: nomreh-deploy-shecan-official-v12.zip
+          PLESK_ARCHIVE_NAME: nomreh-deploy-shecan-official-v13.zip
           PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-official-extract.md
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
         run: node scripts/plesk-browser-diagnostics.cjs
@@ -106,6 +106,22 @@ jobs:
           NOMREH_E2E_OUTPUT: ${{ runner.temp }}/nomreh-official-start.md
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
         run: node scripts/nomreh-admin-readiness.cjs
+      - name: Validate the authenticated real noVNC framebuffer on the replaced runtime
+        id: live
+        if: steps.start.outcome == 'success'
+        env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+          NOMREH_ADMIN_USERNAME: ${{ secrets.NOMREH_ADMIN_USERNAME }}
+          NOMREH_ADMIN_PASSWORD: ${{ secrets.NOMREH_ADMIN_PASSWORD }}
+          NOMREH_ALLOW_DEMO_ACCOUNTS: "1"
+          NOMREH_OFFICIAL_ONLY: "1"
+          NOMREH_VALIDATE_OFFICIAL_RUNTIME: "1"
+          NOMREH_RESTART_ON_VNC_FAILURE: "0"
+          NOMREH_E2E_OUTPUT: ${{ runner.temp }}/nomreh-official-live.md
+          NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
+        run: node scripts/nomreh-admin-readiness.cjs
       - name: Publish the sanitized official runtime deployment result
         if: always()
         env:
@@ -116,14 +132,17 @@ jobs:
           UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
           EXTRACT_OUTCOME: ${{ steps.extract.outcome }}
           START_OUTCOME: ${{ steps.start.outcome }}
+          LIVE_OUTCOME: ${{ steps.live.outcome }}
         run: |
           set -euo pipefail
           conclusion=neutral
           summary='Plesk browser deployment is not configured; no host was contacted.'
           if [ "$CONFIGURED" = true ]; then
             conclusion=success
-            if [ "$BUILD_OUTCOME" != success ] || [ "$STOP_OUTCOME" != success ] || [ "$UPLOAD_OUTCOME" != success ] || [ "$EXTRACT_OUTCOME" != success ] || [ "$START_OUTCOME" != success ]; then conclusion=failure; fi
-            if [ -f "$RUNNER_TEMP/nomreh-official-extract.md" ]; then
+            if [ "$BUILD_OUTCOME" != success ] || [ "$STOP_OUTCOME" != success ] || [ "$UPLOAD_OUTCOME" != success ] || [ "$EXTRACT_OUTCOME" != success ] || [ "$START_OUTCOME" != success ] || [ "$LIVE_OUTCOME" != success ]; then conclusion=failure; fi
+            if [ -f "$RUNNER_TEMP/nomreh-official-live.md" ]; then
+              summary="$(cat "$RUNNER_TEMP/nomreh-official-live.md")"
+            elif [ -f "$RUNNER_TEMP/nomreh-official-extract.md" ]; then
               summary="$(cat "$RUNNER_TEMP/nomreh-official-extract.md")"
             elif [ -f "$RUNNER_TEMP/nomreh-official-upload.md" ]; then
               summary="$(cat "$RUNNER_TEMP/nomreh-official-upload.md")"
@@ -134,5 +153,5 @@ jobs:
           gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
             -f name="Official Shecan runtime on Plesk" -f head_sha="$GITHUB_SHA" \
             -f status=completed -f conclusion="$conclusion" \
-            -f 'output[title]=Framebuffer-gated official runtime upload and extraction' \
+            -f 'output[title]=Official runtime deployment and authenticated live framebuffer acceptance' \
             --raw-field "output[summary]=${summary}" > /dev/null

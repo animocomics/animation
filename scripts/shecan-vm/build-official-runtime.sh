@@ -127,61 +127,10 @@ links, or Nomreh API keys. No host service or host DNS configuration is used.
 - Debian 12 (bookworm) glibc userland with distribution WebKitGTK, DBus and Tinyproxy.
 EOF
 
-NOMREH_VM_PROBE=1 NOMREH_VNC_PORT=15900 NOMREH_PROXY_PORT=18888 \
-  NOMREH_VM_MEMORY=2048M NOMREH_VM_TIMEOUT=300 \
-  "$RUNTIME/run-official.sh" > "$WORK/official-guest.log" 2>&1 &
-RUNNER_PID=$!
-app_ready=0
-for ((attempt = 0; attempt < 300; attempt++)); do
-  if grep -q 'NOMREH_OFFICIAL_APP_PROCESS_ALIVE' "$WORK/official-guest.log"; then app_ready=1; break; fi
-  if grep -q 'NOMREH_OFFICIAL_APP_ERROR' "$WORK/official-guest.log"; then break; fi
-  if ! kill -0 "$RUNNER_PID" 2>/dev/null; then break; fi
-  sleep 1
-done
-if ((app_ready != 1)); then
-  echo 'Official guest did not reach its live application marker.' >&2
-  cat "$WORK/official-guest.log"
-  exit 1
-fi
-# Require the actual reverse-VNC path used by the Plesk console, not only the
-# host-forward path that timed out on that shared host. The guest must initiate
-# a loopback connection to this listener and render the genuine official app.
-set +e
-echo NOMREH_VNC_SMOKE_LAUNCHING
-VNC_SMOKE_REVERSE=1 VNC_SMOKE_TRACE=1 VNC_READ_TIMEOUT_MS=5000 VNC_SMOKE_ATTEMPTS=60 \
-  python3 "$SOURCE_ROOT/scripts/shecan-vm/vnc-smoke.py" 15500 "$WORK/official-framebuffer.ppm" > "$WORK/vnc-smoke.log" 2>&1 &
-VNC_PID=$!
-set -e
-echo "NOMREH_VNC_SMOKE_STARTED pid=$VNC_PID"
-vnc_status=1
-for ((attempt = 0; attempt < 180; attempt++)); do
-  if ! kill -0 "$VNC_PID" 2>/dev/null; then
-    set +e
-    wait "$VNC_PID"
-    vnc_status=$?
-    set -e
-    break
-  fi
-  if ! kill -0 "$RUNNER_PID" 2>/dev/null; then break; fi
-  sleep 1
-done
-if ((vnc_status != 0)) && [[ -n "$VNC_PID" ]]; then kill "$VNC_PID" 2>/dev/null || true; fi
-VNC_PID=''
-cat "$WORK/vnc-smoke.log"
-if ((vnc_status != 0)); then
-  echo 'Official guest did not produce a real rendered VNC framebuffer.' >&2
-  cat "$WORK/official-guest.log"
-  exit 1
-fi
-kill "$RUNNER_PID" 2>/dev/null || true
-set +e
-wait "$RUNNER_PID" 2>/dev/null
-set -e
-RUNNER_PID=''
-
-# Exercise the production UNIX transport independently. Start the framebuffer
-# client before QEMU so the one-shot RFB greeting cannot be lost, then boot a
-# fresh guest with the serial chardev and guest socat relay enabled.
+# Exercise only the production UNIX transport. The previous reverse-only boot
+# doubled this gate without testing the transport deployed for the admin console.
+# Start the framebuffer client before QEMU so the one-shot RFB greeting cannot be
+# lost, then boot the genuine app with its serial chardev and guest socat relay.
 UNIX_SOCKET="$WORK/vnc.sock"
 rm -f "$UNIX_SOCKET"
 set +e
@@ -234,11 +183,8 @@ set +e
 wait "$RUNNER_PID" 2>/dev/null
 set -e
 RUNNER_PID=''
-cat "$WORK/official-guest.log"
-grep -F 'NOMREH_OFFICIAL_APP_PROCESS_ALIVE' "$WORK/official-guest.log"
-grep -F 'NOMREH_OFFICIAL_AI_BROKER_LISTENING' "$WORK/official-guest.log"
-grep -F 'NOMREH_OFFICIAL_APP_BOOT_PASS' "$WORK/official-guest.log"
-grep -F 'NOMREH_VNC_FRAMEBUFFER_PASS' "$WORK/vnc-smoke.log"
+grep -F 'NOMREH_OFFICIAL_APP_PROCESS_ALIVE' "$WORK/official-guest-unix.log"
+grep -F 'NOMREH_OFFICIAL_AI_BROKER_LISTENING' "$WORK/official-guest-unix.log"
 grep -F 'NOMREH_OFFICIAL_APP_BOOT_PASS' "$WORK/official-guest-unix.log"
 grep -F 'NOMREH_VNC_FRAMEBUFFER_PASS' "$WORK/vnc-unix.log"
 
