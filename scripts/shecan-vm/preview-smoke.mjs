@@ -61,10 +61,21 @@ viewer.on('message', (data) => {
   const message = JSON.parse(data.toString());
   if (message.type === 'frame' && message.data) receivedFrame = true;
 });
+async function clearReservedValue() {
+  viewer.send(JSON.stringify({ type: 'key', event: 'rawKeyDown', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65, modifiers: 2 }));
+  viewer.send(JSON.stringify({ type: 'key', event: 'keyUp', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65, modifiers: 2 }));
+  viewer.send(JSON.stringify({ type: 'key', event: 'rawKeyDown', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46, nativeVirtualKeyCode: 46 }));
+  viewer.send(JSON.stringify({ type: 'key', event: 'keyUp', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46, nativeVirtualKeyCode: 46 }));
+  await sleep(500);
+  const current = await readForm();
+  if (current.value !== '') throw new Error('The reserved smoke value could not be cleared');
+}
+
 viewer.send(JSON.stringify({ type: 'mouse', event: 'mousePressed', x: 250, y: 405, button: 'left', buttons: 1, clickCount: 1 }));
 await sleep(80);
 viewer.send(JSON.stringify({ type: 'mouse', event: 'mouseReleased', x: 250, y: 405, button: 'left', buttons: 0, clickCount: 1 }));
 await sleep(120);
+if (initial.value) await clearReservedValue();
 viewer.send(JSON.stringify({ type: 'insertText', text: expected }));
 await sleep(700);
 const filled = await readForm();
@@ -75,15 +86,7 @@ if (process.env.SHECAN_SMOKE_SCREENSHOT) {
   fs.writeFileSync(process.env.SHECAN_SMOKE_SCREENSHOT, Buffer.from(screenshot.data, 'base64'));
 }
 
-if (!leaveValue) {
-  viewer.send(JSON.stringify({ type: 'key', event: 'rawKeyDown', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65, modifiers: 2 }));
-  viewer.send(JSON.stringify({ type: 'key', event: 'keyUp', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65, modifiers: 2 }));
-  viewer.send(JSON.stringify({ type: 'key', event: 'rawKeyDown', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46, nativeVirtualKeyCode: 46 }));
-  viewer.send(JSON.stringify({ type: 'key', event: 'keyUp', key: 'Delete', code: 'Delete', windowsVirtualKeyCode: 46, nativeVirtualKeyCode: 46 }));
-  await sleep(500);
-  const cleared = await readForm();
-  if (cleared.value !== '') throw new Error('The smoke value could not be cleared');
-}
+if (!leaveValue) await clearReservedValue();
 
 console.log(`SHECAN_PREVIEW_SMOKE_OK form=${filled.forms} filled=true cleared=${!leaveValue} frame=${receivedFrame}`);
 viewer.close();

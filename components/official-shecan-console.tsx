@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type RFB from "@novnc/novnc";
 import { OfficialVncHttpChannel } from "./official-vnc-http-channel";
+import { ShecanWindowsScreen } from "./shecan-windows-screen";
 import { CheckCircle2, Expand, Eye, EyeOff, Link2, LoaderCircle, LockKeyhole, MonitorUp, Play, Power, RefreshCw, ShieldCheck, Square, TriangleAlert, Wifi } from "lucide-react";
 import { useApp } from "../lib/app-context";
 import { readJsonResponse } from "../lib/http-response";
@@ -42,6 +43,7 @@ export function OfficialShecanConsole() {
   const autoStartAttemptedRef = useRef(false);
   const vncRetryTimerRef = useRef<number | null>(null);
   const vncRetryAttemptRef = useRef(0);
+  const windowsApp = runtime?.applicationKind === "windows";
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setBusy((current) => current || "load");
@@ -70,6 +72,13 @@ export function OfficialShecanConsole() {
   }, [load, runtime?.phase, user.role]);
 
   useEffect(() => {
+    if (windowsApp) {
+      if (vncRetryTimerRef.current !== null) window.clearTimeout(vncRetryTimerRef.current);
+      vncRetryTimerRef.current = null;
+      rfbRef.current?.disconnect();
+      rfbRef.current = null;
+      return;
+    }
     if (!runtime?.appReady || !screenRef.current) {
       if (vncRetryTimerRef.current !== null) window.clearTimeout(vncRetryTimerRef.current);
       vncRetryTimerRef.current = null;
@@ -133,7 +142,7 @@ export function OfficialShecanConsole() {
       rfbRef.current?.disconnect();
       rfbRef.current = null;
     };
-  }, [runtime?.appReady, vncSession]);
+  }, [runtime?.appReady, vncSession, windowsApp]);
 
   if (user.role !== "admin") return null;
 
@@ -215,11 +224,11 @@ export function OfficialShecanConsole() {
   return <section className="official-shecan" aria-labelledby="official-shecan-title">
     <div className="official-shecan-heading">
       <span><MonitorUp size={22} /></span>
-      <div><h3 id="official-shecan-title">برنامهٔ رسمی شکن در محیط جداگانه</h3><p>این نمایش، خروجی زندهٔ همان برنامهٔ رسمی لینوکس است؛ فرم ورود نمره جایگزین برنامه نیست.</p></div>
-      <span className={`status-badge ${ready && aiReady && !failed ? "success" : "neutral"}`}>{failed ? "خطای راه‌اندازی" : ready ? (aiReady ? "در حال اجرا؛ AI فعال" : "در حال اجرا؛ AI در انتظار فعال‌سازی") : starting ? "در حال راه‌اندازی" : "متوقف"}</span>
+      <div><h3 id="official-shecan-title">{windowsApp ? "برنامهٔ رسمی ویندوز شکن در محیط جداگانه" : "برنامهٔ رسمی شکن در محیط جداگانه"}</h3><p>{windowsApp ? "این نمایش، خروجی زندهٔ همان برنامهٔ رسمی ویندوز است؛ فرم ورود نمره جایگزین برنامه نیست." : "این نمایش، خروجی زندهٔ همان برنامهٔ رسمی است؛ فرم ورود نمره جایگزین برنامه نیست."}</p></div>
+      <span className={`status-badge ${ready && aiReady && !failed ? "success" : "neutral"}`}>{failed ? "خطای راه‌اندازی" : runtime?.appReady ? (aiReady ? "در حال اجرا؛ AI فعال" : "در حال اجرا؛ AI در انتظار فعال‌سازی") : starting ? "در حال راه‌اندازی" : "متوقف"}</span>
     </div>
 
-    <div className="official-shecan-security"><ShieldCheck size={18} /><p>برنامهٔ رسمی در QEMU جدا اجرا می‌شود و فقط درخواست‌های AI از آن عبور می‌کنند. لینک ذخیره‌شده هنگام فعال‌سازی به‌صورت خودکار و بدون نیاز به تصویر داخل همان محیط اجرا می‌شود؛ DNS هاست تغییر نمی‌کند.</p></div>
+    <div className="official-shecan-security"><ShieldCheck size={18} /><p>{windowsApp ? "برنامهٔ رسمی ویندوز با Wine در محیط جدا اجرا می‌شود. نمایش فرم به‌معنای فعال‌شدن AI نیست؛ مسیر AI فقط پس از آماده‌شدن broker و آزمایش واقعی فعال می‌شود و DNS هاست تغییر نمی‌کند." : "برنامهٔ رسمی در QEMU جدا اجرا می‌شود و فقط درخواست‌های AI از آن عبور می‌کنند. لینک ذخیره‌شده هنگام فعال‌سازی به‌صورت خودکار و بدون نیاز به تصویر داخل همان محیط اجرا می‌شود؛ DNS هاست تغییر نمی‌کند."}</p></div>
 
     <div className="official-shecan-toolbar">
       {!runtime?.running ? <button className="btn btn-primary" type="button" onClick={() => void runtimeAction("start")} disabled={busy !== null || !runtime?.installed}>{busy === "start" ? <LoaderCircle className="spin-icon" size={16} /> : <Play size={16} />}اجرای برنامهٔ رسمی</button> : <>
@@ -231,8 +240,8 @@ export function OfficialShecanConsole() {
     </div>
 
     {runtime?.installed ? <div className={`official-shecan-screen ${vncConnected ? "connected" : ""}`}>
-      <div className="official-shecan-screen-bar"><span><span className={`live-dot ${vncConnected ? "online" : ""}`} />{vncConnected ? "تصویر زندهٔ برنامهٔ رسمی" : failed ? "راه‌اندازی نیاز به بررسی دارد" : waitingForBoot ? "در حال بوت محیط ایزوله…" : "در انتظار تصویر برنامه…"}</span><button type="button" className="icon-button" aria-label="تمام‌صفحه" onClick={() => void screenRef.current?.requestFullscreen?.()}><Expand size={16} /></button></div>
-      <div className="official-shecan-vnc" ref={screenRef} aria-label="محیط گرافیکی زندهٔ برنامهٔ رسمی شکن" />
+      <div className="official-shecan-screen-bar"><span><span className={`live-dot ${vncConnected ? "online" : ""}`} />{vncConnected ? "تصویر زندهٔ برنامهٔ رسمی" : failed ? "راه‌اندازی نیاز به بررسی دارد" : waitingForBoot ? (windowsApp ? "در حال راه‌اندازی برنامهٔ ویندوز…" : "در حال بوت محیط ایزوله…") : "در انتظار تصویر برنامه…"}</span><button type="button" className="icon-button" aria-label="تمام‌صفحه" onClick={() => void screenRef.current?.requestFullscreen?.()}><Expand size={16} /></button></div>
+      <div className="official-shecan-vnc" ref={screenRef} aria-label={windowsApp ? "محیط گرافیکی زندهٔ برنامهٔ رسمی ویندوز شکن" : "محیط گرافیکی زندهٔ برنامهٔ رسمی شکن"}>{windowsApp && <ShecanWindowsScreen active={Boolean(runtime.appReady)} session={vncSession} onConnectionChange={setVncConnected} />}</div>
       {!vncConnected && <div className="official-shecan-screen-wait">{failed ? <TriangleAlert size={28} /> : waitingForBoot ? <LoaderCircle className="spin-icon" size={28} /> : <RefreshCw size={28} />}<span>{failed ? `${runtime?.message || "راه‌اندازی کامل نشد."} تلاش خودکار ادامه دارد.${runtime?.errorCode ? ` کد خطا: ${runtime.errorCode}` : ""}` : waitingForBoot ? "راه‌اندازی برنامه ممکن است چند دقیقه طول بکشد." : runtime?.running ? "اتصال تصویر برقرار نشد؛ اتصال خودکار دوباره تلاش می‌شود." : "محیط متوقف است؛ شروع خودکار انجام می‌شود یا دکمهٔ اجرا را بزنید."}</span></div>}
     </div> : <div className="official-shecan-not-installed"><TriangleAlert size={20} /><div><strong>بستهٔ رسمی هنوز روی این سرور نصب نشده است</strong><p>هیچ تصویر یا فرم جایگزینی به‌عنوان برنامهٔ رسمی نمایش داده نمی‌شود.</p></div></div>}
 
@@ -244,7 +253,7 @@ export function OfficialShecanConsole() {
 
     <details className="official-shecan-link-fallback">
       <summary><Link2 size={15} />لینک به‌روزرسان و روش دستی</summary>
-      <div><p>{network?.hasUpdateUrl ? "لینک فعلی رمزنگاری‌شده حفظ می‌شود و در وضعیت یا گزارش‌ها نمایش داده نمی‌شود." : "لینک کامل به‌روزرسان سفارش را برای حفظ روش دستی وارد کنید."} هنگام فعال‌سازی AI، همین لینک فقط داخل guest رسمی اجرا و DNS همان guest تنظیم می‌شود؛ وارد کردن آن در تصویر لازم نیست.</p><div className="input-with-icon input-with-action"><LockKeyhole size={16} /><input className="input" dir="ltr" type={showUpdateUrl ? "text" : "password"} value={updateUrl} onChange={(event) => setUpdateUrl(event.target.value)} autoComplete="off" spellCheck={false} placeholder={network?.hasUpdateUrl ? "برای حفظ لینک فعلی خالی بگذارید" : "لینک کامل به‌روزرسان شکن"} /><button className="input-action" type="button" onClick={() => setShowUpdateUrl((value) => !value)} aria-label={showUpdateUrl ? "پنهان‌کردن لینک" : "نمایش لینک"}>{showUpdateUrl ? <EyeOff size={16} /> : <Eye size={16} />}</button></div><button className="btn btn-secondary" type="button" onClick={() => void saveNetwork(officialEnabled, updateUrl)} disabled={busy !== null || !updateUrl.trim()}>{busy === "link" ? <LoaderCircle className="spin-icon" size={15} /> : <LockKeyhole size={15} />}ذخیرهٔ رمزنگاری‌شدهٔ لینک</button></div>
+      <div><p>{network?.hasUpdateUrl ? "لینک فعلی رمزنگاری‌شده حفظ می‌شود و در وضعیت یا گزارش‌ها نمایش داده نمی‌شود." : "لینک کامل به‌روزرسان سفارش را برای حفظ روش دستی وارد کنید."} هنگام فعال‌سازی AI، همین لینک فقط داخل محیط جداگانهٔ برنامه اجرا و DNS همان محیط تنظیم می‌شود؛ وارد کردن آن در تصویر لازم نیست.</p><div className="input-with-icon input-with-action"><LockKeyhole size={16} /><input className="input" dir="ltr" type={showUpdateUrl ? "text" : "password"} value={updateUrl} onChange={(event) => setUpdateUrl(event.target.value)} autoComplete="off" spellCheck={false} placeholder={network?.hasUpdateUrl ? "برای حفظ لینک فعلی خالی بگذارید" : "لینک کامل به‌روزرسان شکن"} /><button className="input-action" type="button" onClick={() => setShowUpdateUrl((value) => !value)} aria-label={showUpdateUrl ? "پنهان‌کردن لینک" : "نمایش لینک"}>{showUpdateUrl ? <EyeOff size={16} /> : <Eye size={16} />}</button></div><button className="btn btn-secondary" type="button" onClick={() => void saveNetwork(officialEnabled, updateUrl)} disabled={busy !== null || !updateUrl.trim()}>{busy === "link" ? <LoaderCircle className="spin-icon" size={15} /> : <LockKeyhole size={15} />}ذخیرهٔ رمزنگاری‌شدهٔ لینک</button></div>
     </details>
 
     {error && <div className="api-network-error" role="alert"><TriangleAlert size={17} /><span>{error}</span></div>}

@@ -14,6 +14,23 @@ const handle = app.getRequestHandler();
 
 function ensureOfficialShecanSupervisor() {
   if (process.env.NOMREH_DISABLE_SHECAN_SUPERVISOR === "1") return;
+  const windowsRuntimeDirectory = process.env.NOMREH_SHECAN_WINDOWS_RUNTIME_DIR || path.join(process.cwd(), "nomreh-vm", "windows");
+  const windowsSupervisor = path.join(process.cwd(), "scripts", "shecan-vm", "windows-supervisor.mjs");
+  if (fs.existsSync(path.join(windowsRuntimeDirectory, "runtime-manifest.json")) && fs.existsSync(windowsSupervisor)) {
+    const child = spawn(process.execPath, [windowsSupervisor], {
+      cwd: process.cwd(),
+      detached: true,
+      stdio: "ignore",
+      env: {
+        ...process.env,
+        SHECAN_WINDOWS_RUNTIME_DIR: windowsRuntimeDirectory,
+        SHECAN_PREVIEW_HOST: "127.0.0.1",
+      },
+    });
+    child.on("error", () => undefined);
+    child.unref();
+    return;
+  }
   const runtimeDirectory = process.env.NOMREH_SHECAN_RUNTIME_DIR || path.join(process.cwd(), "nomreh-vm", "official");
   const supervisor = path.join(process.cwd(), "scripts", "shecan-runtime-watchdog.cjs");
   if (!fs.existsSync(path.join(runtimeDirectory, "runtime-manifest.json")) || !fs.existsSync(supervisor)) return;

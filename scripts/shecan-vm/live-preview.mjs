@@ -329,13 +329,64 @@ async function forwardInput(message) {
   if (Date.now() - lastFrameAt > 400) setTimeout(captureOnce, 60);
 }
 
+function readInputJson(request) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    let tooLarge = false;
+    request.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > 4096) { tooLarge = true; return; }
+      chunks.push(chunk);
+    });
+    request.on('end', () => {
+      if (tooLarge) { reject(new Error('Input too large')); return; }
+      try {
+        const message = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        if (!message || typeof message !== 'object' || Array.isArray(message)) throw new Error('Invalid input');
+        resolve(message);
+      } catch { reject(new Error('Invalid input')); }
+    });
+    request.on('error', reject);
+  });
+}
+
+function loopbackRequest(request) {
+  return ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(String(request.socket.remoteAddress || ''));
+}
+
 const server = http.createServer((request, response) => {
   const url = new URL(request.url, 'http://localhost');
   response.setHeader('Cache-Control', 'no-store');
   response.setHeader('X-Content-Type-Options', 'nosniff');
   if (request.method === 'GET' && url.pathname === '/healthz') {
     response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
-    response.end(JSON.stringify({ ok: cdpReady, application: 'Shecan Desktop', transport: 'CDP screencast', clients: clients.size }));
+    response.end(JSON.stringify({ ok: cdpReady, application: 'Shecan Desktop', transport: 'CDP screencast', frame: Boolean(lastFrame), clients: clients.size }));
+  } else if (request.method === 'GET' && url.pathname === '/frame') {
+    if (!lastFrame) {
+      response.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8' });
+      response.end(JSON.stringify({ error: 'No application frame is available' }));
+      return;
+    }
+    response.writeHead(200, { 'Content-Type': 'image/jpeg' });
+    response.end(Buffer.from(lastFrame.data, 'base64'));
+  } else if (request.method === 'POST' && url.pathname === '/input') {
+    if (!loopbackRequest(request)) {
+      response.writeHead(403, { 'Content-Type': 'application/json; charset=utf-8' });
+      response.end(JSON.stringify({ error: 'Loopback input only' }));
+      return;
+    }
+    readInputJson(request)
+      .then((message) => forwardInput(message))
+      .then(() => {
+        response.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+        response.end(JSON.stringify({ ok: true }));
+      })
+      .catch(() => {
+        if (response.writableEnded) return;
+        response.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
+        response.end(JSON.stringify({ error: 'Input was not accepted' }));
+      });
   } else if (request.method === 'GET' && url.pathname === '/') {
     response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     response.end(pageHtml);

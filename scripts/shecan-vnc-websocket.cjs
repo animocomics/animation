@@ -7,6 +7,7 @@ const { DatabaseSync } = require("node:sqlite");
 const { WebSocketServer, WebSocket } = require("ws");
 
 const UPGRADE_PATH = "/api/admin/shecan-runtime/vnc";
+const WINDOWS_UPGRADE_PATH = "/api/admin/shecan-runtime/windows";
 
 function rejectSocket(socket, status, message) {
   if (!socket.destroyed) {
@@ -62,6 +63,71 @@ async function authorizeUpgrade(request) {
   }
 }
 
+function bridgeWindowsPreview(request, socket, head, wss) {
+  const previewPort = Number(process.env.NOMREH_SHECAN_WINDOWS_PREVIEW_PORT || 6099);
+  if (!Number.isInteger(previewPort) || previewPort < 1024 || previewPort > 65535) {
+    rejectSocket(socket, 503, "Service Unavailable");
+    return;
+  }
+  const target = new WebSocket(`ws://127.0.0.1:${previewPort}/ws`);
+  let client = null;
+  let settled = false;
+  const pending = [];
+  let pendingBytes = 0;
+  const close = () => {
+    if (client && client.readyState === WebSocket.OPEN) client.close();
+    if (target.readyState === WebSocket.OPEN || target.readyState === WebSocket.CONNECTING) target.close();
+  };
+  target.on("message", (data, isBinary) => {
+    if (isBinary) return;
+    if (client && client.readyState === WebSocket.OPEN) {
+      client.send(data, { binary: false });
+      return;
+    }
+    // Preserve the latest bounded startup frames while the authenticated
+    // browser upgrade is still being completed.
+    pending.push(data);
+    pendingBytes += data.length;
+    while (pending.length > 32 || pendingBytes > 4 * 1024 * 1024) {
+      const removed = pending.shift();
+      if (removed) pendingBytes -= removed.length;
+    }
+  });
+  target.on("error", () => {
+    if (!settled) {
+      settled = true;
+      rejectSocket(socket, 503, "Service Unavailable");
+    } else close();
+  });
+  target.once("close", () => { if (client) close(); });
+  const timer = setTimeout(() => {
+    if (settled) return;
+    settled = true;
+    target.terminate();
+    rejectSocket(socket, 503, "Service Unavailable");
+  }, 8000);
+  target.once("open", () => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    wss.handleUpgrade(request, socket, head, (websocket) => {
+      client = websocket;
+      socket.resume();
+      for (const data of pending) {
+        if (websocket.readyState === WebSocket.OPEN) websocket.send(data, { binary: false });
+      }
+      pending.length = 0;
+      websocket.on("message", (data, isBinary) => {
+        if (isBinary || data.length > 4096 || websocket.readyState !== WebSocket.OPEN) return;
+        if (target.readyState === WebSocket.OPEN) target.send(data, { binary: false });
+      });
+      websocket.once("close", close);
+      websocket.once("error", close);
+      target.once("close", close);
+    });
+  });
+}
+
 function attachShecanVncWebSocket(server, applicationPort) {
   const wss = new WebSocketServer({
     noServer: true,
@@ -74,7 +140,8 @@ function attachShecanVncWebSocket(server, applicationPort) {
   server.on("upgrade", async (request, socket, head) => {
     let pathname = "";
     try { pathname = new URL(request.url || "/", "http://localhost").pathname; } catch { /* Rejected below. */ }
-    if (pathname !== UPGRADE_PATH) {
+    const windowsPreview = pathname === WINDOWS_UPGRADE_PATH;
+    if (pathname !== UPGRADE_PATH && !windowsPreview) {
       rejectSocket(socket, 404, "Not Found");
       return;
     }
@@ -89,6 +156,11 @@ function attachShecanVncWebSocket(server, applicationPort) {
     } catch (error) {
       const status = error.statusCode === 401 || error.statusCode === 403 ? error.statusCode : 503;
       rejectSocket(socket, status, status === 401 ? "Unauthorized" : status === 403 ? "Forbidden" : "Service Unavailable");
+      return;
+    }
+
+    if (windowsPreview) {
+      bridgeWindowsPreview(request, socket, head, wss);
       return;
     }
 
@@ -155,4 +227,4 @@ function attachShecanVncWebSocket(server, applicationPort) {
   return wss;
 }
 
-module.exports = { attachShecanVncWebSocket, authorizeUpgrade, UPGRADE_PATH };
+module.exports = { attachShecanVncWebSocket, authorizeUpgrade, UPGRADE_PATH, WINDOWS_UPGRADE_PATH };

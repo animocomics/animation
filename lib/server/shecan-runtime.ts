@@ -3,6 +3,13 @@ import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
+import {
+  ensureWindowsRuntimeSupervisor,
+  getWindowsRuntimeStatus,
+  isWindowsRuntimeInstalled,
+  startWindowsRuntime,
+  stopWindowsRuntime,
+} from "./shecan-windows-runtime";
 
 const REQUIRED_RUNTIME_FILES = [
   "glibc/lib/x86_64-linux-gnu/ld-2.27.so",
@@ -21,6 +28,8 @@ export interface OfficialRuntimeStatus {
   supervisorRunning: boolean;
   markers: string[];
   phase: "not-installed" | "stopped" | "starting" | "ready" | "error";
+  applicationKind?: "windows";
+  displayTransport?: "cdp-screencast";
   startedAt?: string;
   errorCode?: string;
   message: string;
@@ -85,6 +94,10 @@ let lastSupervisorRecoveryAttempt = 0;
 
 /** Re-establish the detached supervisor after a host/application process loss. */
 export function ensureOfficialRuntimeSupervisor(): void {
+  if (isWindowsRuntimeInstalled()) {
+    ensureWindowsRuntimeSupervisor();
+    return;
+  }
   if (!regularFile(path.join(runtimeRoot(), "runtime-manifest.json")) || regularFile(stopRequestedPath())) return;
   const now = Date.now();
   if (now - lastSupervisorRecoveryAttempt < 2000) return;
@@ -286,6 +299,7 @@ export function verifyOfficialRuntime(root = runtimeRoot()): void {
 }
 
 export function getOfficialRuntimeStatus(): OfficialRuntimeStatus {
+  if (isWindowsRuntimeInstalled()) return getWindowsRuntimeStatus();
   let installed = false;
   try {
     const root = runtimeRoot();
@@ -338,6 +352,7 @@ function portIsFree(port: number): Promise<boolean> {
 }
 
 export async function startOfficialRuntime(options: { supervise?: boolean } = {}): Promise<OfficialRuntimeStatus> {
+  if (isWindowsRuntimeInstalled()) return startWindowsRuntime(options);
   fs.mkdirSync(stateRoot(), { recursive: true, mode: 0o700 });
   if (options.supervise === false) fs.writeFileSync(supervisorSuppressedPath(), `${process.pid}\n`, { mode: 0o600 });
   else {
@@ -414,6 +429,7 @@ export async function startOfficialRuntime(options: { supervise?: boolean } = {}
 const delay = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 
 export async function stopOfficialRuntime(): Promise<OfficialRuntimeStatus> {
+  if (isWindowsRuntimeInstalled()) return stopWindowsRuntime();
   fs.mkdirSync(stateRoot(), { recursive: true, mode: 0o700 });
   fs.writeFileSync(stopRequestedPath(), "manual stop\n", { mode: 0o600 });
   const supervisor = readSupervisorPid();

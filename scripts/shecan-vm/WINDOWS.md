@@ -12,9 +12,17 @@ This path runs the user-supplied `shecan (2).exe` as the **Windows** application
 
 `live-preview.mjs` serves the real WebView2 pixels through CDP screencast and forwards validated mouse/keyboard input to that same Windows process. The page contains a canvas, **not an HTML recreation of Shecan**. CDP remains on `127.0.0.1:9222`; the viewer accepts no arbitrary JavaScript evaluation requests and never logs typed text.
 
-Use `SHECAN_PREVIEW_HOST=127.0.0.1` behind Nomreh's authenticated admin proxy. A public `0.0.0.0` bind is only for the isolated Arena live preview.
+Use `SHECAN_PREVIEW_HOST=127.0.0.1` behind Nomreh's authenticated admin proxy. A public `0.0.0.0` bind is only for the isolated Arena live preview. The viewer's `/frame` endpoint returns only the latest JPEG. `/input` accepts the same bounded mouse/keyboard messages over HTTP only from loopback; neither endpoint exposes CDP evaluation.
 
 `windows-supervisor.mjs` owns Xvfb, Wine and the viewer. It checks actual CDP/viewer readiness, restarts failed processes with bounded backoff, and writes a non-secret status file. It does not mark the application ready merely because a PID exists.
+
+## Nomreh admin integration
+
+- `lib/server/shecan-windows-runtime.ts` verifies a format-2 manifest, including the exact installer hash and eight required runtime/application files. Readiness requires live Wine and viewer PIDs plus a fresh supervisor status.
+- `components/shecan-windows-screen.tsx` draws the genuine screencast inside the existing admin console. It first uses the authenticated same-origin WebSocket `/api/admin/shecan-runtime/windows`, then falls back to polling `windows-frame` and ordered `windows-input` requests when a proxy does not forward upgrades.
+- The WebSocket and HTTP paths require the same admin session and origin checks. HTTP input is limited to 4KB and a bounded client-side queue. No browser code connects to the server's loopback address.
+- `next-server.cjs` and the existing runtime API select the Windows supervisor when its manifest is installed. Existing manual-link, V2Ray and provider settings remain separate.
+- A visible Windows login is **not** AI activation. `brokerReady` and `activationReady` remain false until a real AI broker and activation check exist, so provider traffic cannot fail open through a display-only runtime.
 
 ## Validation
 
@@ -30,13 +38,23 @@ Then run the non-destructive smoke check:
 node scripts/shecan-vm/preview-smoke.mjs
 ```
 
-The smoke check refuses to replace a non-empty username field. It clicks through the viewer, enters the reserved value `test@example.invalid`, verifies the value in the real WebView2 DOM, and clears it. `--leave` retains the value solely as visible proof of interaction.
+The smoke check refuses to replace an unrelated non-empty username field. It clicks through the viewer, enters the reserved value `test@example.invalid`, verifies the value in the real WebView2 DOM, and clears it. If a previous `--leave` run retained that reserved value, the next run clears it before typing, making repeated runs safe. `--leave` retains the value solely as visible proof of interaction.
+
+For an authenticated end-to-end admin check, start the custom Next server against a separate temporary `NOMREH_DATA_DIR`, then run:
+
+```bash
+NOMREH_DATA_DIR=/path/to/temporary-data NOMREH_WINDOWS_ADMIN_ORIGIN=http://127.0.0.1:3000 npx tsx scripts/shecan-vm/admin-windows-smoke.ts
+```
+
+That check creates and deletes a temporary admin session without printing it, verifies `/admin` and the runtime API, rejects anonymous access, and exercises both WebSocket and HTTP frame/input paths against the genuine WebView2 form.
 
 Validated on the isolated Linux display:
 
-1. `SHECAN_PREVIEW_SMOKE_OK form=1 filled=true cleared=false frame=true`.
+1. Two consecutive retained-value runs reported `SHECAN_PREVIEW_SMOKE_OK form=1 filled=true cleared=false frame=true`.
 2. Terminating the Wine application produced a new application PID and returned `phase=ready` with `restarts=1`; the same smoke check passed afterward.
-3. The independent Windows WGL test reported OpenGL 4.6, Mesa 26.1.8, llvmpipe (LLVM 23.1.1).
+3. Restarting only the viewer produced a new viewer PID while preserving the application PID; `/healthz` and `/frame` returned healthy again.
+4. The authenticated admin check reported `SHECAN_ADMIN_WINDOWS_SMOKE_OK form=1 filled=true websocket=true http=true authorized=true anonymous_rejected=true`.
+5. The independent Windows WGL test reported OpenGL 4.6, Mesa 26.1.8, llvmpipe (LLVM 23.1.1).
 
 ## Native module rebuilds and hashes
 
