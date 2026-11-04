@@ -204,6 +204,38 @@ function takeReverseSocket(port) {
   });
 }
 
+async function loopbackSelfTest() {
+  const server = net.createServer();
+  let socket;
+  try {
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("No loopback test port");
+    socket = net.createConnection({ host: "127.0.0.1", port: address.port });
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => finish(new Error("Loopback test timeout")), 1000);
+      function finish(error) {
+        clearTimeout(timer);
+        socket.off("connect", onConnect);
+        socket.off("error", onError);
+        if (error) reject(error); else resolve();
+      }
+      const onConnect = () => finish();
+      const onError = (error) => finish(error);
+      socket.once("connect", onConnect);
+      socket.once("error", onError);
+    });
+    return "LOCALNET_OK";
+  } catch { return "LOCALNET_FAIL"; }
+  finally {
+    if (socket) socket.destroy();
+    server.close();
+  }
+}
+
 async function connectDirectVnc(request) {
   const port = Number(process.env.NOMREH_VNC_PORT || 15900);
   if (!Number.isInteger(port) || port < 1024 || port > 65535) throw Object.assign(new Error("Invalid VNC port"), { statusCode: 503 });
@@ -222,11 +254,12 @@ async function connectDirectVnc(request) {
     const onError = (error) => finish(error);
     socket.once("connect", onConnect);
     socket.once("error", onError);
-  }).catch((error) => {
+  }).catch(async (error) => {
     socket.destroy();
     const rawCode = error.message === "VNC connection timeout" ? "TIMEOUT" : String(error.code || "UNKNOWN");
     const code = /^[A-Z0-9_]+$/.test(rawCode) ? rawCode : "UNKNOWN";
-    throw Object.assign(new Error("VNC is unavailable"), { statusCode: 503, vncCode: `VNC_CONNECT_${code}_${listenerState(port)}`, cause: error });
+    const localNetwork = await loopbackSelfTest();
+    throw Object.assign(new Error("VNC is unavailable"), { statusCode: 503, vncCode: `VNC_CONNECT_${code}_${listenerState(port)}_${localNetwork}`, cause: error });
   });
   return socket;
 }
@@ -250,8 +283,10 @@ function listenerState(port) {
           const command = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8");
           if (!command.includes("qemu-system-x86_64") || !command.includes("initramfs-official")) return `OTHER_LISTENER_Q${queue}_${addressClass}`;
           const forward = command.includes(`hostfwd=tcp:127.0.0.1:${port}-:5900`) ? "FWD_OK" : "FWD_BAD";
+          const hostPort = String(process.env.NOMREH_HOST_APP_PORT || process.env.PORT || 3000);
+          const hostPortState = command.includes(`nomreh_host_port=${hostPort}`) ? "HOST_PORT_OK" : "HOST_PORT_BAD";
           for (const fd of fs.readdirSync(`/proc/${pid}/fd`)) {
-            if (fs.readlinkSync(`/proc/${pid}/fd/${fd}`) === `socket:[${inode}]`) return `QEMU_LISTENER_Q${queue}_${addressClass}_${forward}`;
+            if (fs.readlinkSync(`/proc/${pid}/fd/${fd}`) === `socket:[${inode}]`) return `QEMU_LISTENER_Q${queue}_${addressClass}_${forward}_${hostPortState}`;
           }
           return `OTHER_LISTENER_Q${queue}_${addressClass}`;
         } catch { return `LISTENER_OWNER_UNKNOWN_Q${queue}_${addressClass}`; }
