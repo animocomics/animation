@@ -408,6 +408,7 @@ async function testTeacherAccess() {
       ["/api/admin/usage", "usage reporting"],
       ["/api/admin/api-network", "Shecan configuration"],
       ["/api/admin/shecan-runtime", "official Shecan runtime"],
+      ["/api/admin/v2ray", "V2Ray configuration"],
     ];
     for (const [pathname, label] of adminChecks) {
       const response = await teacherContext.request.get(`${ORIGIN}${pathname}`);
@@ -734,6 +735,17 @@ async function main() {
   const usersPayload = await usersResponse.json();
   if (!usersResponse.ok() || !Array.isArray(usersPayload.users)) throw new Error("The admin-only account API was not available to the authenticated admin.");
   lines.push(`- Admin-only account management API: HTTP ${usersResponse.status()}; ${usersPayload.users.length} account(s) visible without exposing their details.`);
+
+  await page.getByText("اتصال جایگزین V2Ray برای AI", { exact: true }).waitFor({ state: "visible" });
+  await page.locator("#v2ray-configs").waitFor({ state: "visible" });
+  await page.getByRole("button", { name: "تست خودکار و فعال‌سازی", exact: true }).waitFor({ state: "visible" });
+  if (await page.locator("#v2ray-configs").inputValue() !== "") throw new Error("The V2Ray configuration textarea unexpectedly retained text after a fresh page load.");
+  const v2rayResponse = await context.request.get(`${ORIGIN}/api/admin/v2ray`);
+  const v2rayPayload = await v2rayResponse.json().catch(() => ({}));
+  if (!v2rayResponse.ok() || !v2rayPayload.status || !Array.isArray(v2rayPayload.status.configs)) throw new Error("The authenticated V2Ray status API was not available.");
+  const v2raySerialized = JSON.stringify(v2rayPayload.status);
+  if (/(?:vless|vmess|trojan|ss):/i.test(v2raySerialized) || /(?:encrypted_config|encryptedConfig|normalized|outbound|password|uuid)/i.test(v2raySerialized)) throw new Error("The public V2Ray status exposed configuration or credential material.");
+  lines.push(`- Real admin V2Ray surface and status API are available; ${v2rayPayload.status.configs.length} sanitized config label(s) returned; no share-link, endpoint, password, or UUID material was exposed. No save, test, activation, disable, or clear action was submitted.`);
 
   const runtimeControl = process.env.NOMREH_OFFICIAL_RUNTIME_CONTROL || "";
   if (runtimeControl) {
