@@ -1,4 +1,4 @@
-name: Nomreh post-build disk inspection
+name: Nomreh safe archive cleanup
 
 on:
   push:
@@ -54,8 +54,9 @@ jobs:
           PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
-          PLESK_BROWSER_ACTION: disk
-          PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-disk-after-build.md
+          PLESK_BROWSER_ACTION: cleanup-deploy-archives
+          PLESK_ARCHIVE_NAME: nomreh-deploy-shecan-official-v7.zip
+          PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-archive-cleanup.md
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
         run: node scripts/plesk-browser-diagnostics.cjs
 
@@ -68,18 +69,18 @@ jobs:
         run: |
           set -euo pipefail
           conclusion=neutral
-          summary='Nomreh post-build disk inspection is not configured; no host was contacted.'
+          summary='Nomreh safe archive cleanup is not configured; no host was contacted.'
           if [ "$CONFIGURED" = true ]; then
             conclusion=success
             if [ "$DIAGNOSTIC_OUTCOME" != success ]; then conclusion=failure; fi
-            if [ -f "$RUNNER_TEMP/nomreh-disk-after-build.md" ]; then
-              summary="$(cat "$RUNNER_TEMP/nomreh-disk-after-build.md")"
+            if [ -f "$RUNNER_TEMP/nomreh-archive-cleanup.md" ]; then
+              summary="$(cat "$RUNNER_TEMP/nomreh-archive-cleanup.md")"
             else
               summary='Browser preparation or build-process inspection did not produce a report; no remediation was attempted.'
             fi
           fi
           gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
-            -f name="Nomreh post-build disk inspection" \
+            -f name="Nomreh safe archive cleanup" \
             -f head_sha="${GITHUB_SHA}" \
             -f status=completed \
             -f conclusion="$conclusion" \
