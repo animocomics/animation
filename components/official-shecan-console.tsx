@@ -157,13 +157,14 @@ export function OfficialShecanConsole() {
 
   const starting = runtime?.phase === "starting";
   const ready = Boolean(runtime?.appReady && runtime.brokerReady);
+  const aiReady = Boolean(runtime?.activationReady);
   const officialEnabled = Boolean(network?.enabled && network.transport === "official-vm");
 
   return <section className="official-shecan" aria-labelledby="official-shecan-title">
     <div className="official-shecan-heading">
       <span><MonitorUp size={22} /></span>
       <div><h3 id="official-shecan-title">برنامهٔ رسمی شکن در محیط جداگانه</h3><p>این نمایش، خروجی زندهٔ همان برنامهٔ رسمی لینوکس است؛ فرم ورود نمره جایگزین برنامه نیست.</p></div>
-      <span className={`status-badge ${ready ? "success" : "neutral"}`}>{ready ? "در حال اجرا" : starting ? "در حال راه‌اندازی" : "متوقف"}</span>
+      <span className={`status-badge ${ready && aiReady ? "success" : "neutral"}`}>{ready ? (aiReady ? "در حال اجرا؛ AI فعال" : "در حال اجرا؛ AI در انتظار فعال‌سازی") : starting ? "در حال راه‌اندازی" : "متوقف"}</span>
     </div>
 
     <div className="official-shecan-security"><ShieldCheck size={18} /><p>برنامهٔ رسمی در QEMU جدا اجرا می‌شود و فقط درخواست‌های AI از آن عبور می‌کنند. لینک ذخیره‌شده هنگام فعال‌سازی به‌صورت خودکار و بدون نیاز به تصویر داخل همان محیط اجرا می‌شود؛ DNS هاست تغییر نمی‌کند.</p></div>
