@@ -85,3 +85,9 @@ test("V2Ray response-body reads honor the same bounded abort as the probe", asyn
     clearTimeout(timer);
   }
 });
+
+test("V2Ray rejects non-provider URLs before creating any proxy runtime", async () => {
+  const { v2rayProviderFetch } = await import("../lib/server/v2ray-runtime");
+  await assert.rejects(v2rayProviderFetch("https://example.com/private"), (error: unknown) => error instanceof Error && (error as { status?: number }).status === 400);
+  await assert.rejects(v2rayProviderFetch("http://generativelanguage.googleapis.com/v1beta/models"), (error: unknown) => error instanceof Error && (error as { status?: number }).status === 400);
+});

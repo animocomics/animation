@@ -14,15 +14,15 @@ const MAX_CONFIGS = 60;
 const TEST_CONCURRENCY = 8;
 const TEST_ATTEMPTS = 2;
 const PROBE_TIMEOUT_MS = 8_000;
-const PROVIDER_DOMAINS = [
-  "domain:api.openai.com",
-  "domain:generativelanguage.googleapis.com",
-  "domain:api.deepseek.com",
-  "domain:api.z.ai",
-  "domain:api.minimax.io",
-  "domain:api.mistral.ai",
-  "domain:tinker.thinkingmachines.dev",
-];
+const PROVIDER_HOSTNAMES = new Set([
+  "api.openai.com",
+  "generativelanguage.googleapis.com",
+  "api.deepseek.com",
+  "api.z.ai",
+  "api.minimax.io",
+  "api.mistral.ai",
+  "tinker.thinkingmachines.dev",
+]);
 
 interface V2RayConfigRow {
   id: string;
@@ -173,6 +173,14 @@ async function reservePort(): Promise<number> {
   return port;
 }
 
+function assertAiProviderUrl(value: string): void {
+  let target: URL;
+  try { target = new URL(value); } catch { throw new V2RayError("آدرس provider معتبر نیست.", 400); }
+  if (target.protocol !== "https:" || !PROVIDER_HOSTNAMES.has(target.hostname.toLowerCase()) || target.username || target.password) {
+    throw new V2RayError("مسیر V2Ray فقط برای درخواست‌های HTTPS providerهای AI مجاز است.", 400);
+  }
+}
+
 function xrayConfig(parsed: ParsedV2RayConfig, port: number, user: string, pass: string): string {
   const outbound = { ...parsed.outbound, tag: "nomreh-ai" };
   return JSON.stringify({
@@ -190,9 +198,42 @@ function xrayConfig(parsed: ParsedV2RayConfig, port: number, user: string, pass:
     ],
     routing: {
       domainStrategy: "AsIs",
-      rules: [{ type: "field", network: "tcp", domain: PROVIDER_DOMAINS, outboundTag: "nomreh-ai" }],
+      // This authenticated loopback inbound is private to the allowlisted AI
+      // dispatcher below. No general application/user traffic receives its agent.
+      rules: [{ type: "field", inboundTag: ["nomreh-loopback-only"], outboundTag: "nomreh-ai" }],
     },
   });
+}
+
+async function waitForXrayListen(running: RunningV2Ray, port: number, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    if (running.closed) throw new Error("XRAY_EXITED");
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const socket = net.createConnection({ host: "127.0.0.1", port });
+        const timer = setTimeout(() => {
+          socket.destroy();
+          reject(new Error("XRAY_LISTEN_TIMEOUT"));
+        }, 450);
+        socket.once("connect", () => {
+          clearTimeout(timer);
+          socket.end();
+          resolve();
+        });
+        socket.once("error", (error) => {
+          clearTimeout(timer);
+          reject(error);
+        });
+      });
+      return;
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, 60));
+    }
+  }
+  throw new Error("XRAY_LISTEN_TIMEOUT", { cause: lastError });
 }
 
 async function startXray(row: V2RayConfigRow): Promise<RunningV2Ray> {
@@ -239,7 +280,13 @@ async function startXray(row: V2RayConfigRow): Promise<RunningV2Ray> {
     fs.rmSync(configPath, { force: true });
     if (globalStore.__nomrehV2RayRuntime === running) delete globalStore.__nomrehV2RayRuntime;
   });
-  return running;
+  try {
+    await waitForXrayListen(running, port);
+    return running;
+  } catch (error) {
+    await stopXray(running);
+    throw error;
+  }
 }
 
 async function stopXray(running: RunningV2Ray | undefined): Promise<void> {
@@ -293,6 +340,7 @@ export async function boundedResponseText(response: Response, maximum = 100_000,
 }
 
 async function probeAgent(agent: ProxyAgent, timeoutMs = PROBE_TIMEOUT_MS): Promise<number> {
+  assertAiProviderUrl(TEST_URL);
   const started = Date.now();
   const controller = new AbortController();
   const timeoutError = new Error("V2Ray provider probe timed out");
@@ -345,6 +393,7 @@ function safeV2RayErrorCode(error: unknown): string {
       if (/PROVIDER_PROBE_INVALID_JSON/.test(current.message)) return "PROVIDER_INVALID_JSON";
       if (/PROVIDER_PROBE_FAILED/.test(current.message)) return "PROVIDER_REJECTED";
       if (/^(?:XRAY_CONFIG_REJECTED|ROUTE_BLOCKED|UPSTREAM_DNS|UPSTREAM_TLS|UPSTREAM_AUTH|UPSTREAM_REFUSED|UPSTREAM_TIMEOUT)$/.test(current.message)) return current.message;
+      if (/XRAY_LISTEN_TIMEOUT/.test(current.message)) return "XRAY_LISTEN_TIMEOUT";
       if (/XRAY_EXITED/.test(current.message)) return "XRAY_EXITED";
       if (/هستهٔ Xray|هستهٔ V2Ray/.test(current.message)) return "CORE_INVALID";
     }
@@ -572,6 +621,7 @@ async function ensureRunning(): Promise<RunningV2Ray> {
 }
 
 export async function v2rayProviderFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  assertAiProviderUrl(url);
   const running = await ensureRunning();
   try {
     return await fetch(url, { ...init, dispatcher: running.agent } as RequestInit);
