@@ -1,5 +1,7 @@
 name: Deploy the official app HTTP console transport
 
+# v56 also carries the bounded Xray child reaper and sanitized launcher errors.
+
 on:
   push:
     branches: [arena/f4b832aa-animation]
