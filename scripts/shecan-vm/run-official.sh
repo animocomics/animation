@@ -14,6 +14,8 @@ PROXY_PORT=${NOMREH_PROXY_PORT:-}
 SERIAL=${NOMREH_VM_SERIAL:-stdio}
 PROBE=${NOMREH_VM_PROBE:-0}
 TIMEOUT=${NOMREH_VM_TIMEOUT:-240}
+HOST_PORT=${NOMREH_HOST_APP_PORT:-${PORT:-3000}}
+case "$HOST_PORT" in *[!0-9]*|'') HOST_PORT=3000 ;; esac
 
 for required in "$LOADER" "$QEMU" "$KERNEL" "$INITRAMFS"; do
   if [ ! -f "$required" ]; then
@@ -24,7 +26,7 @@ done
 unset LD_LIBRARY_PATH LD_PRELOAD http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY
 
 NIC='user,model=virtio-net-pci'
-APPEND='console=ttyS0 rdinit=/init panic=1 quiet'
+APPEND="console=ttyS0 rdinit=/init panic=1 quiet nomreh_host_port=$HOST_PORT"
 if [ -n "$VNC_PORT" ]; then
   NIC="$NIC,hostfwd=tcp:127.0.0.1:$VNC_PORT-:5900"
   APPEND="$APPEND nomreh_vnc=hostfwd nomreh_vnc_reverse=15500"

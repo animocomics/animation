@@ -35,6 +35,17 @@ if [ "$network_ready" -ne 1 ]; then
   poweroff -f
   while true; do sleep 60; done
 fi
+network_carrier=0
+for attempt in $(seq 1 100); do
+  if [ "$(cat /sys/class/net/eth0/carrier 2>/dev/null)" = 1 ]; then network_carrier=1; break; fi
+  sleep 0.1
+done
+if [ "$network_carrier" -ne 1 ]; then
+  echo NOMREH_OFFICIAL_GUEST_ERROR NETWORK_CARRIER > /dev/console
+  poweroff -f
+  while true; do sleep 60; done
+fi
+echo NOMREH_OFFICIAL_GUEST_NETWORK_CARRIER_OK > /dev/console
 network_configured=0
 for attempt in $(seq 1 20); do
   ip addr replace 10.0.2.15/24 dev eth0
@@ -54,6 +65,18 @@ fi
 rm -f /etc/resolv.conf
 printf 'nameserver 10.0.2.3\n' > /etc/resolv.conf
 echo NOMREH_OFFICIAL_GUEST_NETWORK_CONFIGURED > /dev/console
+if ! grep -q 'nomreh_probe=1' /proc/cmdline; then
+  host_port=$(sed -n 's/.*nomreh_host_port=\([0-9][0-9]*\).*/\1/p' /proc/cmdline)
+  if [ -n "$host_port" ]; then
+    # Credential-free GET to Nomreh's own public login page. This does not use
+    # Shecan, a provider, DNS, or any unrelated host; it only tests QEMU SLIRP.
+    if /bin/busybox wget -q -T 8 -O /dev/null "http://10.0.2.2:$host_port/login" >/dev/null 2>&1; then
+      echo NOMREH_OFFICIAL_GUEST_HOST_HTTP_OK > /dev/console
+    else
+      echo NOMREH_OFFICIAL_GUEST_HOST_HTTP_FAIL > /dev/console
+    fi
+  fi
+fi
 
 vnc_localhost='-localhost'
 if grep -q 'nomreh_vnc=hostfwd' /proc/cmdline; then vnc_localhost=''; fi

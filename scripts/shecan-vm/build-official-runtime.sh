@@ -79,6 +79,7 @@ docker run --rm --platform linux/amd64 -v "$WORK/rootfs:/out" debian:12-slim \
     test -x /usr/bin/dbus-run-session
     test -x /usr/bin/tinyproxy
     test -x /usr/bin/x11vnc
+    /bin/busybox --list | grep -qx wget
   '
 
 du -sh "$WORK/full/nomreh-vm/official/qemu" "$WORK/full/nomreh-vm/official/glibc" "$WORK/rootfs"
