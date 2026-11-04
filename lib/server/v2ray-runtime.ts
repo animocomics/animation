@@ -145,7 +145,7 @@ export async function getV2RayStatus() {
     lastTestMessage: setting?.last_test_message || "V2Ray خاموش است؛ برای فعال‌سازی، فهرست را ذخیره و تست خودکار را اجرا کنید.",
     lastTestedAt: setting?.last_tested_at || undefined,
     configs: configRows.map((row) => publicConfig(row, setting?.selected_config_id)),
-    pending: Boolean(job?.pending),
+    pending: Boolean(job?.pending) || setting?.last_test_status === "testing" || configRows.some((row) => row.last_test_status === "testing"),
     jobError: job?.error,
     jobStartedAt: job?.startedAt,
     jobFinishedAt: job?.finishedAt,
@@ -241,14 +241,31 @@ async function stopXray(running: RunningV2Ray | undefined): Promise<void> {
   fs.rmSync(running.configPath, { force: true });
 }
 
-async function boundedResponseText(response: Response, maximum = 100_000): Promise<string> {
+export async function boundedResponseText(response: Response, maximum = 100_000, signal?: AbortSignal): Promise<string> {
   if (!response.body) return "";
   const reader = response.body.getReader();
   const chunks: Buffer[] = [];
   let total = 0;
   try {
     while (total < maximum) {
-      const next = await reader.read();
+      const next = signal ? await new Promise<ReadableStreamReadResult<Uint8Array>>((resolve, reject) => {
+        if (signal.aborted) {
+          reject(signal.reason || new Error("TIMEOUT"));
+          return;
+        }
+        const onAbort = () => {
+          void reader.cancel().catch(() => undefined);
+          reject(signal.reason || new Error("TIMEOUT"));
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        reader.read().then((result) => {
+          signal.removeEventListener("abort", onAbort);
+          resolve(result);
+        }, (error) => {
+          signal.removeEventListener("abort", onAbort);
+          reject(error);
+        });
+      }) : await reader.read();
       if (next.done) break;
       if (!next.value) continue;
       const chunk = Buffer.from(next.value);
@@ -267,27 +284,37 @@ async function boundedResponseText(response: Response, maximum = 100_000): Promi
 
 async function probeAgent(agent: ProxyAgent, timeoutMs = PROBE_TIMEOUT_MS): Promise<number> {
   const started = Date.now();
-  const response = await fetch(TEST_URL, {
-    cache: "no-store",
-    redirect: "manual",
-    signal: AbortSignal.timeout(timeoutMs),
-    headers: { Accept: "application/json" },
-    dispatcher: agent,
-  } as RequestInit);
-  const text = await boundedResponseText(response);
-  const contentType = response.headers.get("content-type") || "";
-  if (!/json/i.test(contentType)) throw new Error("PROVIDER_PROBE_NOT_JSON");
-  let payload: { error?: { message?: unknown; status?: unknown }; models?: unknown };
-  try { payload = text ? JSON.parse(text) as typeof payload : {}; }
-  catch { throw new Error("PROVIDER_PROBE_INVALID_JSON"); }
-  const providerMessage = typeof payload.error?.message === "string" ? payload.error.message : "";
-  // A real Gemini endpoint without a key returns a structured API-key error;
-  // an arbitrary proxy/block page or generic JSON response is not a pass.
-  const expectedKeyResponse = [400, 401, 403].includes(response.status)
-    && Boolean(payload.error) && /api[ _-]?key|کلید/i.test(providerMessage);
-  const successfulModelResponse = response.ok && Array.isArray(payload.models);
-  if (!successfulModelResponse && !expectedKeyResponse) throw new Error("PROVIDER_PROBE_FAILED");
-  return Date.now() - started;
+  const controller = new AbortController();
+  const timeoutError = new Error("V2Ray provider probe timed out");
+  timeoutError.name = "TimeoutError";
+  // Keep a referenced timer: AbortSignal.timeout alone can be unref'd in Node
+  // when a broken proxy leaves a body stream with no active socket handle.
+  const timer = setTimeout(() => controller.abort(timeoutError), timeoutMs);
+  try {
+    const response = await fetch(TEST_URL, {
+      cache: "no-store",
+      redirect: "manual",
+      signal: controller.signal,
+      headers: { Accept: "application/json" },
+      dispatcher: agent,
+    } as RequestInit);
+    const text = await boundedResponseText(response, 100_000, controller.signal);
+    const contentType = response.headers.get("content-type") || "";
+    if (!/json/i.test(contentType)) throw new Error("PROVIDER_PROBE_NOT_JSON");
+    let payload: { error?: { message?: unknown; status?: unknown }; models?: unknown };
+    try { payload = text ? JSON.parse(text) as typeof payload : {}; }
+    catch { throw new Error("PROVIDER_PROBE_INVALID_JSON"); }
+    const providerMessage = typeof payload.error?.message === "string" ? payload.error.message : "";
+    // A real Gemini endpoint without a key returns a structured API-key error;
+    // an arbitrary proxy/block page or generic JSON response is not a pass.
+    const expectedKeyResponse = [400, 401, 403].includes(response.status)
+      && Boolean(payload.error) && /api[ _-]?key|کلید/i.test(providerMessage);
+    const successfulModelResponse = response.ok && Array.isArray(payload.models);
+    if (!successfulModelResponse && !expectedKeyResponse) throw new Error("PROVIDER_PROBE_FAILED");
+    return Date.now() - started;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function safeV2RayErrorCode(error: unknown): string {

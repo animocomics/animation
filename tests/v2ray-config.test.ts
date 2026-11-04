@@ -60,3 +60,28 @@ test("saved pool is encrypted and public status contains no endpoint or credenti
     rmSync(directory, { recursive: true, force: true });
   }
 });
+
+
+test("V2Ray response-body reads honor the same bounded abort as the probe", async () => {
+  const { boundedResponseText } = await import("../lib/server/v2ray-runtime");
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode("{\"models\":[]}"));
+      // Deliberately never close: a blackhole or broken proxy must not hang activation.
+    },
+  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    const error = new Error("test timeout");
+    error.name = "TimeoutError";
+    controller.abort(error);
+  }, 40);
+  try {
+    await assert.rejects(
+      boundedResponseText(new Response(stream, { status: 200 }), 1000, controller.signal),
+      (error: unknown) => error instanceof Error && ["TimeoutError", "AbortError"].includes(error.name),
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+});
