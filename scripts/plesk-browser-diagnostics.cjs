@@ -95,7 +95,7 @@ function labelValues(text, labels) {
 }
 
 async function main() {
-  if (!["diagnose", "upload", "extract", "runtime-extract", "vm-probe", "cleanup-vm-probe", "build", "status", "disk", "os-info", "account-network", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime", "cancel-stale-build", "build-process"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
+  if (!["diagnose", "upload", "extract", "runtime-extract", "vm-probe", "cleanup-vm-probe", "build", "status", "disk", "os-info", "account-network", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime", "cancel-stale-build", "build-process", "storage-audit"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
   const panel = normalizePanelUrl(process.env.PLESK_PANEL_URL || "");
   const readOnly = ACTION === "diagnose" || ACTION === "status" || ACTION === "account-network";
   const actionDescription = ACTION === "upload"
@@ -472,7 +472,7 @@ async function main() {
         if (statusResult.error) lines.push(`- Status read error: ${sanitize(statusResult.error)}`);
         lines.push("- Read-only status request; no command, restart, or setting change was attempted.", "");
       }
-      if (["diagnose", "build", "status", "disk", "os-info", "account-network", "vm-probe", "cleanup-vm-probe", "cancel-stale-build", "build-process"].includes(ACTION) && nomrehConsoleLink && await nomrehConsoleLink.count()) {
+      if (["diagnose", "build", "status", "disk", "os-info", "account-network", "vm-probe", "cleanup-vm-probe", "cancel-stale-build", "build-process", "storage-audit"].includes(ACTION) && nomrehConsoleLink && await nomrehConsoleLink.count()) {
         const consoleResponsePromise = page.waitForResponse((item) => item.url().includes("/modules/nodejs/index.php/domain/console") && item.request().isNavigationRequest(), { timeout: 15000 }).catch(() => null);
         await nomrehConsoleLink.click({ timeout: 8000 }).catch(() => undefined);
         const consoleResponse = await consoleResponsePromise;
@@ -509,6 +509,32 @@ async function main() {
             for (const line of safeOutput) lines.push(`- Existing output: ${sanitize(line.slice(0, 400))}`);
           }
           lines.push("- Inspection only: no command was entered or executed.", "");
+        }
+        if (ACTION === "storage-audit") {
+          if (!consoleBody.includes(`Node.js on ${DOMAIN}`) || !consoleBody.includes("/nomreh.arounidea.com")) {
+            throw new Error("The Node command console is not scoped to Nomreh. The storage audit was not started.");
+          }
+          const commandInput = page.getByPlaceholder(/Pick a script or command/i).first();
+          const executeButton = page.locator("button[title='Execute command'], button[aria-label='Execute command']").first();
+          const outputElement = page.locator("pre.pul-console-output").first();
+          if (!await commandInput.count() || !await executeButton.count() || !await outputElement.count()) throw new Error("The Nomreh command controls were not found. The storage audit was not started.");
+          const source = `const fs=require('fs'),path=require('path'),cp=require('child_process');try{const root=process.cwd();if(path.basename(root)!=='nomreh.arounidea.com')throw new Error('BAD_ROOT');const data=path.resolve(root,'../nomreh-data');const usage=(dir,label,children)=>{const result=cp.spawnSync('du',['-skP','--',dir],{encoding:'utf8',timeout:30000});if(!result.error&&result.status===0){const kib=Number(result.stdout.trim().split(/\\s+/,1)[0]);if(Number.isFinite(kib))console.log('NOMREH_STORAGE_'+label+' TOTAL '+Math.round(kib/1024)+'MiB')}if(!children)return;for(const entry of fs.readdirSync(dir,{withFileTypes:true})){if(!/^[a-z0-9_.-]+$/i.test(entry.name))continue;if(label==='DATA'&&!['runtime','v2ray','uploads'].includes(entry.name))continue;const target=path.join(dir,entry.name);const item=cp.spawnSync('du',['-skP','--',target],{encoding:'utf8',timeout:15000});if(item.error||item.status!==0)continue;const kib=Number(item.stdout.trim().split(/\\s+/,1)[0]);if(Number.isFinite(kib)&&kib>=10240)console.log('NOMREH_STORAGE_'+label+' '+entry.name+' '+Math.round(kib/1024)+'MiB')}};usage(root,'APP',true);usage(data,'DATA',true);const ps=cp.spawnSync('ps',['-eo','pid=,etime=,args='],{encoding:'utf8',timeout:15000});let count=0;if(!ps.error&&ps.status===0){for(const line of String(ps.stdout||'').split(/\\r?\\n/)){const match=line.trim().match(/^(\\d+)\\s+(\\S+)\\s+([\\s\\S]+)$/);if(!match)continue;const pid=match[1],elapsed=match[2],args=match[3];let cwd='';try{cwd=fs.readlinkSync('/proc/'+pid+'/cwd')}catch{}if(!(cwd===root||cwd.startsWith(root+'/')||args.includes(root+'/')))continue;let kind='';if(/(?:^|\\/)xray(?:\\s|$)/.test(args)||args.includes('nomreh-v2ray/xray'))kind='xray';else if(/next(?:\\.js)?\\s+build|next\\/dist\\/bin\\/next\\s+build/.test(args))kind='next-build';else if(/(?:^|\\/)node(?:\\s|$)/.test(args)&&/next|server\\.js|npm/.test(args))kind='node-app';if(kind){console.log('NOMREH_PROCESS '+kind+' pid='+pid+' elapsed='+elapsed);if(++count>=80)break}}}console.log('NOMREH_PROCESS_COUNT '+count);console.log('NOMREH_STORAGE_AUDIT_DONE')}catch(error){console.log('NOMREH_STORAGE_AUDIT_ERROR '+(error.code||'FAILED'));process.exitCode=1}`;
+          const command = `exec -- node -e ${JSON.stringify(source)}`;
+          lines.push("## Controlled read-only Nomreh storage/process audit", "", "- Only direct infrastructure entry sizes and matching Nomreh process type/PID/age are reported. No file contents, upload children, command arguments, secrets, deletion, signals, or settings are accessed.", "");
+          await commandInput.fill(command);
+          if (await commandInput.inputValue() !== command) throw new Error("Plesk did not retain the exact storage-audit command. Nothing was executed.");
+          await executeButton.click({ timeout: 8000 });
+          const startedAt = Date.now();
+          let markers = [];
+          while (Date.now() - startedAt < 240000) {
+            await page.waitForTimeout(1500);
+            const output = await outputElement.innerText().catch(() => "");
+            markers = [...new Set(output.split(/\r?\n/).map((line) => line.trim()).filter((line) => /^NOMREH_(?:STORAGE|PROCESS)/.test(line)))];
+            if (markers.some((line) => /STORAGE_AUDIT_DONE|STORAGE_AUDIT_ERROR/.test(line))) break;
+          }
+          if (!markers.some((line) => /STORAGE_AUDIT_DONE/.test(line))) throw new Error("The scoped storage audit did not finish with a safe completion marker. No files were changed.");
+          for (const marker of markers.slice(0, 120)) lines.push(`- Storage audit: ${sanitize(marker)}`);
+          actionCompleted = true;
         }
         if (ACTION === "build-process") {
           if (!consoleBody.includes(`Node.js on ${DOMAIN}`) || !consoleBody.includes("/nomreh.arounidea.com")) {
@@ -1867,7 +1893,7 @@ async function main() {
         lines.push("## Read-only Nomreh domain logs", "", "- Nomreh's scoped Logs tool was not exposed on the domain card; no alternate domain or log path was accessed.", "");
       }
     }
-    if (["upload", "extract", "runtime-extract", "vm-probe", "cleanup-vm-probe", "build", "status", "disk", "os-info", "account-network", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime", "cancel-stale-build", "build-process"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Review the reported host state before further action; no live-success claim was made.`);
+    if (["upload", "extract", "runtime-extract", "vm-probe", "cleanup-vm-probe", "build", "status", "disk", "os-info", "account-network", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime", "cancel-stale-build", "build-process", "storage-audit"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Review the reported host state before further action; no live-success claim was made.`);
     lines.push("## Result", "", ACTION === "upload"
       ? "The validated application archive was uploaded to Nomreh. Extraction, dependency installation, build, and Node.js enablement remain pending."
       : ACTION === "extract"
