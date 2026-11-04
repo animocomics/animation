@@ -1,6 +1,6 @@
-name: Nomreh inspect the stale hosted build process
+name: Nomreh retry the confirmed-dead hosted build
 
-# Literal, read-only PID/progress inspection; no process is signalled.
+# The recorded build PID was verified dead before this bounded retry.
 
 on:
   push:
@@ -29,14 +29,13 @@ jobs:
           npm init -y > /dev/null
           npm install --ignore-scripts --no-audit --no-fund playwright@1.64.1
           npx playwright install --with-deps chromium
-      - name: Inspect only the recorded Nomreh build process
+      - name: Retry the Nomreh production build after verified process exit
         id: cancel
         env:
           PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
-          PLESK_BROWSER_ACTION: build-process
-          PLESK_BUILD_RECOVERY_MODE: inspect
+          PLESK_BROWSER_ACTION: build
           PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-cancel-stale-build.md
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
         run: node scripts/plesk-browser-diagnostics.cjs
@@ -52,10 +51,10 @@ jobs:
           summary='No cancellation result was produced; no success is claimed.'
           if [ -f "$RUNNER_TEMP/nomreh-cancel-stale-build.md" ]; then summary="$(cat "$RUNNER_TEMP/nomreh-cancel-stale-build.md")"; fi
           gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
-            -f name="Nomreh build process inspection" \
+            -f name="Nomreh confirmed-dead build retry" \
             -f head_sha="${GITHUB_SHA}" \
             -f status=completed \
             -f conclusion="$conclusion" \
-            -f 'output[title]=Nomreh scoped build-process inspection' \
+            -f 'output[title]=Nomreh scoped build retry' \
             --raw-field "output[summary]=${summary}" > /dev/null
           test "$CANCEL_OUTCOME" = success
