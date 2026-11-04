@@ -87,6 +87,17 @@ if (typeof subscription.kibibytes === "number") {
   }
 }
 
+// File-manager removals can be moved to a subscription-level recovery folder.
+// Report only direct trash/recycle entries, never unrelated domain contents.
+const recoveryEntries = fs.readdirSync(SUBSCRIPTION_ROOT, { withFileTypes: true })
+  .filter((entry) => /trash|recycle/i.test(entry.name));
+if (recoveryEntries.length) {
+  console.log("\nSubscription recovery entries (report only; nothing deleted):");
+  for (const entry of recoveryEntries) report(`  ${entry.name}`, path.join(SUBSCRIPTION_ROOT, entry.name));
+} else {
+  console.log("\nSubscription recovery entries: none found");
+}
+
 const runtimeRoot = path.join(DATA_DIR, "runtime");
 if (fs.existsSync(runtimeRoot)) {
   const temporary = fs.readdirSync(runtimeRoot).filter((name) =>
