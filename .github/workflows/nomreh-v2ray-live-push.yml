@@ -1,6 +1,6 @@
 name: Nomreh V2Ray live push acceptance
 
-# Read-only wait for the existing multi-worker activation; never start a duplicate job.
+# Fresh bounded activation after the response-body deadline and worker-status fixes.
 
 on:
   push:
@@ -37,7 +37,6 @@ jobs:
           NOMREH_ADMIN_USERNAME: ${{ secrets.NOMREH_ADMIN_USERNAME }}
           NOMREH_ADMIN_PASSWORD: ${{ secrets.NOMREH_ADMIN_PASSWORD }}
           NOMREH_ALLOW_DEMO_ACCOUNTS: "1"
-          NOMREH_V2RAY_READ_ONLY: "1"
           NOMREH_V2RAY_LIVE_OUTPUT: /tmp/nomreh-v2ray-live-test.md
         run: |
           set -euo pipefail
