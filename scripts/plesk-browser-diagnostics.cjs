@@ -95,7 +95,7 @@ function labelValues(text, labels) {
 }
 
 async function main() {
-  if (!["diagnose", "upload", "extract", "runtime-extract", "vm-probe", "cleanup-vm-probe", "build", "status", "disk", "os-info", "account-network", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime", "cancel-stale-build", "build-process", "storage-audit"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
+  if (!["diagnose", "upload", "extract", "runtime-extract", "vm-probe", "cleanup-vm-probe", "build", "status", "disk", "os-info", "account-network", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime", "cancel-stale-build", "build-process", "storage-audit", "compact"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
   const panel = normalizePanelUrl(process.env.PLESK_PANEL_URL || "");
   const readOnly = ACTION === "diagnose" || ACTION === "status" || ACTION === "account-network";
   const actionDescription = ACTION === "upload"
@@ -472,7 +472,7 @@ async function main() {
         if (statusResult.error) lines.push(`- Status read error: ${sanitize(statusResult.error)}`);
         lines.push("- Read-only status request; no command, restart, or setting change was attempted.", "");
       }
-      if (["diagnose", "build", "status", "disk", "os-info", "account-network", "vm-probe", "cleanup-vm-probe", "cancel-stale-build", "build-process", "storage-audit"].includes(ACTION) && nomrehConsoleLink && await nomrehConsoleLink.count()) {
+      if (["diagnose", "build", "status", "disk", "os-info", "account-network", "vm-probe", "cleanup-vm-probe", "cancel-stale-build", "build-process", "storage-audit", "compact"].includes(ACTION) && nomrehConsoleLink && await nomrehConsoleLink.count()) {
         const consoleResponsePromise = page.waitForResponse((item) => item.url().includes("/modules/nodejs/index.php/domain/console") && item.request().isNavigationRequest(), { timeout: 15000 }).catch(() => null);
         await nomrehConsoleLink.click({ timeout: 8000 }).catch(() => undefined);
         const consoleResponse = await consoleResponsePromise;
@@ -509,6 +509,33 @@ async function main() {
             for (const line of safeOutput) lines.push(`- Existing output: ${sanitize(line.slice(0, 400))}`);
           }
           lines.push("- Inspection only: no command was entered or executed.", "");
+        }
+        if (ACTION === "compact") {
+          if (!consoleBody.includes(`Node.js on ${DOMAIN}`) || !consoleBody.includes("/nomreh.arounidea.com")) {
+            throw new Error("The Node command console is not scoped to Nomreh. Compaction was not started.");
+          }
+          const commandInput = page.getByPlaceholder(/Pick a script or command/i).first();
+          const executeButton = page.locator("button[title='Execute command'], button[aria-label='Execute command']").first();
+          const outputElement = page.locator("pre.pul-console-output").first();
+          if (!await commandInput.count() || !await executeButton.count() || !await outputElement.count()) throw new Error("The Nomreh command controls were not found. Compaction was not started.");
+          const command = "run compact:plesk";
+          lines.push("## Controlled Nomreh production compaction", "", "- Command: run compact:plesk", "- Only regenerable build caches and development-only packages are pruned by the existing guarded project script; application data and uploads are not targets.", "");
+          await commandInput.fill(command);
+          if (await commandInput.inputValue() !== command) throw new Error("Plesk did not retain the exact compaction command. Nothing was executed.");
+          await executeButton.click({ timeout: 8000 });
+          const startedAt = Date.now();
+          let output = "";
+          let succeeded = false;
+          while (Date.now() - startedAt < 6 * 60 * 1000) {
+            await page.waitForTimeout(3000);
+            output = await outputElement.innerText().catch(() => "");
+            if (/Production compaction complete|SQLite and canvas are ready/i.test(output)) { succeeded = true; break; }
+            const failure = output.split(/\r?\n/).find((line) => /\[Nomreh FAILED;|npm ERR!|exited with status|could not complete|not found; nothing was pruned/i.test(line));
+            if (failure) throw new Error(`Nomreh compaction failed: ${sanitize(failure.slice(0, 350))}`);
+          }
+          if (!succeeded) throw new Error("Nomreh compaction did not report completion within 6 minutes. No build or restart was attempted.");
+          for (const line of output.split(/\r?\n/).map((item) => item.trim()).filter((item) => /Production compaction complete|SQLite and canvas are ready|Nomreh uses|cache|development-only/i.test(item)).slice(-20)) lines.push(`- Compaction output: ${sanitize(line.slice(0, 350))}`);
+          actionCompleted = true;
         }
         if (ACTION === "storage-audit") {
           if (!consoleBody.includes(`Node.js on ${DOMAIN}`) || !consoleBody.includes("/nomreh.arounidea.com")) {
@@ -1893,7 +1920,7 @@ async function main() {
         lines.push("## Read-only Nomreh domain logs", "", "- Nomreh's scoped Logs tool was not exposed on the domain card; no alternate domain or log path was accessed.", "");
       }
     }
-    if (["upload", "extract", "runtime-extract", "vm-probe", "cleanup-vm-probe", "build", "status", "disk", "os-info", "account-network", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime", "cancel-stale-build", "build-process", "storage-audit"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Review the reported host state before further action; no live-success claim was made.`);
+    if (["upload", "extract", "runtime-extract", "vm-probe", "cleanup-vm-probe", "build", "status", "disk", "os-info", "account-network", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime", "cancel-stale-build", "build-process", "storage-audit", "compact"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Review the reported host state before further action; no live-success claim was made.`);
     lines.push("## Result", "", ACTION === "upload"
       ? "The validated application archive was uploaded to Nomreh. Extraction, dependency installation, build, and Node.js enablement remain pending."
       : ACTION === "extract"

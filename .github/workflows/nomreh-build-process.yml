@@ -1,4 +1,4 @@
-name: Nomreh storage and process audit
+name: Nomreh production compaction
 
 on:
   push:
@@ -54,8 +54,8 @@ jobs:
           PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
-          PLESK_BROWSER_ACTION: storage-audit
-          PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-storage-audit.md
+          PLESK_BROWSER_ACTION: compact
+          PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-compaction.md
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
         run: node scripts/plesk-browser-diagnostics.cjs
 
@@ -68,18 +68,18 @@ jobs:
         run: |
           set -euo pipefail
           conclusion=neutral
-          summary='Nomreh storage and process audit is not configured; no host was contacted.'
+          summary='Nomreh production compaction is not configured; no host was contacted.'
           if [ "$CONFIGURED" = true ]; then
             conclusion=success
             if [ "$DIAGNOSTIC_OUTCOME" != success ]; then conclusion=failure; fi
-            if [ -f "$RUNNER_TEMP/nomreh-storage-audit.md" ]; then
-              summary="$(cat "$RUNNER_TEMP/nomreh-storage-audit.md")"
+            if [ -f "$RUNNER_TEMP/nomreh-compaction.md" ]; then
+              summary="$(cat "$RUNNER_TEMP/nomreh-compaction.md")"
             else
               summary='Browser preparation or build-process inspection did not produce a report; no remediation was attempted.'
             fi
           fi
           gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
-            -f name="Nomreh storage and process audit" \
+            -f name="Nomreh production compaction" \
             -f head_sha="${GITHUB_SHA}" \
             -f status=completed \
             -f conclusion="$conclusion" \
