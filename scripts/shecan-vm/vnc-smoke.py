@@ -106,8 +106,10 @@ def capture(port, output_path, read_timeout, reverse, unix_path=""):
         rgb = bytearray(width * height * 3)
         colors = set()
         minimum, maximum = 255, 0
-        for _ in range(rectangles):
+        for rectangle_index in range(rectangles):
             x, y, w, h, encoding = struct.unpack(">HHHHi", receive_exactly(connection, 12))
+            if unix_path:
+                trace(f"rectangle={rectangle_index + 1}/{rectangles} x={x} y={y} width={w} height={h} encoding={encoding}")
             if encoding != 0 or x + w > width or y + h > height or not w or not h:
                 raise RuntimeError("Unsupported VNC rectangle")
             raw = receive_exactly(connection, w * h * 4)
@@ -158,7 +160,7 @@ def main():
                 return
         except (OSError, RuntimeError, ValueError) as error:
             last_error = error
-            if attempt == 1 or attempt % 15 == 0:
+            if unix_path or attempt == 1 or attempt % 15 == 0:
                 log(f"NOMREH_VNC_FRAMEBUFFER_WAIT attempt={attempt} error={str(error)[:160]}")
         time.sleep(1)
     raise last_error or RuntimeError("VNC framebuffer was not available")
