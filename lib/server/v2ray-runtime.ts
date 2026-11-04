@@ -99,7 +99,7 @@ function assertRegularFile(file: string): void {
   if (!stat.isFile() || stat.isSymbolicLink() || stat.size <= 0) throw new V2RayError("هستهٔ V2Ray روی سرور به‌صورت امن نصب نشده است.", 503);
 }
 
-async function assertCore(): Promise<void> {
+async function validateCore(): Promise<void> {
   const binary = corePath();
   try {
     assertRegularFile(binary);
@@ -113,6 +113,21 @@ async function assertCore(): Promise<void> {
     if (error instanceof V2RayError) throw error;
     throw new V2RayError("هستهٔ Xray یا اثر انگشت آن معتبر نیست؛ بستهٔ سبک V2Ray را دوباره نصب کنید.", 503, { cause: error });
   }
+}
+
+let coreValidation: Promise<void> | undefined;
+
+async function assertCore(): Promise<void> {
+  // Hashing the pinned binary is intentionally done once per Node worker, not
+  // once per candidate. Repeated synchronous reads otherwise starve loopback
+  // readiness timers while the bounded pool is starting several candidates.
+  if (!coreValidation) {
+    coreValidation = validateCore().catch((error) => {
+      coreValidation = undefined;
+      throw error;
+    });
+  }
+  return coreValidation;
 }
 
 async function rows(): Promise<V2RayConfigRow[]> {
@@ -184,7 +199,7 @@ function assertAiProviderUrl(value: string): void {
 function xrayConfig(parsed: ParsedV2RayConfig, port: number, user: string, pass: string): string {
   const outbound = { ...parsed.outbound, tag: "nomreh-ai" };
   return JSON.stringify({
-    log: { loglevel: "warning" },
+    log: { loglevel: "info" },
     inbounds: [{
       tag: "nomreh-loopback-only",
       listen: "127.0.0.1",
@@ -284,6 +299,7 @@ async function startXray(row: V2RayConfigRow): Promise<RunningV2Ray> {
     await waitForXrayListen(running, port);
     return running;
   } catch (error) {
+    if (error instanceof Error) (error as Error & { xrayLog?: string }).xrayLog = running.stderrTail;
     await stopXray(running);
     throw error;
   }
