@@ -14,7 +14,11 @@ function fail(message: string): never {
 }
 
 function cleanLine(value: string): string {
-  return value.trim().replace(/&amp;/gi, "&");
+  return value.trim()
+    .replace(/&amp;/gi, "&")
+    // Accept links copied from Markdown-enabled chat without ever retaining
+    // the Markdown destination as part of the Xray endpoint.
+    .replace(/\[([^\]]+)\]\((?:mailto:|https?:\/\/)[^)]+\)/gi, "$1");
 }
 
 function safeText(value: unknown, maximum = 512): string {
@@ -55,7 +59,7 @@ function serverAddress(url: URL): { address: string; port: number } {
 function streamSettings(url: URL, defaultSecurity = "none"): Record<string, unknown> {
   const query = url.searchParams;
   const network = query.get("type") || "tcp";
-  if (!["tcp", "ws", "grpc", "httpupgrade"].includes(network)) fail(`نوع انتقال ${network || "نامشخص"} پشتیبانی نمی‌شود؛ TCP، WebSocket، gRPC و HTTPUpgrade وارد کنید.`);
+  if (!["tcp", "ws", "grpc", "httpupgrade", "xhttp"].includes(network)) fail(`نوع انتقال ${network || "نامشخص"} پشتیبانی نمی‌شود؛ TCP، WebSocket، gRPC، HTTPUpgrade و XHTTP وارد کنید.`);
   const security = (query.get("security") || defaultSecurity).toLowerCase();
   if (!["none", "tls", "reality"].includes(security)) fail("نوع امنیت کانفیگ باید none، tls یا reality باشد.");
   const result: Record<string, unknown> = { network, security };
@@ -83,8 +87,8 @@ function streamSettings(url: URL, defaultSecurity = "none"): Record<string, unkn
   }
   if (network === "tcp") {
     const headerType = query.get("headerType") || "none";
-    if (headerType !== "none") fail("فعلاً TCP headerType=none پشتیبانی می‌شود.");
-    result.tcpSettings = { header: { type: "none" } };
+    if (!["none", "http"].includes(headerType)) fail("TCP headerType باید none یا http باشد.");
+    result.tcpSettings = { header: { type: headerType } };
   } else if (network === "ws") {
     result.wsSettings = {
       path: safeText(query.get("path"), 2048) || "/",
@@ -95,10 +99,31 @@ function streamSettings(url: URL, defaultSecurity = "none"): Record<string, unkn
       serviceName: safeText(query.get("serviceName"), 512),
       ...(safeText(query.get("authority"), 253) ? { authority: safeText(query.get("authority"), 253) } : {}),
     };
-  } else {
+  } else if (network === "httpupgrade") {
     result.httpupgradeSettings = {
       path: safeText(query.get("path"), 2048) || "/",
       host: safeText(query.get("host"), 253) || sni || url.hostname,
+    };
+  } else {
+    const mode = safeText(query.get("mode"), 30) || "auto";
+    if (!["auto", "packet-up", "stream-up", "stream-one"].includes(mode)) fail("مقدار mode در XHTTP معتبر نیست.");
+    let extra: Record<string, unknown> | undefined;
+    const rawExtra = safeText(query.get("extra"), 4096);
+    if (rawExtra) {
+      try {
+        const parsed = JSON.parse(rawExtra) as unknown;
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) fail("extra در XHTTP باید JSON object باشد.");
+        extra = parsed as Record<string, unknown>;
+      } catch (error) {
+        if (error instanceof Error && error.message.includes("JSON object")) throw error;
+        fail("extra در XHTTP دارای JSON نامعتبر است.");
+      }
+    }
+    result.xhttpSettings = {
+      path: safeText(query.get("path"), 2048) || "/",
+      host: safeText(query.get("host"), 253) || sni || url.hostname,
+      mode,
+      ...(extra ? { extra } : {}),
     };
   }
   return result;
@@ -109,7 +134,8 @@ function parseVless(line: string): ParsedV2RayConfig {
   const { address, port } = serverAddress(url);
   const id = decodePart(url.username);
   if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(id)) fail("UUID کانفیگ VLESS معتبر نیست.");
-  if ((url.searchParams.get("encryption") || "none") !== "none") fail("رمزنگاری VLESS باید none باشد.");
+  const encryption = safeText(url.searchParams.get("encryption"), 512) || "none";
+  if (!/^(?:none|mlkem768x25519plus\.[A-Za-z0-9._-]{3,500})$/.test(encryption)) fail("رمزنگاری VLESS معتبر نیست.");
   const flow = safeText(url.searchParams.get("flow"), 80);
   if (flow && !/^[A-Za-z0-9-]{3,80}$/.test(flow)) fail("مقدار flow در VLESS معتبر نیست.");
   return {
@@ -117,7 +143,7 @@ function parseVless(line: string): ParsedV2RayConfig {
     normalized: line,
     outbound: {
       protocol: "vless",
-      settings: { vnext: [{ address, port, users: [{ id, encryption: "none", ...(flow ? { flow } : {}) }] }] },
+      settings: { vnext: [{ address, port, users: [{ id, encryption, ...(flow ? { flow } : {}) }] }] },
       streamSettings: streamSettings(url),
     },
   };
@@ -140,7 +166,7 @@ function parseVmess(line: string): ParsedV2RayConfig {
   const params = new URLSearchParams();
   for (const key of ["net", "type", "security", "tls", "sni", "host", "path", "fp", "alpn", "serviceName", "authority", "pbk", "sid", "spx", "flow"]) {
     const raw = value[key];
-    if (typeof raw === "string" && raw) params.set(key, raw);
+    if (typeof raw === "string" && raw && !(key === "type" && raw === "none")) params.set(key, raw);
   }
   if (!params.has("type")) params.set("type", safeText(value.net, 30) || "tcp");
   if (!params.has("security")) params.set("security", safeText(value.tls, 20) || "none");
@@ -218,18 +244,38 @@ export function parseV2RayConfig(input: string): ParsedV2RayConfig {
   }
 }
 
-export function parseV2RayConfigList(input: string, maximum = 40): ParsedV2RayConfig[] {
+export interface ParsedV2RayConfigList {
+  configs: ParsedV2RayConfig[];
+  rejected: number;
+  overflow: number;
+  total: number;
+}
+
+export function parseV2RayConfigListDetailed(input: string, maximum = 60): ParsedV2RayConfigList {
   const text = input.trim();
   if (!text) fail("حداقل یک کانفیگ V2Ray وارد کنید.");
   if (text.length > 600_000) fail("حجم فهرست کانفیگ‌ها بیش از ۶۰۰ هزار نویسه است.");
   const lines = text.split(/\r?\n/).map(cleanLine).filter(Boolean);
-  if (!lines.length || lines.length > maximum) fail(`حداقل ۱ و حداکثر ${maximum} کانفیگ در هر فهرست وارد کنید.`);
-  const parsed = lines.map(parseV2RayConfig);
+  if (!lines.length || lines.length > 200) fail("فهرست کانفیگ‌ها باید بین ۱ تا ۲۰۰ خط باشد.");
+  if (!Number.isInteger(maximum) || maximum < 1 || maximum > 100) fail("حداکثر کانفیگ معتبر نیست.");
+  const configs: ParsedV2RayConfig[] = [];
   const fingerprints = new Set<string>();
-  return parsed.filter((item) => {
+  let rejected = 0;
+  let overflow = 0;
+  for (const line of lines) {
+    let item: ParsedV2RayConfig;
+    try { item = parseV2RayConfig(line); }
+    catch { rejected += 1; continue; }
     const fingerprint = JSON.stringify(item.outbound);
-    if (fingerprints.has(fingerprint)) return false;
+    if (fingerprints.has(fingerprint)) continue;
     fingerprints.add(fingerprint);
-    return true;
-  });
+    if (configs.length >= maximum) { overflow += 1; continue; }
+    configs.push(item);
+  }
+  if (!configs.length) fail("هیچ کانفیگ پشتیبانی‌شده‌ای در فهرست پیدا نشد؛ خطاهای فرمت را بررسی کنید.");
+  return { configs, rejected, overflow, total: lines.length };
+}
+
+export function parseV2RayConfigList(input: string, maximum = 60): ParsedV2RayConfig[] {
+  return parseV2RayConfigListDetailed(input, maximum).configs;
 }

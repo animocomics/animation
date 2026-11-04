@@ -19,7 +19,7 @@ function clean(value: unknown): string {
 }
 
 function normalizeMarkdown(value: string): string {
-  return value.trim().replace(/&amp;/gi, "&").replace(/\[([^\]]+)\]\((?:mailto|https?):\/\/[^)]+\)/gi, "$1");
+  return value.trim().replace(/&amp;/gi, "&").replace(/\[([^\]]+)\]\((?:mailto:|https?:\/\/)[^)]+\)/gi, "$1");
 }
 
 function report(): string {
@@ -51,13 +51,13 @@ async function main() {
     if (!line) continue;
     try {
       parseV2RayConfig(line);
-      if (accepted.length < 40) accepted.push(line);
+      if (accepted.length < 60) accepted.push(line);
     } catch {
       rejected += 1;
     }
   }
   const overLimit = Math.max(0, raw.split(/\r?\n/).map(normalizeMarkdown).filter(Boolean).length - rejected - accepted.length);
-  lines.push(`- Input normalized in memory: ${accepted.length} supported config(s) queued; ${rejected} unsupported/malformed line(s) skipped; ${overLimit} over the bounded 40-config run limit. No raw config was logged.`);
+  lines.push(`- Input normalized in memory: ${accepted.length} supported config(s) queued; ${rejected} unsupported/malformed line(s) skipped; ${overLimit} over the bounded 60-config run limit. No raw config was logged.`);
   if (!accepted.length) throw new Error("None of the supplied lines matched the currently deployed supported Xray formats.");
 
   const username = process.env.NOMREH_ADMIN_USERNAME || (process.env.NOMREH_ALLOW_DEMO_ACCOUNTS === "1" ? "admin" : "");
@@ -89,6 +89,10 @@ async function main() {
   const healthy = configs.filter((item) => item.testStatus === "success").length;
   const failed = configs.filter((item) => item.testStatus === "error").length;
   lines.push(`- Activation finished in ${Math.round((Date.now() - started) / 1000)}s: enabled=${status.enabled ? "yes" : "no"}; running=${status.running ? "yes" : "no"}; healthy=${healthy}; failed=${failed}; selected=${clean(status.selectedLabel || "none")}.`);
+  const errorCounts = new Map<string, number>();
+  for (const item of configs) if (typeof item.errorCode === "string" && /^[A-Z][A-Z0-9_]{2,30}$/.test(item.errorCode)) errorCounts.set(item.errorCode, (errorCounts.get(item.errorCode) || 0) + 1);
+  if (errorCounts.size) lines.push(`- Safe per-config failure codes: ${[...errorCounts.entries()].sort().map(([code, count]) => `${code}=${count}`).join(", ")}.`);
+  if (status.lastTestMessage) lines.push(`- Sanitized runtime result: ${clean(status.lastTestMessage)}`);
   if (status.jobError) lines.push(`- Sanitized activation error: ${clean(status.jobError)}`);
   if (!status.enabled || !status.running) throw new Error("No supplied V2Ray config passed the real Gemini probe; V2Ray was not marked active.");
 

@@ -88,6 +88,7 @@ function createDatabase(): DatabaseConnection {
       encrypted_config TEXT NOT NULL,
       fingerprint TEXT NOT NULL UNIQUE,
       last_test_status TEXT NOT NULL DEFAULT 'idle',
+      last_error_code TEXT,
       last_latency_ms INTEGER,
       last_tested_at TEXT,
       created_at TEXT NOT NULL,
@@ -132,6 +133,8 @@ function createDatabase(): DatabaseConnection {
   for (const [name, definition] of networkMigrations) {
     if (!networkColumnNames.has(name)) database.exec(`ALTER TABLE api_network_settings ADD COLUMN ${name} ${definition}`);
   }
+  const v2rayColumns = database.prepare("PRAGMA table_info(v2ray_configs)").all() as Array<{ name: string }>;
+  if (!v2rayColumns.some((column) => column.name === "last_error_code")) database.exec("ALTER TABLE v2ray_configs ADD COLUMN last_error_code TEXT");
   const workspaceColumns = database.prepare("PRAGMA table_info(workspaces)").all() as Array<{ name: string }>;
   if (!workspaceColumns.some((column) => column.name === "revision")) {
     database.exec("ALTER TABLE workspaces ADD COLUMN revision INTEGER NOT NULL DEFAULT 0");

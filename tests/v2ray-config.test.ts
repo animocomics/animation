@@ -31,7 +31,7 @@ test("VLESS REALITY Vision and SIP002 Shadowsocks are converted to scoped Xray o
 test("bulk parsing is bounded and removes duplicate server configurations", () => {
   const list = parseV2RayConfigList(`${vless}\n${vless.replace("public-example", "another-name")}\n${shadowsocks}`);
   assert.equal(list.length, 2);
-  assert.throws(() => parseV2RayConfigList("https://example.com/not-a-v2ray-config"), /فقط کانفیگ/);
+  assert.throws(() => parseV2RayConfigList("https://example.com/not-a-v2ray-config"), /هیچ کانفیگ/);
   assert.throws(() => parseV2RayConfig("vless://not-a-uuid@192.0.2.1:443?security=reality"), /UUID/);
 });
 

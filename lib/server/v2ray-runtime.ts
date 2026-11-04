@@ -4,14 +4,16 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import { ProxyAgent } from "undici";
-import { parseV2RayConfig, parseV2RayConfigList, type ParsedV2RayConfig, type V2RayProtocol } from "./v2ray-config";
+import { parseV2RayConfig, parseV2RayConfigListDetailed, type ParsedV2RayConfig, type V2RayProtocol } from "./v2ray-config";
 import { decryptSecret, encryptSecret } from "./secret-crypto";
 
 const CONFIG_PURPOSE = "nomreh-v2ray-config-v1";
 const TEST_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 const XRAY_VERSION = "v26.10.31";
-const MAX_CONFIGS = 40;
-const TEST_CONCURRENCY = 4;
+const MAX_CONFIGS = 60;
+const TEST_CONCURRENCY = 8;
+const TEST_ATTEMPTS = 2;
+const PROBE_TIMEOUT_MS = 8_000;
 const PROVIDER_DOMAINS = [
   "full:api.openai.com",
   "full:generativelanguage.googleapis.com",
@@ -29,6 +31,7 @@ interface V2RayConfigRow {
   encrypted_config: string;
   fingerprint: string;
   last_test_status: "idle" | "testing" | "success" | "error";
+  last_error_code?: string;
   last_latency_ms?: number;
   last_tested_at?: string;
 }
@@ -110,7 +113,7 @@ async function assertCore(): Promise<void> {
 }
 
 async function rows(): Promise<V2RayConfigRow[]> {
-  return (await db()).prepare("SELECT id,slot,protocol,encrypted_config,fingerprint,last_test_status,last_latency_ms,last_tested_at FROM v2ray_configs ORDER BY slot ASC").all() as V2RayConfigRow[];
+  return (await db()).prepare("SELECT id,slot,protocol,encrypted_config,fingerprint,last_test_status,last_error_code,last_latency_ms,last_tested_at FROM v2ray_configs ORDER BY slot ASC").all() as V2RayConfigRow[];
 }
 
 async function settings(): Promise<V2RaySettingsRow | undefined> {
@@ -123,6 +126,7 @@ function publicConfig(row: V2RayConfigRow, selectedId?: string) {
     label: `کانفیگ ${row.slot}`,
     protocol: row.protocol,
     testStatus: row.last_test_status,
+    errorCode: row.last_test_status === "error" && /^[A-Z][A-Z0-9_]{2,30}$/.test(row.last_error_code || "") ? row.last_error_code : undefined,
     latencyMs: row.last_latency_ms ?? undefined,
     selected: row.id === selectedId,
   };
@@ -261,7 +265,7 @@ async function boundedResponseText(response: Response, maximum = 100_000): Promi
   return Buffer.concat(chunks).subarray(0, maximum).toString("utf8");
 }
 
-async function probeAgent(agent: ProxyAgent, timeoutMs = 12_000): Promise<number> {
+async function probeAgent(agent: ProxyAgent, timeoutMs = PROBE_TIMEOUT_MS): Promise<number> {
   const started = Date.now();
   const response = await fetch(TEST_URL, {
     cache: "no-store",
@@ -286,14 +290,39 @@ async function probeAgent(agent: ProxyAgent, timeoutMs = 12_000): Promise<number
   return Date.now() - started;
 }
 
+function safeV2RayErrorCode(error: unknown): string {
+  let current = error;
+  for (let depth = 0; depth < 5 && current; depth += 1) {
+    if (current instanceof Error) {
+      if (["TimeoutError", "AbortError"].includes(current.name)) return "TIMEOUT";
+      if (/PROVIDER_PROBE_NOT_JSON/.test(current.message)) return "PROVIDER_NOT_JSON";
+      if (/PROVIDER_PROBE_INVALID_JSON/.test(current.message)) return "PROVIDER_INVALID_JSON";
+      if (/PROVIDER_PROBE_FAILED/.test(current.message)) return "PROVIDER_REJECTED";
+      if (/XRAY_EXITED/.test(current.message)) return "XRAY_EXITED";
+      if (/هستهٔ Xray|هستهٔ V2Ray/.test(current.message)) return "CORE_INVALID";
+    }
+    const code = typeof current === "object" && current && "code" in current ? (current as { code?: unknown }).code : undefined;
+    if (typeof code === "string") {
+      if (["UND_ERR_CONNECT_TIMEOUT", "ETIMEDOUT"].includes(code)) return "CONNECT_TIMEOUT";
+      if (["UND_ERR_HEADERS_TIMEOUT"].includes(code)) return "HEADERS_TIMEOUT";
+      if (["ENOTFOUND", "EAI_AGAIN"].includes(code)) return "DNS_FAILED";
+      if (["ECONNREFUSED"].includes(code)) return "CONNECTION_REFUSED";
+      if (["ECONNRESET", "UND_ERR_SOCKET", "EPIPE"].includes(code)) return "SOCKET_FAILED";
+      if (/CERT|TLS|SSL/i.test(code)) return "TLS_FAILED";
+    }
+    current = typeof current === "object" && current && "cause" in current ? (current as { cause?: unknown }).cause : undefined;
+  }
+  return "PROBE_FAILED";
+}
+
 async function testRow(row: V2RayConfigRow): Promise<number> {
   const running = await startXray(row);
   try {
     let lastError: unknown;
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    for (let attempt = 0; attempt < TEST_ATTEMPTS; attempt += 1) {
       if (running.closed) throw new Error("XRAY_EXITED");
       try { return await probeAgent(running.agent); }
-      catch (error) { lastError = error; await new Promise((resolve) => setTimeout(resolve, 250)); }
+      catch (error) { lastError = error; await new Promise((resolve) => setTimeout(resolve, 150)); }
     }
     throw lastError instanceof Error ? lastError : new Error("V2RAY_PROBE_FAILED");
   } finally {
@@ -334,7 +363,8 @@ async function updateSetting(values: { enabled?: boolean; selectedId?: string | 
 }
 
 export async function saveV2RayConfigs(input: string, userId: string): Promise<void> {
-  const parsed = parseV2RayConfigList(input, MAX_CONFIGS);
+  const parsedList = parseV2RayConfigListDetailed(input, MAX_CONFIGS);
+  const parsed = parsedList.configs;
   const database = await db();
   const now = new Date().toISOString();
   const encrypted = await Promise.all(parsed.map(async (item) => ({
@@ -353,7 +383,7 @@ export async function saveV2RayConfigs(input: string, userId: string): Promise<v
     }
     database.prepare(`INSERT INTO v2ray_settings (id,enabled,selected_config_id,last_test_status,last_test_message,updated_at,updated_by)
       VALUES (1,0,NULL,'idle',?,?,?) ON CONFLICT(id) DO UPDATE SET enabled=0,selected_config_id=NULL,last_test_status='idle',last_test_message=excluded.last_test_message,updated_at=excluded.updated_at,updated_by=excluded.updated_by`)
-      .run("فهرست کانفیگ‌ها رمزنگاری و ذخیره شد؛ تست خودکار هنوز اجرا نشده است.", now, userId);
+      .run(`فهرست کانفیگ‌ها رمزنگاری و ذخیره شد؛ ${parsed.length} کانفیگ قابل‌استفاده، ${parsedList.rejected} خط نامعتبر/پشتیبانی‌نشده و ${parsedList.overflow} کانفیگ مازاد بر حد مجاز. تست خودکار هنوز اجرا نشده است.`, now, userId);
   });
   replace();
 }
@@ -365,16 +395,17 @@ async function activate(userId: string): Promise<void> {
   await updateSetting({ enabled: false, selectedId: null, status: "testing", message: "تست خودکار کانفیگ‌ها در حال اجراست؛ هیچ درخواست AI از مسیر مستقیم ارسال نمی‌شود.", testedAt: startedAt, userId });
   await stopXray(globalStore.__nomrehV2RayRuntime);
   const results = await mapLimit(configRows, TEST_CONCURRENCY, async (row) => {
-    await db().then((database) => database.prepare("UPDATE v2ray_configs SET last_test_status='testing' WHERE id=?").run(row.id));
+    await db().then((database) => database.prepare("UPDATE v2ray_configs SET last_test_status='testing',last_error_code=NULL WHERE id=?").run(row.id));
     try {
       const latency = await testRow(row);
       const testedAt = new Date().toISOString();
-      await db().then((database) => database.prepare("UPDATE v2ray_configs SET last_test_status='success',last_latency_ms=?,last_tested_at=?,updated_at=? WHERE id=?").run(latency, testedAt, testedAt, row.id));
+      await db().then((database) => database.prepare("UPDATE v2ray_configs SET last_test_status='success',last_error_code=NULL,last_latency_ms=?,last_tested_at=?,updated_at=? WHERE id=?").run(latency, testedAt, testedAt, row.id));
       return { row, latency };
-    } catch {
+    } catch (error) {
       const testedAt = new Date().toISOString();
-      await db().then((database) => database.prepare("UPDATE v2ray_configs SET last_test_status='error',last_latency_ms=NULL,last_tested_at=?,updated_at=? WHERE id=?").run(testedAt, testedAt, row.id));
-      return { row, latency: 0 };
+      const errorCode = safeV2RayErrorCode(error);
+      await db().then((database) => database.prepare("UPDATE v2ray_configs SET last_test_status='error',last_error_code=?,last_latency_ms=NULL,last_tested_at=?,updated_at=? WHERE id=?").run(errorCode, testedAt, testedAt, row.id));
+      return { row, latency: 0, errorCode };
     }
   });
   const healthy = results.filter((result) => result.latency > 0).sort((a, b) => a.latency - b.latency);
@@ -394,7 +425,13 @@ async function activate(userId: string): Promise<void> {
     }
   }
   if (!selected || !selectedRow) {
-    await updateSetting({ enabled: false, selectedId: null, status: "error", message: "هیچ‌کدام از کانفیگ‌ها اتصال معتبر به Google Gemini برقرار نکرد؛ V2Ray فعال نشد و جزئیات محرمانه ثبت نشد.", testedAt: new Date().toISOString(), userId });
+    const counts = new Map<string, number>();
+    for (const result of results) {
+      const code = "errorCode" in result && typeof result.errorCode === "string" ? result.errorCode : "PROBE_FAILED";
+      counts.set(code, (counts.get(code) || 0) + 1);
+    }
+    const summary = [...counts.entries()].sort().map(([code, count]) => `${code}=${count}`).join(",");
+    await updateSetting({ enabled: false, selectedId: null, status: "error", message: `هیچ‌کدام از کانفیگ‌ها اتصال معتبر به Google Gemini برقرار نکرد؛ V2Ray فعال نشد. کدهای فنی امن: ${summary || "PROBE_FAILED"}.`, testedAt: new Date().toISOString(), userId });
     throw new V2RayError("هیچ‌کدام از کانفیگ‌های V2Ray تست اتصال AI را قبول نکرد؛ کانفیگ‌ها و دسترسی سرور را بررسی کنید.", 502);
   }
   globalStore.__nomrehV2RayRuntime = selected;
