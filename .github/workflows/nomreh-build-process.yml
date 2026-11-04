@@ -1,4 +1,4 @@
-name: Nomreh build process inspection
+name: Nomreh post-build status inspection
 
 on:
   push:
@@ -54,8 +54,8 @@ jobs:
           PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
-          PLESK_BROWSER_ACTION: build-process
-          PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-build-process.md
+          PLESK_BROWSER_ACTION: status
+          PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-status-after-build.md
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
         run: node scripts/plesk-browser-diagnostics.cjs
 
@@ -68,18 +68,18 @@ jobs:
         run: |
           set -euo pipefail
           conclusion=neutral
-          summary='Nomreh build process inspection is not configured; no host was contacted.'
+          summary='Nomreh post-build status inspection is not configured; no host was contacted.'
           if [ "$CONFIGURED" = true ]; then
             conclusion=success
             if [ "$DIAGNOSTIC_OUTCOME" != success ]; then conclusion=failure; fi
-            if [ -f "$RUNNER_TEMP/nomreh-build-process.md" ]; then
-              summary="$(cat "$RUNNER_TEMP/nomreh-build-process.md")"
+            if [ -f "$RUNNER_TEMP/nomreh-status-after-build.md" ]; then
+              summary="$(cat "$RUNNER_TEMP/nomreh-status-after-build.md")"
             else
               summary='Browser preparation or build-process inspection did not produce a report; no remediation was attempted.'
             fi
           fi
           gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
-            -f name="Nomreh build process inspection" \
+            -f name="Nomreh post-build status inspection" \
             -f head_sha="${GITHUB_SHA}" \
             -f status=completed \
             -f conclusion="$conclusion" \
