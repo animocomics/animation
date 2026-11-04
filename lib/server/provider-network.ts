@@ -165,8 +165,8 @@ export function isProviderHostname(hostname: string): boolean {
 async function officialProviderAgent(): Promise<ProxyAgent> {
   const { getOfficialRuntimeStatus, officialRuntimePorts } = await import("./shecan-runtime");
   const runtime = getOfficialRuntimeStatus();
-  if (!runtime.running || !runtime.appReady || !runtime.brokerReady) {
-    throw new ProviderNetworkError("محیط رسمی شکن آماده نیست؛ درخواست AI از مسیر دیگری ارسال نمی‌شود.", "connection");
+  if (!runtime.running || !runtime.appReady || !runtime.brokerReady || !runtime.activationReady) {
+    throw new ProviderNetworkError("محیط رسمی شکن یا فعال‌سازی اختصاصی آن آماده نیست؛ درخواست AI از مسیر دیگری ارسال نمی‌شود.", "connection");
   }
   if (!globalStore.__nomrehOfficialProxyAgent) {
     const { proxy } = officialRuntimePorts();

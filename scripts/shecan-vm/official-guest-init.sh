@@ -74,6 +74,81 @@ if ! grep -q 'nomreh_probe=1' /proc/cmdline; then
   fi
 fi
 
+# Authenticated host-local control channel for the documented headless Linux
+# method. Only the isolated guest resolver is changed; the host resolver is
+# never touched. The secret update URL arrives base64-encoded over a UNIX serial
+# socket and is never written to the kernel command line, logs or public status.
+valid_ipv4() {
+  case "$1" in ''|*[!0-9.]*) return 1 ;; esac
+  old_ifs=$IFS
+  IFS=.
+  set -- $1
+  IFS=$old_ifs
+  [ "$#" -eq 4 ] || return 1
+  for octet in "$@"; do
+    case "$octet" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$octet" -le 255 ] 2>/dev/null || return 1
+  done
+  return 0
+}
+valid_base64() {
+  case "$1" in ''|*[!A-Za-z0-9+/=]*) return 1 ;; esac
+  [ "${#1}" -le 2800 ]
+}
+control_tty=$(sed -n 's/.*nomreh_control=\([^ ]*\).*/\1/p' /proc/cmdline)
+case "$control_tty" in ttyS1|ttyS2) ;; *) control_tty='' ;; esac
+if [ -n "$control_tty" ]; then
+  (
+    control_device="/dev/$control_tty"
+    control_device_ready=0
+    for attempt in $(seq 1 100); do
+      if [ -c "$control_device" ]; then control_device_ready=1; break; fi
+      sleep 0.1
+    done
+    if [ "$control_device_ready" -ne 1 ]; then
+      echo NOMREH_OFFICIAL_GUEST_ERROR CONTROL_DEVICE > /dev/console
+      exit 0
+    fi
+    echo NOMREH_OFFICIAL_CONTROL_READY > /dev/console
+    while true; do
+      if ! stty -F "$control_device" raw -echo 2>/dev/null; then
+        sleep 1
+        continue
+      fi
+      while IFS=' ' read -r action nonce encoded_url encoded_dns1 encoded_dns2 extra; do
+        case "$nonce" in *[!0-9a-f]*|'') continue ;; esac
+        if [ "${#nonce}" -ne 16 ]; then continue; fi
+        if [ "$action" != ACTIVATE ] || [ -n "$extra" ] || ! valid_base64 "$encoded_url" || ! valid_base64 "$encoded_dns1" || ! valid_base64 "$encoded_dns2"; then
+          printf 'ERROR %s BAD_REQUEST\n' "$nonce" > "$control_device"
+          continue
+        fi
+        update_url=$(printf '%s' "$encoded_url" | base64 -d 2>/dev/null)
+        dns1=$(printf '%s' "$encoded_dns1" | base64 -d 2>/dev/null)
+        dns2=$(printf '%s' "$encoded_dns2" | base64 -d 2>/dev/null)
+        url_rest=${update_url#https://}
+        url_host=${url_rest%%[/?#]*}
+        if [ "$url_rest" = "$update_url" ] || [ "${#update_url}" -gt 2000 ] || [ -z "$url_host" ] || [ "$url_host" != "${url_host%@*}" ] || { [ "$url_host" != shecan.ir ] && [ "${url_host%.shecan.ir}" = "$url_host" ]; }; then
+          printf 'ERROR %s BAD_URL\n' "$nonce" > "$control_device"
+          continue
+        fi
+        if ! valid_ipv4 "$dns1" || ! valid_ipv4 "$dns2"; then
+          printf 'ERROR %s BAD_DNS\n' "$nonce" > "$control_device"
+          continue
+        fi
+        if ! /bin/busybox wget -q -T 20 -O /dev/null "$update_url"; then
+          echo NOMREH_OFFICIAL_AI_ACTIVATION_FAILED > /dev/console
+          printf 'ERROR %s UPDATE_FAILED\n' "$nonce" > "$control_device"
+          continue
+        fi
+        printf 'nameserver %s\nnameserver %s\n' "$dns1" "$dns2" > /etc/resolv.conf
+        echo NOMREH_OFFICIAL_AI_ACTIVATED > /dev/console
+        printf 'OK %s\n' "$nonce" > "$control_device"
+      done < "$control_device"
+      sleep 1
+    done
+  ) &
+fi
+
 vnc_localhost='-localhost'
 vnc_rfb_options=''
 if grep -q 'nomreh_vnc=hostfwd' /proc/cmdline; then vnc_localhost=''; fi

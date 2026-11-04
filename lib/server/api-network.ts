@@ -12,6 +12,7 @@ import { resolveShecanDoh } from "./shecan-doh";
 import { resolveShecanDot } from "./shecan-dot";
 import { resolveShecanDns5353 } from "./shecan-dns5353";
 import { decryptSecret, encryptSecret } from "./secret-crypto";
+import { activateOfficialGuest, getOfficialRuntimeStatus } from "./shecan-runtime";
 
 const UPDATE_URL_PURPOSE = "nomreh-api-network-v1";
 // Official Pro cron/systemd examples renew the exact update link every five minutes.
@@ -46,6 +47,7 @@ interface ApiNetworkRow {
   last_test_latency_ms?: number;
   last_activated_at?: string;
   updated_at: string;
+  updated_by?: string;
 }
 
 export interface ApiNetworkConfig extends ProviderNetworkConfig {
@@ -748,14 +750,31 @@ export async function activateUpdateUrl(
   return new Date().toISOString();
 }
 
+async function activateOfficialWithSettle(
+  updateUrl: string,
+  servers: [string, string],
+  settleMs = 60_000,
+  activator: typeof activateOfficialGuest = activateOfficialGuest,
+): Promise<string> {
+  const activatedAt = await activator(updateUrl, servers);
+  if (settleMs > 0) await new Promise<void>((resolve) => setTimeout(resolve, settleMs));
+  return activatedAt;
+}
+
 export async function ensureApiNetworkActivated(network: ApiNetworkConfig): Promise<void> {
-  // The genuine desktop performs its own account/update work inside the guest.
-  // Never invoke the stored link from the host in official-runtime mode.
-  if (network.transport === "official-vm" || !network.enabled || network.plan !== "pro" || !network.updateUrl) return;
-  if (network.lastActivatedAt && Date.now() - Date.parse(network.lastActivatedAt) < ACTIVATION_INTERVAL_MS) return;
-  const key = network.updateUrl;
+  if (!network.enabled || network.plan !== "pro" || !network.updateUrl) return;
+  const official = network.transport === "official-vm";
+  const runtime = official ? getOfficialRuntimeStatus() : undefined;
+  const recentlyActivated = network.lastActivatedAt && Date.now() - Date.parse(network.lastActivatedAt) < ACTIVATION_INTERVAL_MS;
+  if (recentlyActivated && (!official || runtime?.activationReady)) return;
+  // Include the guest instance so a restart is reactivated even when the
+  // previous host-side timestamp is still fresh. The secret stays in memory only.
+  const key = `${network.transport}:${runtime?.startedAt || "direct"}:${network.updateUrl}`;
   if (!globalStore.__nomrehShecanActivation || globalStore.__nomrehShecanActivation.key !== key) {
-    globalStore.__nomrehShecanActivation = { key, promise: activateUpdateUrl(key, network.servers) };
+    const promise = official
+      ? activateOfficialWithSettle(network.updateUrl, network.servers)
+      : activateUpdateUrl(network.updateUrl, network.servers);
+    globalStore.__nomrehShecanActivation = { key, promise };
   }
   const activation = globalStore.__nomrehShecanActivation;
   try {
@@ -788,7 +807,13 @@ async function testGoogleThroughShecan(network: ProviderNetworkConfig): Promise<
 export async function saveAndTestApiNetwork(
   input: SaveApiNetworkInput,
   userId: string,
-  options: { activationSettleMs?: number; dns5353Resolver?: typeof resolveShecanDns5353; dotResolver?: typeof resolveShecanDot } = {},
+  options: {
+    activationSettleMs?: number;
+    dns5353Resolver?: typeof resolveShecanDns5353;
+    dotResolver?: typeof resolveShecanDot;
+    officialActivator?: typeof activateOfficialGuest;
+    providerTester?: typeof testGoogleThroughShecan;
+  } = {},
 ): Promise<ApiNetworkPublicStatus> {
   if (!input.servers.every((server) => isIPv4(server))) throw new ApiNetworkError("هر دو آدرس DNS باید IPv4 معتبر باشند.", 400);
   const previous = await findRow();
@@ -799,7 +824,7 @@ export async function saveAndTestApiNetwork(
     ? await encryptSecret(suppliedUpdateUrl, UPDATE_URL_PURPOSE)
     : previous?.encrypted_update_url || "";
   let updateUrl = "";
-  if (input.enabled && input.transport !== "official-vm" && input.plan === "pro" && encryptedUpdateUrl) {
+  if (input.enabled && input.plan === "pro" && encryptedUpdateUrl) {
     try {
       updateUrl = suppliedUpdateUrl || await decryptSecret(encryptedUpdateUrl, UPDATE_URL_PURPOSE);
     } catch (error) {
@@ -817,8 +842,13 @@ export async function saveAndTestApiNetwork(
 
   if (input.enabled) {
     try {
-      if (input.transport !== "official-vm" && updateUrl) activatedAt = await activateUpdateUrl(updateUrl, input.servers, options.activationSettleMs ?? 60_000, options.dns5353Resolver, options.dotResolver);
-      latency = await testGoogleThroughShecan(network);
+      if (input.transport === "official-vm") {
+        if (input.plan !== "pro" || !updateUrl) throw new ApiNetworkError("فعال‌سازی برنامهٔ رسمی به لینک به‌روزرسان اشتراک حرفه‌ای نیاز دارد؛ لینک فعلی را در روش دستی ذخیره کنید.", 400);
+        activatedAt = await activateOfficialWithSettle(updateUrl, input.servers, options.activationSettleMs ?? 60_000, options.officialActivator);
+      } else if (updateUrl) {
+        activatedAt = await activateUpdateUrl(updateUrl, input.servers, options.activationSettleMs ?? 60_000, options.dns5353Resolver, options.dotResolver);
+      }
+      latency = await (options.providerTester || testGoogleThroughShecan)(network);
       enabled = true;
       testStatus = "success";
       testMessage = input.transport === "official-vm"
@@ -858,6 +888,30 @@ export async function saveAndTestApiNetwork(
     throw new ApiNetworkError("آزمایش شکن ناموفق بود و فعال‌سازی انجام نشد.", 502, { cause: failure });
   }
   return getApiNetworkStatus();
+}
+
+/** Plesk's local deployment can activate the stored subscription without an admin HTTP session. */
+export async function activateOfficialShecanFromStoredLink(
+  options: {
+    activationSettleMs?: number;
+    officialActivator?: typeof activateOfficialGuest;
+    providerTester?: typeof testGoogleThroughShecan;
+  } = {},
+): Promise<ApiNetworkPublicStatus> {
+  const row = await findRow();
+  if (!row?.encrypted_update_url || row.transport !== "official-vm") return getApiNetworkStatus();
+  const v2ray = await (await import("./v2ray-runtime")).getV2RayStatus();
+  if (v2ray.enabled || v2ray.pending) return getApiNetworkStatus();
+  const db = (await import("./db")).getDb();
+  const admin = row.updated_by ? undefined : db.prepare("SELECT id FROM users WHERE role='admin' ORDER BY created_at LIMIT 1").get() as { id?: string } | undefined;
+  const userId = row.updated_by || admin?.id;
+  if (!userId) throw new ApiNetworkError("برای فعال‌سازی خودکار، ابتدا حساب مدیر و لینک اشتراک را ذخیره کنید.", 400);
+  return saveAndTestApiNetwork({
+    enabled: true,
+    plan: row.plan,
+    servers: [row.dns_primary, row.dns_secondary],
+    transport: "official-vm",
+  }, userId, options);
 }
 
 export function getApiNetworkJobStatus(): { pending: boolean; startedAt?: string; finishedAt?: string; error?: string } {

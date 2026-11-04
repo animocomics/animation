@@ -80,6 +80,7 @@ test("runtime lifecycle markers gate the AI proxy and stopping fails closed with
     assert.equal(ready.running, true);
     assert.equal(ready.appReady, true);
     assert.equal(ready.brokerReady, true);
+    assert.equal(ready.activationReady, false);
     assert.ok(ready.markers.includes("NOMREH_OFFICIAL_APP_PROCESS_ALIVE"));
     assert.ok(ready.markers.includes("NOMREH_OFFICIAL_AI_BROKER_LISTENING"));
     await waitFor(() => getOfficialRuntimeStatus().supervisorRunning, 5000);
@@ -91,6 +92,8 @@ test("runtime lifecycle markers gate the AI proxy and stopping fails closed with
       try { currentPid = Number(fs.readFileSync(path.join(data, "shecan-official", "guest.pid"), "utf8").trim()); } catch { /* Waiting for replacement. */ }
       return current.running && current.appReady && current.brokerReady && current.supervisorRunning && currentPid > 1 && currentPid !== firstPid;
     });
+    fs.appendFileSync(serial, "NOMREH_OFFICIAL_AI_ACTIVATED\n");
+    assert.equal(getOfficialRuntimeStatus().activationReady, true);
     const seen: unknown[] = [];
     globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
       seen.push((init as RequestInit & { dispatcher?: unknown } | undefined)?.dispatcher);

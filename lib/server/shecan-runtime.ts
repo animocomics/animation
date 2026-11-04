@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
@@ -17,6 +17,7 @@ export interface OfficialRuntimeStatus {
   running: boolean;
   appReady: boolean;
   brokerReady: boolean;
+  activationReady: boolean;
   supervisorRunning: boolean;
   markers: string[];
   phase: "not-installed" | "stopped" | "starting" | "ready" | "error";
@@ -43,6 +44,7 @@ function supervisorPidPath(): string { return path.join(stateRoot(), "supervisor
 function stopRequestedPath(): string { return path.join(stateRoot(), "stop-requested"); }
 function statePath(): string { return path.join(stateRoot(), "state.json"); }
 function consolePath(): string { return path.join(stateRoot(), "guest-console.log"); }
+function controlSocketPath(): string { return path.join(stateRoot(), "control.sock"); }
 function supervisorScriptPath(): string { return path.resolve(process.cwd(), "scripts", "shecan-runtime-watchdog.cjs"); }
 
 function isOurSupervisor(pid: number | null): pid is number {
@@ -81,6 +83,74 @@ export function officialRuntimePorts(): { vnc: number; proxy: number } {
     throw new Error("Invalid isolated Shecan runtime ports");
   }
   return { vnc, proxy };
+}
+
+/** Send one scoped activation command without ever placing the secret in argv or logs. */
+export async function sendOfficialGuestActivation(
+  updateUrl: string,
+  servers: [string, string],
+  options: { socketPath?: string; timeoutMs?: number } = {},
+): Promise<string> {
+  const parsed = new URL(updateUrl);
+  const hostname = parsed.hostname.toLowerCase();
+  if (parsed.protocol !== "https:" || parsed.port || !(hostname === "shecan.ir" || hostname.endsWith(".shecan.ir")) || parsed.username || parsed.password || updateUrl.length > 2000 || !servers.every((server) => net.isIPv4(server))) {
+    throw new Error("Invalid isolated Shecan activation input");
+  }
+  const socketPath = options.socketPath || controlSocketPath();
+  const timeoutMs = Math.max(1000, Math.min(60_000, options.timeoutMs || 45_000));
+  const nonce = randomBytes(8).toString("hex");
+  const encode = (value: string) => Buffer.from(value, "utf8").toString("base64");
+  const command = `ACTIVATE ${nonce} ${encode(updateUrl)} ${encode(servers[0])} ${encode(servers[1])}\n`;
+  return new Promise<string>((resolve, reject) => {
+    const socket = net.createConnection({ path: socketPath });
+    let settled = false;
+    let received = "";
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      if (error) reject(error);
+      else resolve(new Date().toISOString());
+    };
+    const timer = setTimeout(() => finish(new Error("Isolated Shecan activation timed out")), timeoutMs);
+    socket.once("connect", () => { socket.write(command); });
+    socket.on("data", (chunk) => {
+      received = `${received}${chunk.toString("utf8")}`.slice(-512);
+      let newline = received.indexOf("\n");
+      while (newline >= 0) {
+        const line = received.slice(0, newline).trim();
+        received = received.slice(newline + 1);
+        const [status, responseNonce, rawCode] = line.split(" ");
+        if (responseNonce === nonce && status === "OK") { finish(); return; }
+        if (responseNonce === nonce && status === "ERROR") {
+          const code = String(rawCode || "FAILED").replace(/[^A-Z0-9_]/g, "").slice(0, 32) || "FAILED";
+          finish(new Error(`Isolated Shecan activation failed: ${code}`));
+          return;
+        }
+        newline = received.indexOf("\n");
+      }
+    });
+    socket.once("error", () => finish(new Error("Isolated Shecan control channel is unavailable")));
+    socket.once("close", () => { if (!settled) finish(new Error("Isolated Shecan control channel closed")); });
+  });
+}
+
+let officialControlQueue: Promise<unknown> = Promise.resolve();
+
+export async function activateOfficialGuest(updateUrl: string, servers: [string, string]): Promise<string> {
+  let runtime = getOfficialRuntimeStatus();
+  if (!runtime.running) throw new Error("Isolated Shecan guest is not running");
+  const deadline = Date.now() + 30_000;
+  while ((!runtime.appReady || !runtime.brokerReady) && Date.now() < deadline) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 500));
+    runtime = getOfficialRuntimeStatus();
+    if (!runtime.running) throw new Error("Isolated Shecan guest stopped before activation");
+  }
+  if (!runtime.appReady || !runtime.brokerReady) throw new Error("Isolated Shecan app or AI broker is not ready");
+  const activation = officialControlQueue.then(() => sendOfficialGuestActivation(updateUrl, servers));
+  officialControlQueue = activation.catch(() => undefined);
+  return activation;
 }
 
 function regularFile(target: string): boolean {
@@ -176,6 +246,8 @@ export function getOfficialRuntimeStatus(): OfficialRuntimeStatus {
   const markerList = running ? consoleMarkers(markers) : [];
   const appReady = running && markers.includes("NOMREH_OFFICIAL_APP_PROCESS_ALIVE");
   const brokerReady = running && markers.includes("NOMREH_OFFICIAL_AI_BROKER_LISTENING");
+  const activationMarkers = markers.split(/\r?\n/).map((line) => line.trim()).filter((marker) => marker === "NOMREH_OFFICIAL_AI_ACTIVATED" || marker === "NOMREH_OFFICIAL_AI_ACTIVATION_FAILED");
+  const activationReady = running && appReady && brokerReady && activationMarkers.at(-1) === "NOMREH_OFFICIAL_AI_ACTIVATED";
   const failed = running && /NOMREH_(?:OFFICIAL|VNC)_[A-Z_]*ERROR/.test(markers);
   const ready = appReady && brokerReady && !failed;
   return {
@@ -183,6 +255,7 @@ export function getOfficialRuntimeStatus(): OfficialRuntimeStatus {
     running,
     appReady,
     brokerReady,
+    activationReady,
     supervisorRunning,
     markers: markerList,
     phase: !installed ? "not-installed" : failed || state.lastError ? "error" : ready ? "ready" : running ? "starting" : "stopped",
@@ -234,6 +307,7 @@ export async function startOfficialRuntime(): Promise<OfficialRuntimeStatus> {
         NOMREH_VM_MEMORY: process.env.NOMREH_VM_MEMORY || "2048M",
         NOMREH_VNC_PORT: String(vnc),
         NOMREH_VNC_UNIX_SOCKET: process.env.NOMREH_VNC_UNIX_SOCKET || path.join(stateRoot(), "vnc.sock"),
+        NOMREH_CONTROL_UNIX_SOCKET: process.env.NOMREH_CONTROL_UNIX_SOCKET || controlSocketPath(),
         NOMREH_PROXY_PORT: String(proxy),
         NOMREH_VM_SERIAL: `file:${consolePath()}`,
         NOMREH_VM_PROBE: "0",

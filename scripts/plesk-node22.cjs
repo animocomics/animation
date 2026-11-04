@@ -468,6 +468,18 @@ function compactProduction(runtime) {
   });
 }
 
+function deployOfficialShecan(runtime) {
+  const tsxCli = path.join(APP_ROOT, "node_modules", "tsx", "dist", "cli.mjs");
+  const script = path.join(APP_ROOT, "scripts", "shecan-official-deploy.ts");
+  if (!fs.existsSync(tsxCli) || !fs.existsSync(script)) throw new Error("Nomreh's official Shecan deployment helper is missing.");
+  progress("Patching the existing official Shecan guest and testing its AI-only route");
+  execute(runtime.nodeBinary, [tsxCli, script], {
+    cwd: APP_ROOT,
+    env: { ...runtimeEnvironment(runtime), NOMREH_DATA_DIR: DATA_DIR },
+    timeout: 900000,
+  });
+}
+
 function smokeRuntime(runtime) {
   const source = `
     const { DatabaseSync } = require("node:sqlite");
@@ -518,6 +530,7 @@ async function build() {
     restorePublicStaticAfterBuild(staticStash, true);
     progress("Publishing Next.js static assets for nginx");
     syncPublicStatic();
+    deployOfficialShecan(runtime);
     progress("Removing development-only packages and regenerable build caches");
     compactProduction(runtime);
     progress("Testing SQLite and canvas with the production runtime");
