@@ -1,0 +1,59 @@
+name: Nomreh cancel only the stale hosted build
+
+on:
+  push:
+    branches: [arena/f4b832aa-animation]
+    paths: [.github/workflows/nomreh-cancel-stale-build.yml]
+
+permissions:
+  contents: read
+  checks: write
+
+concurrency:
+  group: plesk-nomreh-cancel-stale-build
+  cancel-in-progress: false
+
+jobs:
+  cancel-stale-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare an isolated temporary browser
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/plesk-browser"
+          cd "$RUNNER_TEMP/plesk-browser"
+          npm init -y > /dev/null
+          npm install --ignore-scripts --no-audit --no-fund playwright@1.64.1
+          npx playwright install --with-deps chromium
+      - name: Cancel only the matched stale Nomreh build task
+        id: cancel
+        env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+          PLESK_BROWSER_ACTION: cancel-stale-build
+          PLESK_CONFIRM_STALE_BUILD_CANCEL: confirmed
+          PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-cancel-stale-build.md
+          NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
+        run: node scripts/plesk-browser-diagnostics.cjs
+      - name: Publish the sanitized cancellation result
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CANCEL_OUTCOME: ${{ steps.cancel.outcome }}
+        run: |
+          set -euo pipefail
+          conclusion=failure
+          if [ "$CANCEL_OUTCOME" = success ]; then conclusion=success; fi
+          summary='No cancellation result was produced; no success is claimed.'
+          if [ -f "$RUNNER_TEMP/nomreh-cancel-stale-build.md" ]; then summary="$(cat "$RUNNER_TEMP/nomreh-cancel-stale-build.md")"; fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name="Nomreh stale build cancellation" \
+            -f head_sha="${GITHUB_SHA}" \
+            -f status=completed \
+            -f conclusion="$conclusion" \
+            -f 'output[title]=Nomreh scoped stale-build cancellation' \
+            --raw-field "output[summary]=${summary}" > /dev/null
+          test "$CANCEL_OUTCOME" = success
