@@ -15,13 +15,13 @@ const TEST_CONCURRENCY = 8;
 const TEST_ATTEMPTS = 2;
 const PROBE_TIMEOUT_MS = 8_000;
 const PROVIDER_DOMAINS = [
-  "full:api.openai.com",
-  "full:generativelanguage.googleapis.com",
-  "full:api.deepseek.com",
-  "full:api.z.ai",
-  "full:api.minimax.io",
-  "full:api.mistral.ai",
-  "full:tinker.thinkingmachines.dev",
+  "domain:api.openai.com",
+  "domain:generativelanguage.googleapis.com",
+  "domain:api.deepseek.com",
+  "domain:api.z.ai",
+  "domain:api.minimax.io",
+  "domain:api.mistral.ai",
+  "domain:tinker.thinkingmachines.dev",
 ];
 
 interface V2RayConfigRow {
@@ -182,7 +182,7 @@ function xrayConfig(parsed: ParsedV2RayConfig, port: number, user: string, pass:
       settings: { accounts: [{ user, pass }], timeout: 60, allowTransparent: false },
     }],
     outbounds: [
-      { protocol: "blackhole", tag: "nomreh-blocked", settings: {} },
+      { protocol: "blackhole", tag: "nomreh-blocked", settings: { response: { type: "http" } } },
       outbound,
     ],
     routing: {

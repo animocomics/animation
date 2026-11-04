@@ -27,7 +27,7 @@ jobs:
           DELTA_FILES: components/admin-panel.tsx,components/v2ray-connection.tsx,components/official-shecan-console.tsx,components/official-vnc-http-channel.ts,app/features.css,app/api/admin/v2ray/route.ts,instrumentation.ts,lib/api-network.ts,lib/server/api-network.ts,lib/server/db.ts,lib/server/provider-config.ts,lib/server/provider-network.ts,lib/server/v2ray-config.ts,lib/server/v2ray-runtime.ts,lib/server/shecan-runtime.ts,scripts/next-server.cjs,scripts/shecan-runtime-watchdog.cjs,scripts/shecan-vnc-http.cjs,scripts/shecan-vnc-websocket.cjs,types/novnc.d.ts
         run: |
           set -euo pipefail
-          archive="$RUNNER_TEMP/nomreh-deploy-official-http-v50.zip"
+          archive="$RUNNER_TEMP/nomreh-deploy-official-http-v51.zip"
           git archive --format=zip --output="$archive" "$GITHUB_SHA" $(printf '%s' "$DELTA_FILES" | tr ',' ' ')
           test "$(unzip -Z1 "$archive" | grep -vc '/$')" -eq 20
           grep -F 'new OfficialVncHttpChannel' components/official-shecan-console.tsx > /dev/null
@@ -39,13 +39,15 @@ jobs:
           grep -F 'v2rayProviderFetch' lib/server/provider-network.ts > /dev/null
           grep -F 'parseV2RayConfigListDetailed' lib/server/v2ray-config.ts > /dev/null
           grep -F 'last_error_code' lib/server/v2ray-runtime.ts > /dev/null
+          grep -F 'domain:generativelanguage.googleapis.com' lib/server/v2ray-runtime.ts > /dev/null
+          grep -F 'response: { type: "http" }' lib/server/v2ray-runtime.ts > /dev/null
           grep -F 'startV2RayActivation' app/api/admin/v2ray/route.ts > /dev/null
           sha256sum "$archive"
           stat -c 'Delta bytes: %s' "$archive"
       - name: Add the pinned lightweight Xray core without a VM image
         run: |
           set -euo pipefail
-          archive="$RUNNER_TEMP/nomreh-deploy-official-http-v50.zip"
+          archive="$RUNNER_TEMP/nomreh-deploy-official-http-v51.zip"
           mkdir -p "$RUNNER_TEMP/delta/nomreh-v2ray"
           curl --fail --location --silent --show-error --retry 5 --retry-all-errors \
             --output "$RUNNER_TEMP/Xray-linux-64.zip" \
@@ -73,8 +75,8 @@ jobs:
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
           PLESK_BROWSER_ACTION: upload
-          PLESK_ARCHIVE_NAME: nomreh-deploy-official-http-v50.zip
-          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-official-http-v50.zip
+          PLESK_ARCHIVE_NAME: nomreh-deploy-official-http-v51.zip
+          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-official-http-v51.zip
           PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-http-upload.md
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
         run: node scripts/plesk-browser-diagnostics.cjs
@@ -86,7 +88,7 @@ jobs:
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
           PLESK_BROWSER_ACTION: extract
-          PLESK_ARCHIVE_NAME: nomreh-deploy-official-http-v50.zip
+          PLESK_ARCHIVE_NAME: nomreh-deploy-official-http-v51.zip
           PLESK_DELTA_SOURCE: ${{ github.sha }}
           PLESK_DELTA_FILES: components/admin-panel.tsx,components/v2ray-connection.tsx,components/official-shecan-console.tsx,components/official-vnc-http-channel.ts,app/features.css,app/api/admin/v2ray/route.ts,instrumentation.ts,lib/api-network.ts,lib/server/api-network.ts,lib/server/db.ts,lib/server/provider-config.ts,lib/server/provider-network.ts,lib/server/v2ray-config.ts,lib/server/v2ray-runtime.ts,lib/server/shecan-runtime.ts,scripts/next-server.cjs,scripts/shecan-runtime-watchdog.cjs,scripts/shecan-vnc-http.cjs,scripts/shecan-vnc-websocket.cjs,types/novnc.d.ts
           PLESK_DELTA_EXTRA_FILES: nomreh-v2ray/xray,nomreh-v2ray/runtime-manifest.json
