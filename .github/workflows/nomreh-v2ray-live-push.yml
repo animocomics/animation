@@ -1,6 +1,6 @@
 name: Nomreh V2Ray live push acceptance
 
-# Fresh bounded activation with in-memory-only Xray upstream diagnostics.
+# Fresh activation with verified loopback readiness and AI-only inbound routing.
 
 on:
   push:
