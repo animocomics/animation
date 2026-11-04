@@ -1,6 +1,6 @@
 name: Nomreh inspect the stale hosted build process
 
-# Read-only PID inspection; no process is signalled.
+# Read-only PID/progress inspection; no process is signalled.
 
 on:
   push:
