@@ -23,7 +23,7 @@ function clean(value) {
 }
 
 function officialTransportMarkers(runtime) {
-  const markers = (runtime?.markers || []).filter((marker) => /^NOMREH_OFFICIAL_(?:VNC_REVERSE|XVNC|APP|X11)/.test(marker));
+  const markers = (runtime?.markers || []).filter((marker) => /^NOMREH_OFFICIAL_(?:GUEST_(?:HOST_HTTP|NETWORK)|VNC_REVERSE|XVNC|APP|X11)/.test(marker));
   return markers.filter((marker, index) => marker !== markers[index - 1]).slice(-8);
 }
 
