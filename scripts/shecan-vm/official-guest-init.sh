@@ -251,9 +251,11 @@ echo NOMREH_OFFICIAL_X11_INSPECTED > /dev/console
 
 if grep -q 'nomreh_probe=1' /proc/cmdline; then
   echo NOMREH_OFFICIAL_APP_BOOT_PASS > /dev/console
-  # Leave enough time for software rendering under TCG and retain only the
-  # credential-free initial-process logs if the framebuffer gate needs them.
-  sleep 120
+  # Leave enough time for software rendering and the larger raw serial transfer
+  # under TCG; the production guest has no such probe timeout.
+  probe_delay=120
+  if grep -q 'nomreh_vnc_unix=1' /proc/cmdline; then probe_delay=300; fi
+  sleep "$probe_delay"
   timeout 5s xwininfo -root -tree > /var/log/xwininfo.log 2>&1 || true
   echo NOMREH_OFFICIAL_PROBE_LOG_BEGIN > /dev/console
   head -100 /var/log/xwininfo.log > /dev/console 2>&1 || true
