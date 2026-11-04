@@ -48,6 +48,33 @@ test("official runtime manifest verifies every required file and rejects modific
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
+test("runtime retains only the safe boot error after QEMU exits", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nomreh-official-exit-"));
+  const root = path.join(directory, "runtime");
+  const data = path.join(directory, "data");
+  const old = { root: process.env.NOMREH_SHECAN_RUNTIME_DIR, data: process.env.NOMREH_DATA_DIR };
+  process.env.NOMREH_SHECAN_RUNTIME_DIR = root;
+  process.env.NOMREH_DATA_DIR = data;
+  try {
+    fakeRuntime(root);
+    const state = path.join(data, "shecan-official");
+    fs.mkdirSync(state, { recursive: true });
+    fs.writeFileSync(path.join(state, "state.json"), JSON.stringify({ lastError: "GUEST_EXIT_0" }));
+    fs.writeFileSync(path.join(state, "guest-console.log"), "NOMREH_OFFICIAL_GUEST_BEGIN\nNOMREH_OFFICIAL_GUEST_ERROR XVNC\nraw-log-must-not-leak\n");
+    const status = getOfficialRuntimeStatus();
+    assert.equal(status.running, false);
+    assert.equal(status.phase, "error");
+    assert.equal(status.errorCode, "NOMREH_OFFICIAL_GUEST_ERROR_XVNC");
+    assert.ok(status.markers.includes("NOMREH_OFFICIAL_GUEST_ERROR XVNC"));
+    assert.ok(!status.markers.some((marker) => marker.includes("raw-log")));
+  } finally {
+    for (const [key, value] of Object.entries({ NOMREH_SHECAN_RUNTIME_DIR: old.root, NOMREH_DATA_DIR: old.data })) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("runtime lifecycle markers gate the AI proxy and stopping fails closed without QEMU", async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nomreh-official-lifecycle-"));
   const root = path.join(directory, "runtime");
@@ -103,6 +130,11 @@ test("runtime lifecycle markers gate the AI proxy and stopping fails closed with
     await providerFetch("https://example.com/not-a-provider", {}, network);
     assert.ok(seen[0], "provider traffic must use the isolated ProxyAgent");
     assert.equal(seen[1], undefined, "unrelated traffic must never inherit the proxy");
+    fs.appendFileSync(serial, "NOMREH_OFFICIAL_APP_ERROR PROCESS_EXITED\n");
+    const failed = getOfficialRuntimeStatus();
+    assert.equal(failed.phase, "error");
+    assert.equal(failed.errorCode, "NOMREH_OFFICIAL_APP_ERROR_PROCESS_EXITED");
+    assert.ok(failed.markers.includes("NOMREH_OFFICIAL_APP_ERROR PROCESS_EXITED"));
     const stopped = await stopOfficialRuntime();
     assert.equal(stopped.running, false);
     await waitFor(() => !getOfficialRuntimeStatus().supervisorRunning, 5000);

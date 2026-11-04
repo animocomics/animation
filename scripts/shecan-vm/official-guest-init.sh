@@ -153,9 +153,10 @@ vnc_localhost='-localhost'
 vnc_rfb_options=''
 if grep -q 'nomreh_vnc=hostfwd' /proc/cmdline; then vnc_localhost=''; fi
 if grep -q 'nomreh_vnc_unix=1' /proc/cmdline; then
-  # Keep both real Xvnc transports available. The UNIX serial relay is primary;
-  # the loopback-only QEMU hostfwd remains a genuine fallback, not a dead port.
-  vnc_rfb_options='-rfbport 5900 -rfbunixpath /tmp/shecan-vnc.sock -rfbunixmode 0600'
+  # Keep the previously validated Xvnc configuration: its native UNIX listener
+  # is primary and its own TCP listener stays disabled. A separate socat relay
+  # below provides the QEMU hostfwd fallback without changing Xvnc's TCP mode.
+  vnc_rfb_options='-rfbport -1 -rfbunixpath /tmp/shecan-vnc.sock -rfbunixmode 0600'
 fi
 /usr/local/bin/Xvnc :0 -geometry 1200x800 -depth 24 \
   -SecurityTypes None -AlwaysShared $vnc_localhost $vnc_rfb_options \
@@ -175,6 +176,7 @@ fi
 echo NOMREH_OFFICIAL_XVNC_READY > /dev/console
 
 UNIX_VNC_PID=''
+TCP_VNC_PID=''
 if grep -q 'nomreh_vnc_unix=1' /proc/cmdline; then
   unix_vnc_device=0
   for attempt in $(seq 1 100); do
@@ -201,6 +203,18 @@ if grep -q 'nomreh_vnc_unix=1' /proc/cmdline; then
   ) &
   UNIX_VNC_PID=$!
   echo NOMREH_OFFICIAL_VNC_UNIX_RELAY_STARTED > /dev/console
+  # QEMU forwards its authenticated host-loopback port to guest TCP/5900.
+  # Relay that isolated listener to the real Xvnc UNIX socket. This process is
+  # inside the guest only; it does not alter host DNS, routes or firewall rules.
+  socat TCP-LISTEN:5900,bind=0.0.0.0,reuseaddr,fork UNIX-CONNECT:/tmp/shecan-vnc.sock >> /var/log/vnc-tcp.log 2>&1 &
+  TCP_VNC_PID=$!
+  sleep 0.2
+  if ! kill -0 "$TCP_VNC_PID" 2>/dev/null; then
+    echo NOMREH_OFFICIAL_VNC_TCP_RELAY_ERROR > /dev/console
+    poweroff -f
+    while true; do sleep 60; done
+  fi
+  echo NOMREH_OFFICIAL_VNC_TCP_RELAY_READY > /dev/console
 fi
 
 mkdir -p /run/dbus
@@ -342,6 +356,7 @@ if grep -q 'nomreh_probe=1' /proc/cmdline; then
   kill "$APP_PID" 2>/dev/null || true
   if [ -n "$REVERSE_PID" ]; then kill "$REVERSE_PID" 2>/dev/null || true; fi
   if [ -n "$UNIX_VNC_PID" ]; then kill "$UNIX_VNC_PID" 2>/dev/null || true; fi
+  if [ -n "$TCP_VNC_PID" ]; then kill "$TCP_VNC_PID" 2>/dev/null || true; fi
   kill "$XVNC_PID" 2>/dev/null || true
   if [ -n "$DBUS_SYSTEM_BUS_PID" ]; then kill "$DBUS_SYSTEM_BUS_PID" 2>/dev/null || true; fi
   sync

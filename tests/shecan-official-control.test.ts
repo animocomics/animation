@@ -70,3 +70,11 @@ test("official control returns bounded sanitized guest errors without the update
 test("official control rejects non-Shecan update hosts before opening a socket", async () => {
   await assert.rejects(sendOfficialGuestActivation("https://example.com/update", ["178.22.122.101", "185.51.200.1"], { socketPath: "/tmp/must-not-open-nomreh.sock" }), /Invalid isolated/);
 });
+
+test("official guest preserves the validated Xvnc mode and scopes its TCP fallback to the UNIX desktop", () => {
+  const source = fs.readFileSync(path.resolve(__dirname, "../scripts/shecan-vm/official-guest-init.sh"), "utf8");
+  assert.match(source, /-rfbport -1 -rfbunixpath \/tmp\/shecan-vnc\.sock/);
+  assert.doesNotMatch(source, /-rfbport 5900/);
+  assert.match(source, /socat TCP-LISTEN:5900,bind=0\.0\.0\.0,reuseaddr,fork UNIX-CONNECT:\/tmp\/shecan-vnc\.sock/);
+  assert.match(source, /NOMREH_OFFICIAL_VNC_TCP_RELAY_READY/);
+});

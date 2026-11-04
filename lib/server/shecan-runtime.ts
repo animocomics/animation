@@ -22,6 +22,7 @@ export interface OfficialRuntimeStatus {
   markers: string[];
   phase: "not-installed" | "stopped" | "starting" | "ready" | "error";
   startedAt?: string;
+  errorCode?: string;
   message: string;
 }
 
@@ -200,8 +201,17 @@ function consoleTail(): string {
 
 function consoleMarkers(text = consoleTail()): string[] {
   return text.split(/\r?\n/).map((line) => line.trim())
-    .filter((line) => /^NOMREH_(?:OFFICIAL|VNC)_[A-Z0-9_]+$/.test(line))
+    // Markers may carry one fixed diagnostic token, for example
+    // "NOMREH_OFFICIAL_APP_ERROR PROCESS_EXITED". Never return raw guest logs.
+    .filter((line) => /^NOMREH_(?:OFFICIAL|VNC)_[A-Z0-9_]+(?: [A-Z0-9_]+)?$/.test(line))
     .slice(-48);
+}
+
+function runtimeErrorCode(state: RuntimeState, markers: string[]): string | undefined {
+  const marker = [...markers].reverse().find((line) => /(?:^|_)ERROR(?:_|\s|$)/.test(line));
+  const value = marker || state.lastError;
+  if (!value) return undefined;
+  return value.replace(/[^A-Z0-9_ ]/g, "").trim().replace(/ /g, "_").slice(0, 80) || undefined;
 }
 
 function readPid(): number | null {
@@ -253,14 +263,17 @@ export function getOfficialRuntimeStatus(): OfficialRuntimeStatus {
   const state = readState();
   const running = isOurGuest(readPid());
   const supervisorRunning = isOurSupervisor(readSupervisorPid());
-  const markers = running ? consoleTail() : "";
-  const markerList = running ? consoleMarkers(markers) : [];
+  // Preserve the last safe marker after QEMU exits as well. Raw logs are never
+  // returned, and readiness still requires a live, verified QEMU process.
+  const markers = running || state.lastError ? consoleTail() : "";
+  const markerList = markers ? consoleMarkers(markers) : [];
   const appReady = running && markers.includes("NOMREH_OFFICIAL_APP_PROCESS_ALIVE");
   const brokerReady = running && markers.includes("NOMREH_OFFICIAL_AI_BROKER_LISTENING");
   const activationMarkers = markers.split(/\r?\n/).map((line) => line.trim()).filter((marker) => marker === "NOMREH_OFFICIAL_AI_ACTIVATED" || marker === "NOMREH_OFFICIAL_AI_ACTIVATION_FAILED");
   const activationReady = running && appReady && brokerReady && activationMarkers.at(-1) === "NOMREH_OFFICIAL_AI_ACTIVATED";
   const failed = running && /NOMREH_(?:OFFICIAL|VNC)_[A-Z_]*ERROR/.test(markers);
   const ready = appReady && brokerReady && !failed;
+  const errorCode = runtimeErrorCode(state, markerList);
   return {
     installed,
     running,
@@ -271,6 +284,7 @@ export function getOfficialRuntimeStatus(): OfficialRuntimeStatus {
     markers: markerList,
     phase: !installed ? "not-installed" : failed || state.lastError ? "error" : ready ? "ready" : running ? "starting" : "stopped",
     startedAt: state.startedAt,
+    errorCode,
     message: !installed
       ? "بستهٔ رسمی روی سرور نصب نشده است."
       : failed || state.lastError

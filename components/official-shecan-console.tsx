@@ -206,8 +206,9 @@ export function OfficialShecanConsole() {
   }
 
   const starting = runtime?.phase === "starting";
+  const failed = runtime?.phase === "error";
   const ready = Boolean(runtime?.appReady && runtime.brokerReady);
-  const waitingForBoot = starting || busy === "start" || Boolean(runtime?.running && !runtime.appReady);
+  const waitingForBoot = !failed && (starting || busy === "start" || Boolean(runtime?.running && !runtime.appReady));
   const aiReady = Boolean(runtime?.activationReady);
   const officialEnabled = Boolean(network?.enabled && network.transport === "official-vm");
 
@@ -215,7 +216,7 @@ export function OfficialShecanConsole() {
     <div className="official-shecan-heading">
       <span><MonitorUp size={22} /></span>
       <div><h3 id="official-shecan-title">برنامهٔ رسمی شکن در محیط جداگانه</h3><p>این نمایش، خروجی زندهٔ همان برنامهٔ رسمی لینوکس است؛ فرم ورود نمره جایگزین برنامه نیست.</p></div>
-      <span className={`status-badge ${ready && aiReady ? "success" : "neutral"}`}>{ready ? (aiReady ? "در حال اجرا؛ AI فعال" : "در حال اجرا؛ AI در انتظار فعال‌سازی") : starting ? "در حال راه‌اندازی" : "متوقف"}</span>
+      <span className={`status-badge ${ready && aiReady && !failed ? "success" : "neutral"}`}>{failed ? "خطای راه‌اندازی" : ready ? (aiReady ? "در حال اجرا؛ AI فعال" : "در حال اجرا؛ AI در انتظار فعال‌سازی") : starting ? "در حال راه‌اندازی" : "متوقف"}</span>
     </div>
 
     <div className="official-shecan-security"><ShieldCheck size={18} /><p>برنامهٔ رسمی در QEMU جدا اجرا می‌شود و فقط درخواست‌های AI از آن عبور می‌کنند. لینک ذخیره‌شده هنگام فعال‌سازی به‌صورت خودکار و بدون نیاز به تصویر داخل همان محیط اجرا می‌شود؛ DNS هاست تغییر نمی‌کند.</p></div>
@@ -230,9 +231,9 @@ export function OfficialShecanConsole() {
     </div>
 
     {runtime?.installed ? <div className={`official-shecan-screen ${vncConnected ? "connected" : ""}`}>
-      <div className="official-shecan-screen-bar"><span><span className={`live-dot ${vncConnected ? "online" : ""}`} />{vncConnected ? "تصویر زندهٔ برنامهٔ رسمی" : waitingForBoot ? "در حال بوت محیط ایزوله…" : "در انتظار تصویر برنامه…"}</span><button type="button" className="icon-button" aria-label="تمام‌صفحه" onClick={() => void screenRef.current?.requestFullscreen?.()}><Expand size={16} /></button></div>
+      <div className="official-shecan-screen-bar"><span><span className={`live-dot ${vncConnected ? "online" : ""}`} />{vncConnected ? "تصویر زندهٔ برنامهٔ رسمی" : failed ? "راه‌اندازی نیاز به بررسی دارد" : waitingForBoot ? "در حال بوت محیط ایزوله…" : "در انتظار تصویر برنامه…"}</span><button type="button" className="icon-button" aria-label="تمام‌صفحه" onClick={() => void screenRef.current?.requestFullscreen?.()}><Expand size={16} /></button></div>
       <div className="official-shecan-vnc" ref={screenRef} aria-label="محیط گرافیکی زندهٔ برنامهٔ رسمی شکن" />
-      {!vncConnected && <div className="official-shecan-screen-wait">{waitingForBoot ? <LoaderCircle className="spin-icon" size={28} /> : <RefreshCw size={28} />}<span>{waitingForBoot ? "راه‌اندازی برنامه ممکن است چند دقیقه طول بکشد." : runtime?.running ? "اتصال تصویر برقرار نشد؛ اتصال خودکار دوباره تلاش می‌شود." : "محیط متوقف است؛ شروع خودکار انجام می‌شود یا دکمهٔ اجرا را بزنید."}</span></div>}
+      {!vncConnected && <div className="official-shecan-screen-wait">{failed ? <TriangleAlert size={28} /> : waitingForBoot ? <LoaderCircle className="spin-icon" size={28} /> : <RefreshCw size={28} />}<span>{failed ? `${runtime?.message || "راه‌اندازی کامل نشد."} تلاش خودکار ادامه دارد.${runtime?.errorCode ? ` کد خطا: ${runtime.errorCode}` : ""}` : waitingForBoot ? "راه‌اندازی برنامه ممکن است چند دقیقه طول بکشد." : runtime?.running ? "اتصال تصویر برقرار نشد؛ اتصال خودکار دوباره تلاش می‌شود." : "محیط متوقف است؛ شروع خودکار انجام می‌شود یا دکمهٔ اجرا را بزنید."}</span></div>}
     </div> : <div className="official-shecan-not-installed"><TriangleAlert size={20} /><div><strong>بستهٔ رسمی هنوز روی این سرور نصب نشده است</strong><p>هیچ تصویر یا فرم جایگزینی به‌عنوان برنامهٔ رسمی نمایش داده نمی‌شود.</p></div></div>}
 
     <div className={`official-ai-route ${officialEnabled ? "enabled" : ""}`}>

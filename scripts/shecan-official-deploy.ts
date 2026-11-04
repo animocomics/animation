@@ -29,13 +29,22 @@ const delay = (milliseconds: number) => new Promise<void>((resolve) => setTimeou
 
 async function waitForOfficialRuntime() {
   const deadline = Date.now() + 240_000;
+  let lastStage = "";
+  let runtime = getOfficialRuntimeStatus();
   while (Date.now() < deadline) {
-    const runtime = getOfficialRuntimeStatus();
-    if (runtime.appReady && runtime.brokerReady) return runtime;
-    if (runtime.phase === "error") throw new Error("The patched official guest entered its sanitized error state");
+    runtime = getOfficialRuntimeStatus();
+    const stage = runtime.markers.at(-1)?.replace(/ /g, "_");
+    if (stage && stage !== lastStage) {
+      lastStage = stage;
+      console.log(`NOMREH_OFFICIAL_BOOT_STAGE ${stage}`);
+    }
+    if (runtime.appReady && runtime.brokerReady && runtime.phase !== "error") return runtime;
+    if (runtime.phase === "error") {
+      throw new Error(`The patched official guest entered its sanitized error state (${runtime.errorCode || stage || "UNKNOWN_GUEST_ERROR"})`);
+    }
     await delay(2000);
   }
-  throw new Error("The patched official guest did not become app/broker ready in four minutes");
+  throw new Error(`The patched official guest did not become app/broker ready in four minutes (last_stage=${lastStage || "NONE"}, running=${runtime.running ? "yes" : "no"}, supervisor=${runtime.supervisorRunning ? "yes" : "no"})`);
 }
 
 async function main() {
