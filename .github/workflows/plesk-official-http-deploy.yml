@@ -24,20 +24,39 @@ jobs:
           fetch-depth: 0
       - name: Create and verify the bounded application delta
         env:
-          DELTA_FILES: components/official-shecan-console.tsx,components/official-vnc-http-channel.ts,lib/server/provider-config.ts,lib/server/shecan-runtime.ts,scripts/next-server.cjs,scripts/shecan-runtime-watchdog.cjs,scripts/shecan-vnc-http.cjs,scripts/shecan-vnc-websocket.cjs,types/novnc.d.ts
+          DELTA_FILES: components/admin-panel.tsx,components/v2ray-connection.tsx,components/official-shecan-console.tsx,components/official-vnc-http-channel.ts,app/features.css,app/api/admin/v2ray/route.ts,instrumentation.ts,lib/api-network.ts,lib/server/api-network.ts,lib/server/db.ts,lib/server/provider-config.ts,lib/server/provider-network.ts,lib/server/v2ray-config.ts,lib/server/v2ray-runtime.ts,lib/server/shecan-runtime.ts,scripts/next-server.cjs,scripts/shecan-runtime-watchdog.cjs,scripts/shecan-vnc-http.cjs,scripts/shecan-vnc-websocket.cjs,types/novnc.d.ts
         run: |
           set -euo pipefail
-          archive="$RUNNER_TEMP/nomreh-deploy-official-http-v48.zip"
+          archive="$RUNNER_TEMP/nomreh-deploy-official-http-v49.zip"
           git archive --format=zip --output="$archive" "$GITHUB_SHA" $(printf '%s' "$DELTA_FILES" | tr ',' ' ')
-          test "$(unzip -Z1 "$archive" | grep -vc '/$')" -eq 9
+          test "$(unzip -Z1 "$archive" | grep -vc '/$')" -eq 20
           grep -F 'new OfficialVncHttpChannel' components/official-shecan-console.tsx > /dev/null
           grep -F 'handleShecanVncHttp(request, response, port)' scripts/next-server.cjs > /dev/null
           grep -F 'startShecanVncReverseServer();' scripts/next-server.cjs > /dev/null
           grep -F 'socket = await connectDirectVnc(request);' scripts/shecan-vnc-http.cjs > /dev/null
           grep -F 'await authorizeUpgrade(request, applicationPort);' scripts/shecan-vnc-http.cjs > /dev/null
           grep -F 'transport: network.transport' lib/server/provider-config.ts > /dev/null
+          grep -F 'v2rayProviderFetch' lib/server/provider-network.ts > /dev/null
+          grep -F 'parseV2RayConfigList' lib/server/v2ray-config.ts > /dev/null
+          grep -F 'startV2RayActivation' app/api/admin/v2ray/route.ts > /dev/null
           sha256sum "$archive"
           stat -c 'Delta bytes: %s' "$archive"
+      - name: Add the pinned lightweight Xray core without a VM image
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/nomreh-deploy-official-http-v49.zip"
+          mkdir -p "$RUNNER_TEMP/delta/nomreh-v2ray"
+          curl --fail --location --silent --show-error --retry 5 --retry-all-errors \
+            --output "$RUNNER_TEMP/Xray-linux-64.zip" \
+            https://github.com/XTLS/Xray-core/releases/download/v26.10.31/Xray-linux-64.zip
+          printf '%s  %s\n' 'e4bd9119f50ae7c41658b1abd0679ae06f98bd864a2907ff33f2f2cf7081b214' "$RUNNER_TEMP/Xray-linux-64.zip" | sha256sum --check --quiet
+          unzip -q "$RUNNER_TEMP/Xray-linux-64.zip" xray -d "$RUNNER_TEMP/delta/nomreh-v2ray"
+          chmod 0755 "$RUNNER_TEMP/delta/nomreh-v2ray/xray"
+          binary_sha="$(sha256sum "$RUNNER_TEMP/delta/nomreh-v2ray/xray" | awk '{print $1}')"
+          printf '{"format":1,"version":"v26.10.31","sha256":"%s"}\n' "$binary_sha" > "$RUNNER_TEMP/delta/nomreh-v2ray/runtime-manifest.json"
+          (cd "$RUNNER_TEMP/delta" && zip -q -9 -r "$archive" nomreh-v2ray)
+          test "$(unzip -Z1 "$archive" | grep -vc '/$')" -eq 22
+          stat -c 'Delta with Xray bytes: %s' "$archive"
       - name: Prepare an isolated temporary browser
         run: |
           set -euo pipefail
@@ -53,8 +72,8 @@ jobs:
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
           PLESK_BROWSER_ACTION: upload
-          PLESK_ARCHIVE_NAME: nomreh-deploy-official-http-v48.zip
-          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-official-http-v48.zip
+          PLESK_ARCHIVE_NAME: nomreh-deploy-official-http-v49.zip
+          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-official-http-v49.zip
           PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-http-upload.md
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
         run: node scripts/plesk-browser-diagnostics.cjs
@@ -66,9 +85,11 @@ jobs:
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
           PLESK_BROWSER_ACTION: extract
-          PLESK_ARCHIVE_NAME: nomreh-deploy-official-http-v48.zip
+          PLESK_ARCHIVE_NAME: nomreh-deploy-official-http-v49.zip
           PLESK_DELTA_SOURCE: ${{ github.sha }}
-          PLESK_DELTA_FILES: components/official-shecan-console.tsx,components/official-vnc-http-channel.ts,lib/server/provider-config.ts,lib/server/shecan-runtime.ts,scripts/next-server.cjs,scripts/shecan-runtime-watchdog.cjs,scripts/shecan-vnc-http.cjs,scripts/shecan-vnc-websocket.cjs,types/novnc.d.ts
+          PLESK_DELTA_FILES: components/admin-panel.tsx,components/v2ray-connection.tsx,components/official-shecan-console.tsx,components/official-vnc-http-channel.ts,app/features.css,app/api/admin/v2ray/route.ts,instrumentation.ts,lib/api-network.ts,lib/server/api-network.ts,lib/server/db.ts,lib/server/provider-config.ts,lib/server/provider-network.ts,lib/server/v2ray-config.ts,lib/server/v2ray-runtime.ts,lib/server/shecan-runtime.ts,scripts/next-server.cjs,scripts/shecan-runtime-watchdog.cjs,scripts/shecan-vnc-http.cjs,scripts/shecan-vnc-websocket.cjs,types/novnc.d.ts
+          PLESK_DELTA_EXTRA_FILES: nomreh-v2ray/xray,nomreh-v2ray/runtime-manifest.json
+          PLESK_DELTA_EXTRA_ROOT: ${{ runner.temp }}/delta
           PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-http-extract.md
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
         run: node scripts/plesk-browser-diagnostics.cjs

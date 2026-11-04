@@ -16,5 +16,5 @@ export interface ProviderNetworkConfig {
   plan: "free" | "pro";
   servers: [string, string];
   /** Official desktop guest is opt-in; legacy DNS remains only for compatibility. */
-  transport?: "dns" | "official-vm";
+  transport?: "dns" | "official-vm" | "v2ray";
 }

@@ -901,3 +901,25 @@ test.after(() => {
   try { (globalThis as typeof globalThis & { __nomrehDatabase?: { close: () => void } }).__nomrehDatabase?.close(); } catch { /* already closed */ }
   rmSync(dataDirectory, { recursive: true, force: true });
 });
+
+test("V2Ray provider failures never fall through to direct fetch, while unrelated traffic stays untouched", async () => {
+  const originalFetch = globalThis.fetch;
+  let directCalls = 0;
+  globalThis.fetch = async () => {
+    directCalls += 1;
+    return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const network = { enabled: true, plan: "pro" as const, transport: "v2ray" as const, servers: ["127.0.0.1", "127.0.0.1"] as [string, string] };
+  try {
+    await assert.rejects(
+      providerFetch("https://generativelanguage.googleapis.com/v1beta/models", {}, network),
+      (error: unknown) => error instanceof ProviderNetworkError && error.stage === "connection",
+    );
+    assert.equal(directCalls, 0, "an unavailable selected V2Ray runtime must not send the provider request directly");
+    const unrelated = await providerFetch("https://example.com/health", {}, network);
+    assert.equal(unrelated.status, 200);
+    assert.equal(directCalls, 1, "non-provider application traffic must not be forced through Xray");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

@@ -71,6 +71,29 @@ function createDatabase(): DatabaseConnection {
       updated_at TEXT NOT NULL,
       updated_by TEXT REFERENCES users(id)
     );
+    CREATE TABLE IF NOT EXISTS v2ray_settings (
+      id INTEGER PRIMARY KEY CHECK(id = 1),
+      enabled INTEGER NOT NULL DEFAULT 0,
+      selected_config_id TEXT,
+      last_test_status TEXT NOT NULL DEFAULT 'idle',
+      last_test_message TEXT NOT NULL DEFAULT '',
+      last_tested_at TEXT,
+      updated_at TEXT NOT NULL,
+      updated_by TEXT REFERENCES users(id)
+    );
+    CREATE TABLE IF NOT EXISTS v2ray_configs (
+      id TEXT PRIMARY KEY,
+      slot INTEGER NOT NULL,
+      protocol TEXT NOT NULL,
+      encrypted_config TEXT NOT NULL,
+      fingerprint TEXT NOT NULL UNIQUE,
+      last_test_status TEXT NOT NULL DEFAULT 'idle',
+      last_latency_ms INTEGER,
+      last_tested_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_v2ray_configs_slot ON v2ray_configs(slot);
     CREATE TABLE IF NOT EXISTS workspaces (
       user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
       data_json TEXT NOT NULL,

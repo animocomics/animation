@@ -204,6 +204,15 @@ export async function providerFetch(
     if (!network?.enabled && isProviderHostname(hostname)) closeProviderNetwork();
     return fetch(url, init);
   }
+  if (network.transport === "v2ray") {
+    try {
+      const { v2rayProviderFetch } = await import("./v2ray-runtime");
+      return await v2rayProviderFetch(url, init);
+    } catch (error) {
+      if (error instanceof ProviderNetworkError) throw error;
+      throw new ProviderNetworkError("ارتباط AI از کانفیگ V2Ray برقرار نشد؛ درخواست مستقیم یا از مسیر شکن ارسال نشد.", "connection", { cause: error });
+    }
+  }
   if (network.transport === "official-vm") {
     try {
       const dispatcher = await officialProviderAgent();

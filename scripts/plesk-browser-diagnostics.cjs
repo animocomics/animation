@@ -21,19 +21,29 @@ const RUNTIME_RUNNER = OFFICIAL_RUNTIME_ARCHIVE ? "run-official.sh" : "run-probe
 const OUTPUT = process.env.PLESK_DIAGNOSTICS_OUTPUT || path.join(os.tmpdir(), "nomreh-plesk-browser-diagnostics.md");
 const DELTA_SOURCE = process.env.PLESK_DELTA_SOURCE || "";
 const DELTA_FILES = (process.env.PLESK_DELTA_FILES || "").split(",").map((item) => item.trim()).filter(Boolean);
-if (ACTION === "extract" && (DELTA_SOURCE || DELTA_FILES.length)) {
-  if (!/^[a-f0-9]{40}$/.test(DELTA_SOURCE) || !DELTA_FILES.length || DELTA_FILES.length > 20) throw new Error("The validated runtime delta manifest is incomplete.");
-  for (const file of DELTA_FILES) {
+const DELTA_EXTRA_FILES = (process.env.PLESK_DELTA_EXTRA_FILES || "").split(",").map((item) => item.trim()).filter(Boolean);
+const DELTA_EXTRA_ROOT = process.env.PLESK_DELTA_EXTRA_ROOT || "";
+if (ACTION === "extract" && (DELTA_SOURCE || DELTA_FILES.length || DELTA_EXTRA_FILES.length)) {
+  if (!/^[a-f0-9]{40}$/.test(DELTA_SOURCE) || !DELTA_FILES.length || DELTA_FILES.length + DELTA_EXTRA_FILES.length > 40) throw new Error("The validated runtime delta manifest is incomplete.");
+  for (const file of [...DELTA_FILES, ...DELTA_EXTRA_FILES]) {
     if (!/^[a-z0-9_./-]+$/i.test(file) || file.startsWith("/") || file.split("/").includes("..")) throw new Error("The validated runtime delta contains an unsafe path.");
   }
+  if (DELTA_EXTRA_FILES.length && (!DELTA_EXTRA_ROOT || !fs.existsSync(DELTA_EXTRA_ROOT))) throw new Error("The validated extra runtime files are unavailable.");
 }
 const EXPECTED_DELTA = ACTION === "extract" && DELTA_SOURCE
-  ? DELTA_FILES.map((file) => ({
-      file,
-      // The pinned SWC WASM tarball is about 6.6 MiB; retain a bounded 32 MiB
-      // per-file manifest limit instead of rejecting verified binary dependencies.
-      sha256: crypto.createHash("sha256").update(execFileSync("git", ["show", `${DELTA_SOURCE}:${file}`], { maxBuffer: 32 * 1024 * 1024 })).digest("hex"),
-    }))
+  ? [
+      ...DELTA_FILES.map((file) => ({
+        file,
+        // The pinned SWC WASM tarball is about 6.6 MiB; retain a bounded 32 MiB
+        // per-file manifest limit instead of rejecting verified binary dependencies.
+        sha256: crypto.createHash("sha256").update(execFileSync("git", ["show", `${DELTA_SOURCE}:${file}`], { maxBuffer: 32 * 1024 * 1024 })).digest("hex"),
+      })),
+      ...DELTA_EXTRA_FILES.map((file) => {
+        const target = path.resolve(DELTA_EXTRA_ROOT, file);
+        if (!target.startsWith(`${path.resolve(DELTA_EXTRA_ROOT)}${path.sep}`)) throw new Error("The extra runtime path escapes its validated root.");
+        return { file, sha256: crypto.createHash("sha256").update(fs.readFileSync(target)).digest("hex") };
+      }),
+    ]
   : [];
 
 function sanitize(value) {
@@ -1555,7 +1565,7 @@ async function main() {
                 await page.waitForTimeout(400);
                 const downloadChoice = page.locator("a:visible, button:visible").filter({ hasText: /^Download$/i }).first();
                 if (!await downloadChoice.count()) throw new Error(`Download was not available for ${expected.file} hash verification.`);
-                const downloadPromise = page.waitForEvent("download", { timeout: 10000 }).catch(() => null);
+                const downloadPromise = page.waitForEvent("download", { timeout: 60000 }).catch(() => null);
                 await downloadChoice.click({ timeout: 8000 }).catch(async () => {
                   await downloadChoice.evaluate((element) => element.click());
                 });
@@ -1599,7 +1609,7 @@ async function main() {
                 await page.waitForTimeout(400);
                 const downloadChoice = page.locator("a:visible, button:visible").filter({ hasText: /^Download$/i }).first();
                 if (!await downloadChoice.count()) throw new Error("Download was not available for isolated probe hash verification.");
-                const downloadPromise = page.waitForEvent("download", { timeout: 10000 }).catch(() => null);
+                const downloadPromise = page.waitForEvent("download", { timeout: 60000 }).catch(() => null);
                 await downloadChoice.click({ timeout: 8000 }).catch(async () => {
                   await downloadChoice.evaluate((element) => element.click());
                 });

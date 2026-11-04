@@ -848,6 +848,10 @@ export async function saveAndTestApiNetwork(
       SET update_url_source='manual', selected_order_id=NULL, selected_order_label='', selected_order_due='' WHERE id=1`).run();
   }
   if (!enabled) closeProviderNetwork();
+  if (enabled) {
+    const { disableV2Ray } = await import("./v2ray-runtime");
+    await disableV2Ray(userId);
+  }
   if (failure) {
     if (failure instanceof ApiNetworkError || failure instanceof ProviderNetworkError) throw failure;
     if (failure instanceof Error && failure.name === "TimeoutError") throw new ApiNetworkError("آزمایش اتصال بیش از حد طول کشید؛ شکن خاموش ماند و درخواست‌های AI همچنان مستقیم ارسال می‌شوند.", 504);

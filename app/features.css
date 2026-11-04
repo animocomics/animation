@@ -218,6 +218,26 @@
 .official-shecan-link-fallback p { color:var(--muted); font-size:9px; line-height:1.85; }
 .official-shecan-link-fallback .btn { justify-self:start; }
 
+.v2ray-connection { display:grid; gap:14px; }
+.v2ray-heading { display:flex; align-items:flex-start; gap:10px; }
+.v2ray-heading h3 { font-size:13px; }
+.v2ray-heading p { margin-top:4px; color:var(--muted); font-size:10px; line-height:1.85; }
+.v2ray-config-input { min-height:132px; resize:vertical; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:11px; line-height:1.8; direction:ltr; text-align:left; }
+.v2ray-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.v2ray-status { display:grid; gap:12px; padding:13px; border:1px solid var(--line); border-radius:12px; background:#fafbfa; }
+.v2ray-status-summary { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.v2ray-status-summary small { color:var(--muted); font-size:9px; line-height:1.8; }
+.v2ray-status-summary small:last-child { margin-right:auto; }
+.v2ray-config-list { display:grid; gap:6px; max-height:280px; overflow:auto; }
+.v2ray-config-row { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 10px; border:1px solid var(--line); border-radius:9px; background:#fff; }
+.v2ray-config-row.selected { border-color:#bcdcc8; background:#f3faf5; }
+.v2ray-config-row > span:first-child { display:flex; align-items:center; gap:9px; }
+.v2ray-config-row strong { font-size:10px; }.v2ray-config-row small { color:var(--muted); font-size:9px; }
+.v2ray-config-row .status-badge { font-size:8px; white-space:nowrap; }
+.v2ray-error { display:flex; align-items:flex-start; gap:7px; padding:10px 12px; border:1px solid #efcfc9; border-radius:10px; color:var(--danger); background:#fff7f5; font-size:10px; line-height:1.8; }
+.v2ray-clear { justify-self:start; color:var(--danger); }
+@media (max-width:640px) { .v2ray-actions { align-items:stretch; flex-direction:column; }.v2ray-actions .btn { width:100%; justify-content:center; }.v2ray-config-row { align-items:flex-start; flex-direction:column; }.v2ray-status-summary small:last-child { margin-right:0; } }
+
 @media (max-width:1200px) {
   .admin-stat-grid { grid-template-columns:1fr 1fr; }
   .classes-layout { grid-template-columns:210px minmax(0,1fr); }

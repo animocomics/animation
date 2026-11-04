@@ -32,6 +32,9 @@ export async function getProviderStatus(includeKeyHint = false): Promise<Provide
 
 export async function getProviderNetworkConfig(): Promise<ProviderNetworkConfig> {
   try {
+    const { getV2RayNetworkConfig } = await import("./v2ray-runtime");
+    const v2ray = await getV2RayNetworkConfig();
+    if (v2ray) return v2ray;
     const network = await getApiNetworkConfig();
     if (network.enabled) await ensureApiNetworkActivated(network);
     return { enabled: network.enabled, plan: network.plan, servers: network.servers, transport: network.transport };
