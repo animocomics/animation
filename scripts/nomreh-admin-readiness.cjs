@@ -5,8 +5,10 @@ const fs = require("node:fs");
 const { chromium } = require("playwright");
 const { normalizePanelUrl } = require("./plesk-api-diagnostics.cjs");
 
-const ORIGIN = "https://nomreh.arounidea.com";
-const DOMAIN = "nomreh.arounidea.com";
+// The default remains production; an explicit loopback origin is useful for
+// the same authenticated readiness checks against the isolated Windows preview.
+const ORIGIN = new URL(process.env.NOMREH_E2E_ORIGIN || "https://nomreh.arounidea.com").origin;
+const DOMAIN = new URL(ORIGIN).hostname;
 const OUTPUT = process.env.NOMREH_E2E_OUTPUT || "";
 const lines = ["# Nomreh admin login and configuration readiness", "", "This check uses the authorized demo account, the publicly offered initial account, or existing configured admin credentials in memory. It never prints credentials or session cookies and does not save API settings. With the separate official-runtime validation flag it may start the isolated guest, but never submits login, OTP, update links, or provider traffic.", ""];
 let browser;
@@ -517,6 +519,32 @@ async function logout() {
   }
 }
 
+async function readOfficialCanvasFrame(canvas) {
+  return canvas.evaluate(async (element) => {
+    const canvasElement = element;
+    const context2d = canvasElement.getContext("2d");
+    if (!context2d) throw new Error("The live official canvas has no readable 2D framebuffer.");
+    const width = canvasElement.width;
+    const height = canvasElement.height;
+    const pixels = context2d.getImageData(0, 0, width, height).data;
+    const colors = new Set();
+    let minimum = 255;
+    let maximum = 0;
+    for (let index = 0; index < pixels.length; index += 4) {
+      const red = pixels[index];
+      const green = pixels[index + 1];
+      const blue = pixels[index + 2];
+      if (colors.size < 4096) colors.add((red << 16) | (green << 8) | blue);
+      const luminance = Math.round((red + green + blue) / 3);
+      minimum = Math.min(minimum, luminance);
+      maximum = Math.max(maximum, luminance);
+    }
+    const digest = await crypto.subtle.digest("SHA-256", pixels);
+    const hash = Array.from(new Uint8Array(digest)).map((value) => value.toString(16).padStart(2, "0")).join("");
+    return { width, height, colors: colors.size, luminanceRange: maximum - minimum, hash };
+  });
+}
+
 async function officialRuntimeReadiness(page, validateOfficialRuntime) {
   const networkResponse = await context.request.get(`${ORIGIN}/api/admin/api-network`);
   const networkPayload = await networkResponse.json();
@@ -552,6 +580,20 @@ async function officialRuntimeReadiness(page, validateOfficialRuntime) {
       currentRuntime = payload.runtime;
     }
     if (currentRuntime.supervisorRunning !== true) throw new Error("The independent official runtime supervisor did not become active.");
+    if (currentRuntime.applicationKind === "windows" || currentRuntime.displayTransport === "cdp-screencast") {
+      lines.push("- The genuine Windows application and its loopback AI broker are ready; the independent always-on supervisor is active. No login, OTP, update-link, or provider request was submitted.");
+      lines.push(`- Windows runtime safe markers: ${clean((currentRuntime.markers || []).filter((marker) => /^NOMREH_WINDOWS_/.test(marker)).join(" | ") || "none")}.`);
+      await page.goto(`${ORIGIN}/admin`, { waitUntil: "domcontentloaded", timeout: 30000 });
+      const connected = await page.locator(".official-shecan-screen.connected").waitFor({ state: "visible", timeout: 120_000 }).then(() => true).catch(() => false);
+      if (!connected) throw new Error("The authenticated Windows CDP console did not reach its connected state.");
+      const canvas = page.locator(".official-shecan-vnc canvas").first();
+      await canvas.waitFor({ state: "visible", timeout: 30_000 });
+      await page.waitForTimeout(2500);
+      const frame = await readOfficialCanvasFrame(canvas);
+      if (frame.width < 400 || frame.height < 500 || frame.colors < 16 || frame.luminanceRange < 24) throw new Error(`The live admin Windows framebuffer did not pass diversity checks: ${JSON.stringify(frame)}`);
+      lines.push(`- Authenticated admin Windows CDP framebuffer passed: ${frame.width}x${frame.height}; colors=${frame.colors}; luminance-range=${frame.luminanceRange}; SHA-256=${frame.hash}.`);
+      return;
+    }
     lines.push("- The isolated official guest reported its real app and loopback AI broker ready; the independent always-on supervisor is active. No login, OTP, update-link, or provider request was submitted.");
     const reverseMarkers = officialTransportMarkers(currentRuntime);
     lines.push(`- Official guest safe markers: ${clean(reverseMarkers.join(" | ") || "none")}.`);
@@ -601,36 +643,15 @@ async function officialRuntimeReadiness(page, validateOfficialRuntime) {
     const canvas = page.locator(".official-shecan-vnc canvas").first();
     await canvas.waitFor({ state: "visible", timeout: 30_000 });
     await page.waitForTimeout(2500);
-    const frame = await canvas.evaluate(async (element) => {
-      const canvasElement = element;
-      const context2d = canvasElement.getContext("2d");
-      if (!context2d) throw new Error("The live VNC canvas has no readable 2D framebuffer.");
-      const width = canvasElement.width;
-      const height = canvasElement.height;
-      const pixels = context2d.getImageData(0, 0, width, height).data;
-      const colors = new Set();
-      let minimum = 255;
-      let maximum = 0;
-      for (let index = 0; index < pixels.length; index += 4) {
-        const red = pixels[index];
-        const green = pixels[index + 1];
-        const blue = pixels[index + 2];
-        if (colors.size < 4096) colors.add((red << 16) | (green << 8) | blue);
-        const luminance = Math.round((red + green + blue) / 3);
-        minimum = Math.min(minimum, luminance);
-        maximum = Math.max(maximum, luminance);
-      }
-      const digest = await crypto.subtle.digest("SHA-256", pixels);
-      const hash = Array.from(new Uint8Array(digest)).map((value) => value.toString(16).padStart(2, "0")).join("");
-      return { width, height, colors: colors.size, luminanceRange: maximum - minimum, hash };
-    });
+    const frame = await readOfficialCanvasFrame(canvas);
     if (frame.width < 800 || frame.height < 600 || frame.colors < 16 || frame.luminanceRange < 24) throw new Error(`The live admin VNC framebuffer did not pass diversity checks: ${JSON.stringify(frame)}`);
     lines.push(`- Authenticated admin noVNC framebuffer passed: ${frame.width}x${frame.height}; colors=${frame.colors}; luminance-range=${frame.luminanceRange}; SHA-256=${frame.hash}.`);
   }
 }
 
 async function main() {
-  browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
+  const executablePath = process.env.NOMREH_E2E_CHROMIUM_EXECUTABLE || undefined;
+  browser = await chromium.launch({ headless: true, args: ["--no-sandbox"], ...(executablePath ? { executablePath } : {}) });
   context = await browser.newContext({ ignoreHTTPSErrors: false, viewport: { width: 1440, height: 1000 } });
   const page = await context.newPage();
   page.setDefaultTimeout(20000);
@@ -766,7 +787,7 @@ async function main() {
 
   if (process.env.NOMREH_OFFICIAL_ONLY === "1") {
     await officialRuntimeReadiness(page, true);
-    await page.getByText("برنامهٔ رسمی شکن در محیط جداگانه", { exact: true }).waitFor({ state: "visible" });
+    await page.locator("#official-shecan-title").waitFor({ state: "visible" });
     await page.getByText("لینک به‌روزرسان و روش دستی", { exact: false }).waitFor({ state: "visible" });
     if (await page.locator("#shecan-account-identifier, #shecan-otp-code").count()) throw new Error("The rejected substitute OTP form is still present in the admin UI.");
     lines.push("- The authenticated admin displayed the genuine official application and preserved the manual-link fallback; no substitute OTP form was present.", "- Official-only validation complete. No provider request, Shecan login/OTP, update link, AI activation, or grading job was submitted.", "");
@@ -938,7 +959,7 @@ async function main() {
 
   const validateOfficialRuntime = process.env.NOMREH_VALIDATE_OFFICIAL_RUNTIME === "1";
   await officialRuntimeReadiness(page, validateOfficialRuntime);
-  await page.getByText("برنامهٔ رسمی شکن در محیط جداگانه", { exact: true }).waitFor({ state: "visible" });
+  await page.locator("#official-shecan-title").waitFor({ state: "visible" });
   await page.getByText("لینک به‌روزرسان و روش دستی", { exact: false }).waitFor({ state: "visible" });
   if (await page.locator("#shecan-account-identifier, #shecan-otp-code").count()) throw new Error("The rejected substitute OTP form is still present in the admin UI.");
   lines.push("- The admin mounts the genuine remote-application console and preserves the manual update-link fallback; the substitute OTP form is absent.", validateOfficialRuntime
@@ -992,7 +1013,7 @@ async function main() {
   await logout();
   await testTeacherAccess();
   lines.push("", "## Result", "", validateOfficialRuntime
-    ? "Real admin login and the authenticated live official-Shecan noVNC framebuffer passed, alongside management APIs, model controls and teacher boundaries. No Shecan login/OTP, update-link submission, provider request, AI activation, or grading job was performed."
+    ? "Real admin login and the authenticated live official-Shecan application framebuffer passed, alongside management APIs, model controls and teacher boundaries. No Shecan login/OTP, update-link submission, provider request, AI activation, or grading job was performed."
     : "Real admin login, management-only routes and APIs, legacy-preserving account-model discovery, manual model entry, GLM 5.3 Flash, the official Shecan remote-console surface, teacher workspace/review scoring, and teacher access boundaries are operational. Runtime start/stop, external provider-key validity and Shecan activation were not changed or tested; no real grading job was run without a configured provider.");
 }
 

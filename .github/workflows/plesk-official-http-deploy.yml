@@ -1,6 +1,6 @@
 name: Deploy the official app HTTP console transport
 
-# v56 also carries the bounded Xray child reaper and sanitized launcher errors.
+# v57 also carries the bounded Xray child reaper and sanitized launcher errors.
 
 on:
   push:
@@ -26,15 +26,18 @@ jobs:
           fetch-depth: 0
       - name: Create and verify the bounded application delta
         env:
-          DELTA_FILES: components/admin-panel.tsx,components/v2ray-connection.tsx,components/official-shecan-console.tsx,components/official-vnc-http-channel.ts,app/features.css,app/api/admin/v2ray/route.ts,app/api/admin/shecan-runtime/route.ts,instrumentation.ts,lib/api-network.ts,lib/server/api-network.ts,lib/server/db.ts,lib/server/provider-config.ts,lib/server/provider-network.ts,lib/server/v2ray-config.ts,lib/server/v2ray-runtime.ts,lib/server/shecan-runtime.ts,scripts/next-server.cjs,scripts/plesk-node22.cjs,scripts/shecan-official-deploy.ts,scripts/shecan-runtime-watchdog.cjs,scripts/shecan-vm/official-guest-init.sh,scripts/shecan-vm/patch-official-runtime.cjs,scripts/shecan-vm/run-official.sh,scripts/shecan-vnc-http.cjs,scripts/shecan-vnc-websocket.cjs,types/novnc.d.ts
+          DELTA_FILES: components/admin-panel.tsx,components/v2ray-connection.tsx,components/official-shecan-console.tsx,components/official-vnc-http-channel.ts,components/shecan-windows-screen.tsx,app/features.css,app/api/admin/v2ray/route.ts,app/api/admin/shecan-runtime/route.ts,app/api/admin/shecan-runtime/windows-frame/route.ts,app/api/admin/shecan-runtime/windows-input/route.ts,instrumentation.ts,lib/api-network.ts,lib/server/api-network.ts,lib/server/db.ts,lib/server/provider-config.ts,lib/server/provider-network.ts,lib/server/v2ray-config.ts,lib/server/v2ray-runtime.ts,lib/server/shecan-runtime.ts,lib/server/shecan-windows-runtime.ts,scripts/next-server.cjs,scripts/nomreh-admin-readiness.cjs,scripts/plesk-node22.cjs,scripts/shecan-official-deploy.ts,scripts/shecan-runtime-watchdog.cjs,scripts/shecan-vm/official-guest-init.sh,scripts/shecan-vm/patch-official-runtime.cjs,scripts/shecan-vm/run-official.sh,scripts/shecan-vm/live-preview.mjs,scripts/shecan-vm/windows-supervisor.mjs,scripts/shecan-vm/windows-ai-broker.mjs,scripts/shecan-vm/preview-smoke.mjs,scripts/shecan-vm/finalize-windows-runtime.mjs,scripts/shecan-vm/patch-wine-udp.py,scripts/shecan-vm/WINDOWS.md,scripts/shecan-vnc-http.cjs,scripts/shecan-vnc-websocket.cjs,types/novnc.d.ts
         run: |
           set -euo pipefail
-          archive="$RUNNER_TEMP/nomreh-deploy-official-http-v56.zip"
+          archive="$RUNNER_TEMP/nomreh-deploy-official-http-v57.zip"
           git archive --format=zip --output="$archive" "$GITHUB_SHA" $(printf '%s' "$DELTA_FILES" | tr ',' ' ')
-          test "$(unzip -Z1 "$archive" | grep -vc '/$')" -eq 26
+          test "$(unzip -Z1 "$archive" | grep -vc '/$')" -eq 38
           grep -F 'new OfficialVncHttpChannel' components/official-shecan-console.tsx > /dev/null
           grep -F 'handleShecanVncHttp(request, response, port)' scripts/next-server.cjs > /dev/null
           grep -F 'startShecanVncReverseServer();' scripts/next-server.cjs > /dev/null
+          grep -F 'ShecanWindowsScreen' components/shecan-windows-screen.tsx > /dev/null
+          grep -F 'isWindowsRuntimeInstalled' scripts/shecan-official-deploy.ts > /dev/null
+          grep -F 'readBrokerStatus' lib/server/shecan-windows-runtime.ts > /dev/null
           grep -F 'socket = await connectDirectVnc(request);' scripts/shecan-vnc-http.cjs > /dev/null
           grep -F 'await authorizeUpgrade(request, applicationPort);' scripts/shecan-vnc-http.cjs > /dev/null
           grep -F 'transport: network.transport' lib/server/provider-config.ts > /dev/null
@@ -58,7 +61,7 @@ jobs:
       - name: Add the pinned lightweight Xray core without a VM image
         run: |
           set -euo pipefail
-          archive="$RUNNER_TEMP/nomreh-deploy-official-http-v56.zip"
+          archive="$RUNNER_TEMP/nomreh-deploy-official-http-v57.zip"
           mkdir -p "$RUNNER_TEMP/delta/nomreh-v2ray"
           curl --fail --location --silent --show-error --retry 5 --retry-all-errors \
             --output "$RUNNER_TEMP/Xray-linux-64.zip" \
@@ -69,7 +72,7 @@ jobs:
           binary_sha="$(sha256sum "$RUNNER_TEMP/delta/nomreh-v2ray/xray" | awk '{print $1}')"
           printf '{"format":1,"version":"v26.10.31","sha256":"%s"}\n' "$binary_sha" > "$RUNNER_TEMP/delta/nomreh-v2ray/runtime-manifest.json"
           (cd "$RUNNER_TEMP/delta" && zip -q -9 -r "$archive" nomreh-v2ray)
-          test "$(unzip -Z1 "$archive" | grep -vc '/$')" -eq 28
+          test "$(unzip -Z1 "$archive" | grep -vc '/$')" -eq 40
           stat -c 'Delta with Xray bytes: %s' "$archive"
       - name: Prepare an isolated temporary browser
         run: |
@@ -86,8 +89,8 @@ jobs:
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
           PLESK_BROWSER_ACTION: upload
-          PLESK_ARCHIVE_NAME: nomreh-deploy-official-http-v56.zip
-          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-official-http-v56.zip
+          PLESK_ARCHIVE_NAME: nomreh-deploy-official-http-v57.zip
+          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-official-http-v57.zip
           PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-http-upload.md
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
         run: node scripts/plesk-browser-diagnostics.cjs
@@ -99,9 +102,9 @@ jobs:
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
           PLESK_BROWSER_ACTION: extract
-          PLESK_ARCHIVE_NAME: nomreh-deploy-official-http-v56.zip
+          PLESK_ARCHIVE_NAME: nomreh-deploy-official-http-v57.zip
           PLESK_DELTA_SOURCE: ${{ github.sha }}
-          PLESK_DELTA_FILES: components/admin-panel.tsx,components/v2ray-connection.tsx,components/official-shecan-console.tsx,components/official-vnc-http-channel.ts,app/features.css,app/api/admin/v2ray/route.ts,app/api/admin/shecan-runtime/route.ts,instrumentation.ts,lib/api-network.ts,lib/server/api-network.ts,lib/server/db.ts,lib/server/provider-config.ts,lib/server/provider-network.ts,lib/server/v2ray-config.ts,lib/server/v2ray-runtime.ts,lib/server/shecan-runtime.ts,scripts/next-server.cjs,scripts/plesk-node22.cjs,scripts/shecan-official-deploy.ts,scripts/shecan-runtime-watchdog.cjs,scripts/shecan-vm/official-guest-init.sh,scripts/shecan-vm/patch-official-runtime.cjs,scripts/shecan-vm/run-official.sh,scripts/shecan-vnc-http.cjs,scripts/shecan-vnc-websocket.cjs,types/novnc.d.ts
+          PLESK_DELTA_FILES: components/admin-panel.tsx,components/v2ray-connection.tsx,components/official-shecan-console.tsx,components/official-vnc-http-channel.ts,components/shecan-windows-screen.tsx,app/features.css,app/api/admin/v2ray/route.ts,app/api/admin/shecan-runtime/route.ts,app/api/admin/shecan-runtime/windows-frame/route.ts,app/api/admin/shecan-runtime/windows-input/route.ts,instrumentation.ts,lib/api-network.ts,lib/server/api-network.ts,lib/server/db.ts,lib/server/provider-config.ts,lib/server/provider-network.ts,lib/server/v2ray-config.ts,lib/server/v2ray-runtime.ts,lib/server/shecan-runtime.ts,lib/server/shecan-windows-runtime.ts,scripts/next-server.cjs,scripts/nomreh-admin-readiness.cjs,scripts/plesk-node22.cjs,scripts/shecan-official-deploy.ts,scripts/shecan-runtime-watchdog.cjs,scripts/shecan-vm/official-guest-init.sh,scripts/shecan-vm/patch-official-runtime.cjs,scripts/shecan-vm/run-official.sh,scripts/shecan-vm/live-preview.mjs,scripts/shecan-vm/windows-supervisor.mjs,scripts/shecan-vm/windows-ai-broker.mjs,scripts/shecan-vm/preview-smoke.mjs,scripts/shecan-vm/finalize-windows-runtime.mjs,scripts/shecan-vm/patch-wine-udp.py,scripts/shecan-vm/WINDOWS.md,scripts/shecan-vnc-http.cjs,scripts/shecan-vnc-websocket.cjs,types/novnc.d.ts
           PLESK_DELTA_EXTRA_FILES: nomreh-v2ray/xray,nomreh-v2ray/runtime-manifest.json
           PLESK_DELTA_EXTRA_ROOT: ${{ runner.temp }}/delta
           PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-http-extract.md

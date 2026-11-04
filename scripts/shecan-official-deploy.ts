@@ -5,6 +5,7 @@ import {
   startOfficialRuntime,
   stopOfficialRuntime,
 } from "../lib/server/shecan-runtime";
+import { isWindowsRuntimeInstalled } from "../lib/server/shecan-windows-runtime";
 import { activateOfficialShecanFromStoredLink, getApiNetworkStatus } from "../lib/server/api-network";
 
 const require = createRequire(import.meta.url);
@@ -55,28 +56,35 @@ async function main() {
     console.log("NOMREH_OFFICIAL_DEPLOY_SKIPPED manager_selection_unchanged");
     return;
   }
-  const transaction = await prepareOfficialHeadlessRuntime();
-  if (!transaction.installed) {
+  const windows = isWindowsRuntimeInstalled();
+  const transaction = windows ? null : await prepareOfficialHeadlessRuntime();
+  if (!windows && !transaction?.installed) {
     throw new Error("Official Shecan mode is selected but its verified runtime is not installed; no AI route was enabled");
   }
   try {
-    // Validate exactly one patched boot. The live watchdog is suspended by a
-    // PID lease so it cannot erase this boot's logs or race the rollback.
-    if (transaction.patched) await restartOfficialRuntime({ supervise: false });
-    else await startOfficialRuntime({ supervise: false });
+    if (windows) {
+      // The Windows supervisor owns the genuine app, CDP viewer and Bun broker;
+      // no initramfs patch, QEMU boot or noVNC validation is involved.
+      await startOfficialRuntime();
+    } else if (transaction?.patched) {
+      // Validate exactly one patched legacy boot while its watchdog is suspended.
+      await restartOfficialRuntime({ supervise: false });
+    } else {
+      await startOfficialRuntime({ supervise: false });
+    }
     await waitForOfficialRuntime();
   } catch (error) {
-    if (transaction.patched) {
+    if (!windows && transaction?.patched) {
       await stopOfficialRuntime().catch(() => undefined);
       rollbackHeadlessRuntime(transaction);
       await startOfficialRuntime().catch(() => undefined);
     }
     throw error;
   }
-  commitHeadlessRuntime(transaction);
-  // Resume always-on supervision only after the single real boot has passed.
+  if (transaction) commitHeadlessRuntime(transaction);
+  // Resume always-on supervision only after the real runtime has passed.
   await startOfficialRuntime();
-  console.log("NOMREH_OFFICIAL_APP_READY headless_control=yes vnc_required=no");
+  console.log(`NOMREH_OFFICIAL_APP_READY transport=${windows ? "windows-cdp" : "headless"} vnc_required=no`);
 
   const status = await activateOfficialShecanFromStoredLink();
   if (status.transport !== "official-vm") {

@@ -77,7 +77,7 @@ Validated on the isolated Linux display:
 4. The authenticated admin check reported `SHECAN_ADMIN_WINDOWS_SMOKE_OK form=1 filled=true websocket=true http=true authorized=true anonymous_rejected=true`.
 5. After temporary downloads/build directories were removed, cold start and a deliberate application restart both returned to ready and two consecutive smoke checks passed. The pre-broker runtime measured 2,078,273,581 bytes; no `/usr/bin/xkbcomp` dependency is used.
 6. The independent Windows WGL test reported OpenGL 4.6, Mesa 26.1.8, llvmpipe (LLVM 23.1.1).
-7. With the broker installed and its test staging removed, the runtime measures 2,194,953,475 bytes. The enumerated download record is 1,732,505,061 bytes plus a separately recorded 23,653,966-byte npm cache; it is not a complete historical network counter.
+7. With the broker installed and its test staging removed, the runtime measures 2,194,953,475 bytes. The runtime artifact download record is 1,732,505,061 bytes; including the later 76,630,490-byte Playwright/Chromium validation artifacts, the enumerated total is 1,809,135,551 bytes, plus a separately recorded 23,653,966-byte npm cache. This is an enumerated artifact record, not a complete historical network counter.
 
 ## Native module rebuilds and hashes
 
