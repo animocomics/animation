@@ -64,6 +64,11 @@ function appendTransportDiagnostics(status: Record<string, any>, parsed: ParsedV
   if (exited.length) lines.push(`- Xray-exit shapes only: ${exited.join("; ")}.`);
 }
 
+function activationStillRunning(status: Record<string, any>): boolean {
+  const configs = Array.isArray(status.configs) ? status.configs : [];
+  return Boolean(status.pending) || status.lastTestStatus === "testing" || configs.some((item: Record<string, any>) => item.testStatus === "testing");
+}
+
 async function main() {
   const raw = process.env.NOMREH_V2RAY_TEST_CONFIGS || "";
   if (!raw.trim()) throw new Error("No V2Ray test input was supplied.");
@@ -86,9 +91,16 @@ async function main() {
   lines.push("- Real admin login succeeded; the session cookie remained in memory.");
 
   if (process.env.NOMREH_V2RAY_READ_ONLY === "1") {
-    const result = await request("/api/admin/v2ray");
-    if (result.status !== 200 || !result.payload.status) throw new Error(`Read-only V2Ray status failed with HTTP ${result.status}.`);
-    const current = result.payload.status;
+    let current: Record<string, any> = {};
+    const readDeadline = Date.now() + 600_000;
+    while (Date.now() < readDeadline) {
+      const result = await request("/api/admin/v2ray");
+      if (result.status !== 200 || !result.payload.status) throw new Error(`Read-only V2Ray status failed with HTTP ${result.status}.`);
+      current = result.payload.status;
+      if (!activationStillRunning(current)) break;
+      await new Promise((resolve) => setTimeout(resolve, 2_000));
+    }
+    if (activationStillRunning(current)) throw new Error("The existing V2Ray activation remained in testing for ten minutes; no duplicate activation was started.");
     const currentConfigs = Array.isArray(current.configs) ? current.configs : [];
     lines.push(`- Read-only hosted status: enabled=${current.enabled ? "yes" : "no"}; running=${current.running ? "yes" : "no"}; pending=${current.pending ? "yes" : "no"}; configs=${currentConfigs.length}. No activation or provider request was made.`);
     appendTransportDiagnostics(current, parsedBatch.configs);
@@ -107,9 +119,9 @@ async function main() {
     const result = await request("/api/admin/v2ray");
     if (result.status !== 200 || !result.payload.status) throw new Error(`V2Ray status polling failed with HTTP ${result.status}.`);
     status = result.payload.status;
-    if (!status.pending) break;
+    if (!activationStillRunning(status)) break;
   }
-  if (status.pending) throw new Error("V2Ray activation exceeded the bounded ten-minute polling window.");
+  if (activationStillRunning(status)) throw new Error("V2Ray activation exceeded the bounded ten-minute polling window.");
   const configs = Array.isArray(status.configs) ? status.configs : [];
   const healthy = configs.filter((item) => item.testStatus === "success").length;
   const failed = configs.filter((item) => item.testStatus === "error").length;
