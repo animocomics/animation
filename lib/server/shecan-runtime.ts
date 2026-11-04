@@ -43,6 +43,7 @@ function stateRoot(): string {
 function pidPath(): string { return path.join(stateRoot(), "guest.pid"); }
 function supervisorPidPath(): string { return path.join(stateRoot(), "supervisor.pid"); }
 function stopRequestedPath(): string { return path.join(stateRoot(), "stop-requested"); }
+function supervisorSuppressedPath(): string { return path.join(stateRoot(), "supervisor-suppressed"); }
 function statePath(): string { return path.join(stateRoot(), "state.json"); }
 function consolePath(): string { return path.join(stateRoot(), "guest-console.log"); }
 function controlSocketPath(): string { return path.join(stateRoot(), "control.sock"); }
@@ -56,8 +57,18 @@ function isOurSupervisor(pid: number | null): pid is number {
   } catch { return false; }
 }
 
+function supervisorSuppressed(): boolean {
+  let pid = 0;
+  try { pid = Number(fs.readFileSync(supervisorSuppressedPath(), "utf8").trim()); } catch { return false; }
+  if (!Number.isInteger(pid) || pid <= 1) return false;
+  try { process.kill(pid, 0); return true; } catch {
+    try { fs.unlinkSync(supervisorSuppressedPath()); } catch { /* Another process already cleared the stale lease. */ }
+    return false;
+  }
+}
+
 function launchOfficialRuntimeSupervisor(): void {
-  if (isOurSupervisor(readSupervisorPid()) || !regularFile(supervisorScriptPath())) return;
+  if (supervisorSuppressed() || isOurSupervisor(readSupervisorPid()) || !regularFile(supervisorScriptPath())) return;
   try {
     const child = spawn(process.execPath, [supervisorScriptPath()], {
       cwd: process.cwd(),
@@ -186,17 +197,21 @@ function writeState(state: RuntimeState): void {
   fs.renameSync(temporary, statePath());
 }
 
-function consoleTail(): string {
+function logTail(target: string, maximum: number): string {
   try {
-    const info = fs.statSync(consolePath());
-    const length = Math.min(info.size, 1024 * 1024);
-    const descriptor = fs.openSync(consolePath(), "r");
+    const info = fs.statSync(target);
+    const length = Math.min(info.size, maximum);
+    const descriptor = fs.openSync(target, "r");
     try {
       const buffer = Buffer.alloc(length);
       fs.readSync(descriptor, buffer, 0, length, info.size - length);
       return buffer.toString("utf8");
     } finally { fs.closeSync(descriptor); }
   } catch { return ""; }
+}
+
+function consoleTail(): string {
+  return logTail(consolePath(), 1024 * 1024);
 }
 
 function consoleMarkers(text = consoleTail()): string[] {
@@ -207,9 +222,25 @@ function consoleMarkers(text = consoleTail()): string[] {
     .slice(-48);
 }
 
+function hostLogErrorCode(): string | undefined {
+  const text = logTail(path.join(stateRoot(), "host.log"), 64 * 1024);
+  if (!text) return undefined;
+  const rules: Array<[RegExp, string]> = [
+    [/host forwarding|hostfwd/i, "HOST_FORWARDING"],
+    [/address already in use|EADDRINUSE/i, "HOST_PORT_IN_USE"],
+    [/no space left|ENOSPC/i, "HOST_NO_SPACE"],
+    [/error while loading shared libraries|library.*not found/i, "HOST_LIBRARY"],
+    [/permission denied|EACCES/i, "HOST_PERMISSION"],
+    [/no such file or directory|ENOENT/i, "HOST_MISSING_FILE"],
+    [/invalid argument|unrecognized option|unknown option/i, "HOST_QEMU_ARGUMENT"],
+    [/cannot allocate memory|out of memory|ENOMEM/i, "HOST_MEMORY"],
+  ];
+  return rules.find(([pattern]) => pattern.test(text))?.[1];
+}
+
 function runtimeErrorCode(state: RuntimeState, markers: string[]): string | undefined {
   const marker = [...markers].reverse().find((line) => /(?:^|_)ERROR(?:_|\s|$)/.test(line));
-  const value = marker || state.lastError;
+  const value = marker || (state.lastError ? hostLogErrorCode() : undefined) || state.lastError;
   if (!value) return undefined;
   return value.replace(/[^A-Z0-9_ ]/g, "").trim().replace(/ /g, "_").slice(0, 80) || undefined;
 }
@@ -306,19 +337,32 @@ function portIsFree(port: number): Promise<boolean> {
   });
 }
 
-export async function startOfficialRuntime(): Promise<OfficialRuntimeStatus> {
+export async function startOfficialRuntime(options: { supervise?: boolean } = {}): Promise<OfficialRuntimeStatus> {
   fs.mkdirSync(stateRoot(), { recursive: true, mode: 0o700 });
+  if (options.supervise === false) fs.writeFileSync(supervisorSuppressedPath(), `${process.pid}\n`, { mode: 0o600 });
+  else {
+    try { fs.unlinkSync(supervisorSuppressedPath()); } catch { /* No validation lease. */ }
+  }
   const wasStopRequested = regularFile(stopRequestedPath());
   try { fs.unlinkSync(stopRequestedPath()); } catch { /* No manual-stop marker. */ }
   const current = getOfficialRuntimeStatus();
   if (current.running) {
-    launchOfficialRuntimeSupervisor();
+    if (options.supervise !== false) launchOfficialRuntimeSupervisor();
     return getOfficialRuntimeStatus();
   }
   if (current.supervisorRunning && !wasStopRequested) {
-    // The detached watchdog owns the next spawn. Do not race it with a second
-    // QEMU instance when an admin opens the page during its backoff window.
-    return getOfficialRuntimeStatus();
+    if (options.supervise !== false) {
+      // The detached watchdog owns the next spawn. Do not race it with a second
+      // QEMU instance when an admin opens the page during its backoff window.
+      return getOfficialRuntimeStatus();
+    }
+    // Build validation must have exactly one owner. The suppression lease asks
+    // the existing watchdog to exit; never clear its console while validating.
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline && isOurSupervisor(readSupervisorPid())) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+    }
+    if (isOurSupervisor(readSupervisorPid())) throw new Error("Official guest validation could not suspend its active supervisor");
   }
   if (!current.installed) throw new Error("بستهٔ رسمی شکن هنوز روی سرور نصب نشده است.");
   verifyOfficialRuntime();
@@ -326,8 +370,10 @@ export async function startOfficialRuntime(): Promise<OfficialRuntimeStatus> {
   if (!(await portIsFree(vnc)) || !(await portIsFree(proxy))) throw new Error("پورت جداگانهٔ محیط شکن در اختیار فرایند دیگری است؛ آن را متوقف یا دوباره بررسی کنید.");
   fs.mkdirSync(stateRoot(), { recursive: true, mode: 0o700 });
   fs.writeFileSync(consolePath(), "", { mode: 0o600 });
+  fs.writeFileSync(path.join(stateRoot(), "host.log"), "", { mode: 0o600 });
   const hostLog = fs.openSync(path.join(stateRoot(), "host.log"), "a", 0o600);
   let child;
+  let spawnFailure = "";
   try {
     child = spawn(path.join(runtimeRoot(), "run-official.sh"), [], {
       cwd: runtimeRoot(),
@@ -348,14 +394,19 @@ export async function startOfficialRuntime(): Promise<OfficialRuntimeStatus> {
   const startedAt = new Date().toISOString();
   fs.writeFileSync(pidPath(), `${child.pid}\n`, { mode: 0o600 });
   writeState({ startedAt });
-  child.once("error", () => writeState({ startedAt, lastError: "SPAWN_FAILED" }));
+  child.once("error", (error) => {
+    const code = String((error as NodeJS.ErrnoException).code || "FAILED").replace(/[^A-Z0-9_]/gi, "").toUpperCase().slice(0, 32);
+    spawnFailure = `SPAWN_${code || "FAILED"}`;
+    writeState({ startedAt, lastError: spawnFailure });
+  });
   child.once("exit", (code, signal) => {
-    if (readPid() === child.pid && !regularFile(stopRequestedPath())) {
-      writeState({ startedAt, lastError: `GUEST_EXIT_${signal || code || "UNKNOWN"}`.slice(0, 80) });
+    if (!spawnFailure && readPid() === child.pid && !regularFile(stopRequestedPath())) {
+      const reason = signal || (typeof code === "number" ? String(code) : "UNKNOWN");
+      writeState({ startedAt, lastError: `GUEST_EXIT_${reason}`.slice(0, 80) });
     }
   });
   child.unref();
-  launchOfficialRuntimeSupervisor();
+  if (options.supervise !== false) launchOfficialRuntimeSupervisor();
   await new Promise<void>((resolve) => setTimeout(resolve, 300));
   return getOfficialRuntimeStatus();
 }
@@ -370,6 +421,13 @@ export async function stopOfficialRuntime(): Promise<OfficialRuntimeStatus> {
     try { process.kill(supervisor, "SIGTERM"); } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
     }
+    const supervisorDeadline = Date.now() + 5000;
+    while (Date.now() < supervisorDeadline && isOurSupervisor(supervisor)) await delay(100);
+    if (isOurSupervisor(supervisor)) {
+      try { process.kill(supervisor, "SIGKILL"); } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+      }
+    }
   }
   const pid = readPid();
   if (isOurGuest(pid)) {
@@ -382,6 +440,8 @@ export async function stopOfficialRuntime(): Promise<OfficialRuntimeStatus> {
       try { process.kill(-pid, "SIGKILL"); } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
       }
+      const killDeadline = Date.now() + 2000;
+      while (Date.now() < killDeadline && isOurGuest(pid)) await delay(50);
     }
   }
   try { fs.unlinkSync(pidPath()); } catch { /* Already absent. */ }
@@ -389,7 +449,7 @@ export async function stopOfficialRuntime(): Promise<OfficialRuntimeStatus> {
   return getOfficialRuntimeStatus();
 }
 
-export async function restartOfficialRuntime(): Promise<OfficialRuntimeStatus> {
+export async function restartOfficialRuntime(options: { supervise?: boolean } = {}): Promise<OfficialRuntimeStatus> {
   await stopOfficialRuntime();
-  return startOfficialRuntime();
+  return startOfficialRuntime(options);
 }

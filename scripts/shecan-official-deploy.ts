@@ -60,8 +60,10 @@ async function main() {
     throw new Error("Official Shecan mode is selected but its verified runtime is not installed; no AI route was enabled");
   }
   try {
-    if (transaction.patched) await restartOfficialRuntime();
-    else if (!getOfficialRuntimeStatus().running) await startOfficialRuntime();
+    // Validate exactly one patched boot. The live watchdog is suspended by a
+    // PID lease so it cannot erase this boot's logs or race the rollback.
+    if (transaction.patched) await restartOfficialRuntime({ supervise: false });
+    else await startOfficialRuntime({ supervise: false });
     await waitForOfficialRuntime();
   } catch (error) {
     if (transaction.patched) {
@@ -72,6 +74,8 @@ async function main() {
     throw error;
   }
   commitHeadlessRuntime(transaction);
+  // Resume always-on supervision only after the single real boot has passed.
+  await startOfficialRuntime();
   console.log("NOMREH_OFFICIAL_APP_READY headless_control=yes vnc_required=no");
 
   const status = await activateOfficialShecanFromStoredLink();

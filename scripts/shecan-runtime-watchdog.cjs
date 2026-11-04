@@ -23,6 +23,7 @@ const stateRoot = path.join(dataRoot, "shecan-official");
 const guestPidPath = path.join(stateRoot, "guest.pid");
 const supervisorPidPath = path.join(stateRoot, "supervisor.pid");
 const stopPath = path.join(stateRoot, "stop-requested");
+const suppressPath = path.join(stateRoot, "supervisor-suppressed");
 const statePath = path.join(stateRoot, "state.json");
 const consolePath = path.join(stateRoot, "guest-console.log");
 const hostLogPath = path.join(stateRoot, "host.log");
@@ -63,8 +64,18 @@ function isSupervisor(pid) {
   return commandLine(pid).includes(scriptPath);
 }
 
+function suppressed() {
+  let pid = 0;
+  try { pid = Number(fs.readFileSync(suppressPath, "utf8").trim()); } catch { return false; }
+  if (!Number.isInteger(pid) || pid <= 1) return false;
+  try { process.kill(pid, 0); return true; } catch {
+    try { fs.unlinkSync(suppressPath); } catch { /* Another process cleared the stale lease. */ }
+    return false;
+  }
+}
+
 function stopped() {
-  return regularFile(stopPath);
+  return regularFile(stopPath) || suppressed();
 }
 
 function writeState(patch) {
@@ -138,8 +149,10 @@ function spawnGuest() {
   if (isGuest(existing)) return null;
   fs.mkdirSync(stateRoot, { recursive: true, mode: 0o700 });
   fs.writeFileSync(consolePath, "", { mode: 0o600 });
+  fs.writeFileSync(hostLogPath, "", { mode: 0o600 });
   const log = fs.openSync(hostLogPath, "a", 0o600);
   let guest;
+  let spawnFailure = "";
   try {
     guest = spawn(path.join(runtimeRoot, "run-official.sh"), [], {
       cwd: runtimeRoot,
@@ -159,9 +172,15 @@ function spawnGuest() {
   } finally { fs.closeSync(log); }
   fs.writeFileSync(guestPidPath, `${guest.pid}\n`, { mode: 0o600 });
   writeState({ startedAt: new Date().toISOString(), lastError: undefined });
-  guest.once("error", () => markError("SPAWN_FAILED"));
+  guest.once("error", (error) => {
+    const code = String(error.code || "FAILED").replace(/[^A-Z0-9_]/gi, "").toUpperCase().slice(0, 32);
+    spawnFailure = `SPAWN_${code || "FAILED"}`;
+    markError(spawnFailure);
+  });
   guest.once("exit", (code, signal) => {
-    if (!stopped()) markError(`GUEST_EXIT_${signal || code || "UNKNOWN"}`);
+    if (spawnFailure || stopped() || readPid(guestPidPath) !== guest.pid) return;
+    const reason = signal || (typeof code === "number" ? String(code) : "UNKNOWN");
+    markError(`GUEST_EXIT_${reason}`);
   });
   return guest;
 }

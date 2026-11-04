@@ -67,8 +67,43 @@ test("runtime retains only the safe boot error after QEMU exits", () => {
     assert.equal(status.errorCode, "NOMREH_OFFICIAL_GUEST_ERROR_XVNC");
     assert.ok(status.markers.includes("NOMREH_OFFICIAL_GUEST_ERROR XVNC"));
     assert.ok(!status.markers.some((marker) => marker.includes("raw-log")));
+    fs.writeFileSync(path.join(state, "guest-console.log"), "");
+    fs.writeFileSync(path.join(state, "host.log"), "qemu: Could not set up host forwarding rule\nraw-host-log-must-not-leak\n");
+    assert.equal(getOfficialRuntimeStatus().errorCode, "HOST_FORWARDING");
   } finally {
     for (const [key, value] of Object.entries({ NOMREH_SHECAN_RUNTIME_DIR: old.root, NOMREH_DATA_DIR: old.data })) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("single-boot validation preserves a clean guest exit as GUEST_EXIT_0", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "nomreh-official-clean-exit-"));
+  const root = path.join(directory, "runtime");
+  const data = path.join(directory, "data");
+  const old = { root: process.env.NOMREH_SHECAN_RUNTIME_DIR, data: process.env.NOMREH_DATA_DIR, vnc: process.env.NOMREH_VNC_PORT, proxy: process.env.NOMREH_PROXY_PORT };
+  process.env.NOMREH_SHECAN_RUNTIME_DIR = root;
+  process.env.NOMREH_DATA_DIR = data;
+  process.env.NOMREH_VNC_PORT = "46100";
+  process.env.NOMREH_PROXY_PORT = "46188";
+  try {
+    fakeRuntime(root);
+    const runner = path.join(root, "run-official.sh");
+    fs.writeFileSync(runner, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    const manifestPath = path.join(root, "runtime-manifest.json");
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    manifest.files["run-official.sh"] = createHash("sha256").update(fs.readFileSync(runner)).digest("hex");
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+    await startOfficialRuntime({ supervise: false });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const status = getOfficialRuntimeStatus();
+    assert.equal(status.running, false);
+    assert.equal(status.errorCode, "GUEST_EXIT_0");
+    assert.equal(status.supervisorRunning, false);
+  } finally {
+    await stopOfficialRuntime().catch(() => undefined);
+    for (const [key, value] of Object.entries({ NOMREH_SHECAN_RUNTIME_DIR: old.root, NOMREH_DATA_DIR: old.data, NOMREH_VNC_PORT: old.vnc, NOMREH_PROXY_PORT: old.proxy })) {
       if (value === undefined) delete process.env[key]; else process.env[key] = value;
     }
     fs.rmSync(directory, { recursive: true, force: true });
@@ -101,15 +136,17 @@ test("runtime lifecycle markers gate the AI proxy and stopping fails closed with
     manifest.files["run-official.sh"] = createHash("sha256").update(fs.readFileSync(path.join(root, "run-official.sh"))).digest("hex");
     fs.writeFileSync(path.join(root, "runtime-manifest.json"), JSON.stringify(manifest));
 
-    await startOfficialRuntime();
+    await startOfficialRuntime({ supervise: false });
     await new Promise((resolve) => setTimeout(resolve, 250));
     const ready = getOfficialRuntimeStatus();
     assert.equal(ready.running, true);
     assert.equal(ready.appReady, true);
     assert.equal(ready.brokerReady, true);
     assert.equal(ready.activationReady, false);
+    assert.equal(ready.supervisorRunning, false, "single-boot validation must not race a watchdog");
     assert.ok(ready.markers.includes("NOMREH_OFFICIAL_APP_PROCESS_ALIVE"));
     assert.ok(ready.markers.includes("NOMREH_OFFICIAL_AI_BROKER_LISTENING"));
+    await startOfficialRuntime();
     await waitFor(() => getOfficialRuntimeStatus().supervisorRunning, 5000);
     const firstPid = Number(fs.readFileSync(path.join(data, "shecan-official", "guest.pid"), "utf8").trim());
     process.kill(-firstPid, "SIGKILL");
