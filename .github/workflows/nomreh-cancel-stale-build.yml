@@ -1,5 +1,7 @@
 name: Nomreh inspect the stale hosted build process
 
+# Read-only PID inspection; no process is signalled.
+
 on:
   push:
     branches: [arena/f4b832aa-animation]
