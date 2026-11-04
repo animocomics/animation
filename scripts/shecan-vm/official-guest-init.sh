@@ -35,17 +35,6 @@ if [ "$network_ready" -ne 1 ]; then
   poweroff -f
   while true; do sleep 60; done
 fi
-network_carrier=0
-for attempt in $(seq 1 100); do
-  if [ "$(cat /sys/class/net/eth0/carrier 2>/dev/null)" = 1 ]; then network_carrier=1; break; fi
-  sleep 0.1
-done
-if [ "$network_carrier" -ne 1 ]; then
-  echo NOMREH_OFFICIAL_GUEST_ERROR NETWORK_CARRIER > /dev/console
-  poweroff -f
-  while true; do sleep 60; done
-fi
-echo NOMREH_OFFICIAL_GUEST_NETWORK_CARRIER_OK > /dev/console
 network_configured=0
 for attempt in $(seq 1 20); do
   ip addr replace 10.0.2.15/24 dev eth0
