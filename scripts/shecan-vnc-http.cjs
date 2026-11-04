@@ -253,8 +253,8 @@ function reverseDiagnostics(port) {
 }
 
 function reverseTimeoutMs() {
-  const configured = Number(process.env.NOMREH_VNC_REVERSE_TIMEOUT_MS || 20000);
-  return Number.isFinite(configured) ? Math.max(100, Math.min(120000, configured)) : 20000;
+  const configured = Number(process.env.NOMREH_VNC_REVERSE_TIMEOUT_MS || 5000);
+  return Number.isFinite(configured) ? Math.max(100, Math.min(120000, configured)) : 5000;
 }
 
 function takeReverseSocket(port) {

@@ -69,6 +69,17 @@ function launchOfficialRuntimeSupervisor(): void {
   } catch { /* The explicit runtime status remains fail-closed if supervision cannot start. */ }
 }
 
+let lastSupervisorRecoveryAttempt = 0;
+
+/** Re-establish the detached supervisor after a host/application process loss. */
+export function ensureOfficialRuntimeSupervisor(): void {
+  if (!regularFile(path.join(runtimeRoot(), "runtime-manifest.json")) || regularFile(stopRequestedPath())) return;
+  const now = Date.now();
+  if (now - lastSupervisorRecoveryAttempt < 2000) return;
+  lastSupervisorRecoveryAttempt = now;
+  launchOfficialRuntimeSupervisor();
+}
+
 function readSupervisorPid(): number | null {
   try {
     const pid = Number(fs.readFileSync(supervisorPidPath(), "utf8").trim());
@@ -283,10 +294,16 @@ function portIsFree(port: number): Promise<boolean> {
 
 export async function startOfficialRuntime(): Promise<OfficialRuntimeStatus> {
   fs.mkdirSync(stateRoot(), { recursive: true, mode: 0o700 });
+  const wasStopRequested = regularFile(stopRequestedPath());
   try { fs.unlinkSync(stopRequestedPath()); } catch { /* No manual-stop marker. */ }
   const current = getOfficialRuntimeStatus();
   if (current.running) {
     launchOfficialRuntimeSupervisor();
+    return getOfficialRuntimeStatus();
+  }
+  if (current.supervisorRunning && !wasStopRequested) {
+    // The detached watchdog owns the next spawn. Do not race it with a second
+    // QEMU instance when an admin opens the page during its backoff window.
     return getOfficialRuntimeStatus();
   }
   if (!current.installed) throw new Error("بستهٔ رسمی شکن هنوز روی سرور نصب نشده است.");
@@ -318,6 +335,11 @@ export async function startOfficialRuntime(): Promise<OfficialRuntimeStatus> {
   fs.writeFileSync(pidPath(), `${child.pid}\n`, { mode: 0o600 });
   writeState({ startedAt });
   child.once("error", () => writeState({ startedAt, lastError: "SPAWN_FAILED" }));
+  child.once("exit", (code, signal) => {
+    if (readPid() === child.pid && !regularFile(stopRequestedPath())) {
+      writeState({ startedAt, lastError: `GUEST_EXIT_${signal || code || "UNKNOWN"}`.slice(0, 80) });
+    }
+  });
   child.unref();
   launchOfficialRuntimeSupervisor();
   await new Promise<void>((resolve) => setTimeout(resolve, 300));

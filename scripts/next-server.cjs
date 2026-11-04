@@ -17,9 +17,18 @@ function ensureOfficialShecanSupervisor() {
   const runtimeDirectory = process.env.NOMREH_SHECAN_RUNTIME_DIR || path.join(process.cwd(), "nomreh-vm", "official");
   const supervisor = path.join(process.cwd(), "scripts", "shecan-runtime-watchdog.cjs");
   if (!fs.existsSync(path.join(runtimeDirectory, "runtime-manifest.json")) || !fs.existsSync(supervisor)) return;
+  // A Nomreh application restart is an explicit request for always-on service.
+  // Clear only our own regular stop marker; never follow a symlink or touch
+  // any other data. The admin Stop button still works until the next restart.
+  try {
+    const dataDirectory = process.env.NOMREH_DATA_DIR || path.join(process.cwd(), "data");
+    const stopPath = path.join(dataDirectory, "shecan-official", "stop-requested");
+    const info = fs.lstatSync(stopPath);
+    if (info.isFile() && !info.isSymbolicLink()) fs.unlinkSync(stopPath);
+  } catch { /* No stale stop marker, or the data directory is unavailable. */ }
   // The watchdog has its own PID lock and verifies every runtime hash before
   // launching anything. It survives this Node process and restores the guest
-  // after an application restart; a persistent manual-stop marker is honored.
+  // after an application restart or an unexpected QEMU exit.
   const child = spawn(process.execPath, [supervisor], {
     cwd: process.cwd(),
     detached: true,

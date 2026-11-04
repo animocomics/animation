@@ -2,8 +2,9 @@
 
 // Keep the validated official guest alive independently of the Next.js process.
 // This supervisor never logs credentials or network configuration. A manual
-// stop is persistent until an administrator explicitly starts the guest again;
-// an application/process restart does not clear that choice.
+// stop is persistent for the current Nomreh application lifetime. A fresh
+// Nomreh boot deliberately requests always-on service and clears only this
+// marker before launching the supervisor.
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");

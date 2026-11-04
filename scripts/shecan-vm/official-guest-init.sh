@@ -153,9 +153,9 @@ vnc_localhost='-localhost'
 vnc_rfb_options=''
 if grep -q 'nomreh_vnc=hostfwd' /proc/cmdline; then vnc_localhost=''; fi
 if grep -q 'nomreh_vnc_unix=1' /proc/cmdline; then
-  # TigerVNC's native UNIX listener avoids the guest's broken local TCP path.
-  # Keep TCP hostfwd available only for the legacy reverse/hostfwd mode.
-  vnc_rfb_options='-rfbport -1 -rfbunixpath /tmp/shecan-vnc.sock -rfbunixmode 0600'
+  # Keep both real Xvnc transports available. The UNIX serial relay is primary;
+  # the loopback-only QEMU hostfwd remains a genuine fallback, not a dead port.
+  vnc_rfb_options='-rfbport 5900 -rfbunixpath /tmp/shecan-vnc.sock -rfbunixmode 0600'
 fi
 /usr/local/bin/Xvnc :0 -geometry 1200x800 -depth 24 \
   -SecurityTypes None -AlwaysShared $vnc_localhost $vnc_rfb_options \

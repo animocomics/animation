@@ -13,6 +13,7 @@ import { faDate, faNumber } from "../lib/utils";
 type RuntimePayload = {
   runtime?: OfficialRuntimeStatus;
   network?: ApiNetworkPublicStatus;
+  v2rayEnabled?: boolean;
   error?: string;
 };
 
@@ -29,6 +30,7 @@ export function OfficialShecanConsole() {
   const { notify, user } = useApp();
   const [runtime, setRuntime] = useState<OfficialRuntimeStatus | null>(null);
   const [network, setNetwork] = useState<ApiNetworkPublicStatus | null>(null);
+  const [v2rayActive, setV2rayActive] = useState(false);
   const [busy, setBusy] = useState<"load" | "start" | "stop" | "restart" | "enable" | "disable" | "link" | null>("load");
   const [error, setError] = useState("");
   const [vncConnected, setVncConnected] = useState(false);
@@ -37,6 +39,9 @@ export function OfficialShecanConsole() {
   const [showUpdateUrl, setShowUpdateUrl] = useState(false);
   const screenRef = useRef<HTMLDivElement>(null);
   const rfbRef = useRef<RFB | null>(null);
+  const autoStartAttemptedRef = useRef(false);
+  const vncRetryTimerRef = useRef<number | null>(null);
+  const vncRetryAttemptRef = useRef(0);
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setBusy((current) => current || "load");
@@ -46,6 +51,7 @@ export function OfficialShecanConsole() {
       if (!response.ok || !payload.runtime || !payload.network) throw new Error(payload.error || "وضعیت برنامهٔ رسمی خوانده نشد.");
       setRuntime(payload.runtime);
       setNetwork(payload.network);
+      setV2rayActive(Boolean(payload.v2rayEnabled));
       if (!quiet) setError("");
     } catch (reason) {
       if (!quiet) setError(reason instanceof Error ? reason.message : "وضعیت برنامهٔ رسمی خوانده نشد.");
@@ -65,12 +71,28 @@ export function OfficialShecanConsole() {
 
   useEffect(() => {
     if (!runtime?.appReady || !screenRef.current) {
+      if (vncRetryTimerRef.current !== null) window.clearTimeout(vncRetryTimerRef.current);
+      vncRetryTimerRef.current = null;
+      vncRetryAttemptRef.current = 0;
       rfbRef.current?.disconnect();
       rfbRef.current = null;
       setVncConnected(false);
       return;
     }
     let cancelled = false;
+    const clearRetry = () => {
+      if (vncRetryTimerRef.current !== null) window.clearTimeout(vncRetryTimerRef.current);
+      vncRetryTimerRef.current = null;
+    };
+    const scheduleRetry = () => {
+      if (cancelled || vncRetryTimerRef.current !== null) return;
+      const delay = Math.min(30_000, 2000 * 2 ** Math.min(vncRetryAttemptRef.current, 4));
+      vncRetryAttemptRef.current += 1;
+      vncRetryTimerRef.current = window.setTimeout(() => {
+        vncRetryTimerRef.current = null;
+        if (!cancelled) setVncSession((value) => value + 1);
+      }, delay);
+    };
     setVncConnected(false);
     void import("@novnc/novnc").then(({ default: RfbClient }) => {
       if (cancelled || !screenRef.current) return;
@@ -81,13 +103,33 @@ export function OfficialShecanConsole() {
       client.scaleViewport = true;
       client.clipViewport = true;
       client.showDotCursor = true;
-      client.addEventListener("connect", () => { if (!cancelled) setVncConnected(true); });
-      client.addEventListener("disconnect", () => { if (!cancelled) setVncConnected(false); });
-      client.addEventListener("securityfailure", () => { if (!cancelled) setError("اتصال امن تصویر برنامه برقرار نشد؛ صفحه را دوباره بارگذاری کنید."); });
+      client.addEventListener("connect", () => {
+        if (cancelled) return;
+        vncRetryAttemptRef.current = 0;
+        clearRetry();
+        setVncConnected(true);
+      });
+      client.addEventListener("disconnect", () => {
+        if (cancelled) return;
+        setVncConnected(false);
+        scheduleRetry();
+      });
+      client.addEventListener("securityfailure", () => {
+        if (!cancelled) {
+          setError("اتصال تصویر برنامه برقرار نشد؛ اتصال به‌صورت خودکار دوباره تلاش می‌شود.");
+          scheduleRetry();
+        }
+      });
       rfbRef.current = client;
-    }).catch(() => { if (!cancelled) setError("بارگذاری نمایش زندهٔ برنامهٔ رسمی انجام نشد."); });
+    }).catch(() => {
+      if (!cancelled) {
+        setError("بارگذاری نمایش زندهٔ برنامهٔ رسمی انجام نشد؛ تلاش مجدد انجام می‌شود.");
+        scheduleRetry();
+      }
+    });
     return () => {
       cancelled = true;
+      clearRetry();
       rfbRef.current?.disconnect();
       rfbRef.current = null;
     };
@@ -109,10 +151,17 @@ export function OfficialShecanConsole() {
       if (!response.ok || !payload.runtime) throw new Error(payload.error || "عملیات محیط رسمی انجام نشد.");
       setRuntime(payload.runtime);
       if (payload.network) setNetwork(payload.network);
+      setV2rayActive(Boolean(payload.v2rayEnabled));
       if (action === "stop") setVncConnected(false);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "عملیات محیط رسمی انجام نشد."); }
     finally { setBusy(null); }
   }
+
+  useEffect(() => {
+    if (user.role !== "admin" || v2rayActive || autoStartAttemptedRef.current || !runtime?.installed) return;
+    autoStartAttemptedRef.current = true;
+    if (!runtime.running) void runtimeAction("start");
+  }, [runtime?.installed, runtime?.running, user.role, v2rayActive]);
 
   async function saveNetwork(enabled: boolean, link?: string) {
     if (!network) return;
@@ -144,6 +193,7 @@ export function OfficialShecanConsole() {
       if (payload.status) setNetwork(payload.status);
       if (payload.jobError) throw new Error(payload.jobError);
       if (enabled && (!payload.status?.enabled || payload.status.transport !== "official-vm")) throw new Error(payload.status?.lastTestMessage || "مسیر رسمی AI فعال نشد.");
+      if (enabled) setV2rayActive(false);
       setUpdateUrl("");
       setShowUpdateUrl(false);
       notify({
@@ -157,6 +207,7 @@ export function OfficialShecanConsole() {
 
   const starting = runtime?.phase === "starting";
   const ready = Boolean(runtime?.appReady && runtime.brokerReady);
+  const waitingForBoot = starting || busy === "start" || Boolean(runtime?.running && !runtime.appReady);
   const aiReady = Boolean(runtime?.activationReady);
   const officialEnabled = Boolean(network?.enabled && network.transport === "official-vm");
 
@@ -179,9 +230,9 @@ export function OfficialShecanConsole() {
     </div>
 
     {runtime?.installed ? <div className={`official-shecan-screen ${vncConnected ? "connected" : ""}`}>
-      <div className="official-shecan-screen-bar"><span><span className={`live-dot ${vncConnected ? "online" : ""}`} />{vncConnected ? "تصویر زندهٔ برنامهٔ رسمی" : starting ? "در حال بوت محیط ایزوله…" : "در انتظار تصویر برنامه…"}</span><button type="button" className="icon-button" aria-label="تمام‌صفحه" onClick={() => void screenRef.current?.requestFullscreen?.()}><Expand size={16} /></button></div>
+      <div className="official-shecan-screen-bar"><span><span className={`live-dot ${vncConnected ? "online" : ""}`} />{vncConnected ? "تصویر زندهٔ برنامهٔ رسمی" : waitingForBoot ? "در حال بوت محیط ایزوله…" : "در انتظار تصویر برنامه…"}</span><button type="button" className="icon-button" aria-label="تمام‌صفحه" onClick={() => void screenRef.current?.requestFullscreen?.()}><Expand size={16} /></button></div>
       <div className="official-shecan-vnc" ref={screenRef} aria-label="محیط گرافیکی زندهٔ برنامهٔ رسمی شکن" />
-      {!vncConnected && <div className="official-shecan-screen-wait">{starting || busy === "start" ? <LoaderCircle className="spin-icon" size={28} /> : <MonitorUp size={28} />}<span>{starting || busy === "start" ? "راه‌اندازی برنامه ممکن است چند دقیقه طول بکشد." : "برای دیدن رابط رسمی، برنامه را اجرا کنید."}</span></div>}
+      {!vncConnected && <div className="official-shecan-screen-wait">{waitingForBoot ? <LoaderCircle className="spin-icon" size={28} /> : <RefreshCw size={28} />}<span>{waitingForBoot ? "راه‌اندازی برنامه ممکن است چند دقیقه طول بکشد." : runtime?.running ? "اتصال تصویر برقرار نشد؛ اتصال خودکار دوباره تلاش می‌شود." : "محیط متوقف است؛ شروع خودکار انجام می‌شود یا دکمهٔ اجرا را بزنید."}</span></div>}
     </div> : <div className="official-shecan-not-installed"><TriangleAlert size={20} /><div><strong>بستهٔ رسمی هنوز روی این سرور نصب نشده است</strong><p>هیچ تصویر یا فرم جایگزینی به‌عنوان برنامهٔ رسمی نمایش داده نمی‌شود.</p></div></div>}
 
     <div className={`official-ai-route ${officialEnabled ? "enabled" : ""}`}>

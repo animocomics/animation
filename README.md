@@ -155,6 +155,8 @@ data/
 
 اسکریپت Build روی سرور، فقط در حالت رسمیِ انتخاب‌شده (و برای تلاش مجدد بعد از خطای فعال‌سازی) `/init` و launcher را با patch جریانی Node/`xz` به‌روز می‌کند. QEMU، kernel و rootfs بزرگ با hardlink و manifest hash حفظ می‌شوند؛ این patch دانلود Runtime جدیدی ندارد و در صورت خطا rollback می‌شود. سپس همان Build فعال‌سازی و تست واقعی Gemini را انجام می‌دهد. انتخاب V2Ray یا غیرفعال‌کردن مسیر توسط مدیر با Build بازنویسی نمی‌شود.
 
+با بازشدن صفحهٔ مدیریت، Runtime نصب‌شده به‌صورت خودکار شروع می‌شود و watchdog بعد از خروج QEMU یا restartِ Nomreh آن را دوباره بالا می‌آورد. Stop دستی تا همان عمر فرایند Nomreh معتبر است؛ Boot بعدی سرویس را دوباره فعال می‌کند. اتصال تصویر نیز با backoff خودکار reconnect می‌شود و فعال‌سازی لینک ذخیره‌شده بعد از آماده‌شدن guest از طریق همان polling admin انجام می‌شود.
+
 ## استقرار روی Plesk
 
 این نسخه برای اجرا روی ساب‌دامین `nomreh.arounidea.com` و از مخزن خصوصی GitHub آماده است. Plesk با **Remote repository** و HTTPS/Fine-grained Token فقط از شاخهٔ `arena/f4b832aa-animation` Pull می‌کند و Webhook همان مخزن، Pull و Deployment خودکار را انجام می‌دهد. Workflow قدیمی GitHub Actions برای این مسیر لازم نیست و باید غیرفعال بماند تا دو Deploy هم‌زمان انجام نشود.

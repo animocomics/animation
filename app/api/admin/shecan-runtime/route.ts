@@ -1,22 +1,38 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { AuthError, requireAdmin } from "@/lib/server/auth";
-import { getApiNetworkStatus, saveAndTestApiNetwork } from "@/lib/server/api-network";
-import { getOfficialRuntimeStatus, restartOfficialRuntime, startOfficialRuntime, stopOfficialRuntime } from "@/lib/server/shecan-runtime";
+import { ensureApiNetworkActivated, getApiNetworkConfig, getApiNetworkStatus, saveAndTestApiNetwork } from "@/lib/server/api-network";
+import { ensureOfficialRuntimeSupervisor, getOfficialRuntimeStatus, restartOfficialRuntime, startOfficialRuntime, stopOfficialRuntime } from "@/lib/server/shecan-runtime";
+import { getV2RayStatus } from "@/lib/server/v2ray-runtime";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
 const schema = z.object({ action: z.enum(["start", "stop", "restart"]) });
+let lastAutomaticActivationAttempt = 0;
+
+function scheduleStoredActivation(runtimeStatus: ReturnType<typeof getOfficialRuntimeStatus>, network: Awaited<ReturnType<typeof getApiNetworkStatus>>): void {
+  if (!network.enabled || network.transport !== "official-vm" || !runtimeStatus.running || !runtimeStatus.appReady || !runtimeStatus.brokerReady || runtimeStatus.activationReady) return;
+  const now = Date.now();
+  if (now - lastAutomaticActivationAttempt < 30_000) return;
+  lastAutomaticActivationAttempt = now;
+  // Keep the admin status response fast. The shared activation promise in
+  // api-network deduplicates concurrent polls and provider requests.
+  void getApiNetworkConfig()
+    .then((config) => ensureApiNetworkActivated(config))
+    .catch(() => undefined);
+}
 
 async function payload() {
-  const [runtimeStatus, network] = await Promise.all([Promise.resolve(getOfficialRuntimeStatus()), getApiNetworkStatus()]);
-  return { runtime: runtimeStatus, network };
+  const [runtimeStatus, network, v2ray] = await Promise.all([Promise.resolve(getOfficialRuntimeStatus()), getApiNetworkStatus(), getV2RayStatus()]);
+  if (!v2ray.enabled && !v2ray.pending) scheduleStoredActivation(runtimeStatus, network);
+  return { runtime: runtimeStatus, network, v2rayEnabled: Boolean(v2ray.enabled || v2ray.pending) };
 }
 
 export async function GET() {
   try {
     await requireAdmin();
+    ensureOfficialRuntimeSupervisor();
     return NextResponse.json(await payload(), { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const status = error instanceof AuthError ? error.status : 500;
