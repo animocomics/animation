@@ -14,6 +14,7 @@ const SUBSCRIPTION_ROOT = path.dirname(APP_ROOT);
 // Use a conservative decimal-byte threshold while reporting actual du MiB.
 const SUBSCRIPTION_LIMIT_KIB = (4500 * 1000 * 1000) / 1024;
 const SUBSCRIPTION_LIMIT_LABEL = "4500 MB";
+const TOTAL_STORAGE_LIMIT_KIB = (7 * 1000 * 1000 * 1000) / 1024;
 
 function formatMiB(kibibytes) {
   return `${(kibibytes / 1024).toFixed(1)} MiB`;
@@ -78,6 +79,10 @@ console.log("");
 console.log(`Current subscription root: ${SUBSCRIPTION_ROOT}`);
 const subscription = subscriptionUsage();
 console.log(`All domains in current subscription total: ${subscription.text}`);
+if (typeof subscription.kibibytes === "number") {
+  const totalRemaining = TOTAL_STORAGE_LIMIT_KIB - subscription.kibibytes;
+  console.log(`7 GB total-storage ceiling: ${totalRemaining >= 0 ? `${formatMiB(totalRemaining)} remaining` : `EXCEEDED by ${formatMiB(-totalRemaining)}`}`);
+}
 if (typeof subscription.kibibytes === "number") {
   const remaining = SUBSCRIPTION_LIMIT_KIB - subscription.kibibytes;
   if (remaining >= 0) {
