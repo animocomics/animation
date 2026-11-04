@@ -26,6 +26,9 @@ for required in "$LOADER" "$QEMU" "$KERNEL" "$INITRAMFS"; do
   fi
 done
 unset LD_LIBRARY_PATH LD_PRELOAD http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY
+# The control and VNC UNIX sockets are private to this Plesk user. The nonce
+# protects protocol responses; it is not a substitute for filesystem permissions.
+umask 077
 
 NIC='user,model=virtio-net-pci'
 APPEND="console=ttyS0 rdinit=/init panic=1 quiet nomreh_host_port=$HOST_PORT"
