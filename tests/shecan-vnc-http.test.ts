@@ -1,13 +1,16 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
 import http from "node:http";
 import net from "node:net";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { createRequire } from "node:module";
 import test from "node:test";
 import { createVncAuthFixture } from "./vnc-auth-fixture";
 
 const require = createRequire(import.meta.url);
-const { handleShecanVncHttp, closeShecanVncHttpSessions, startShecanVncReverseServer, HTTP_CHANNEL_PATH } = require("../scripts/shecan-vnc-http.cjs");
+const { handleShecanVncHttp, closeShecanVncHttpSessions, startShecanVncReverseServer, startShecanVncUnixClient, HTTP_CHANNEL_PATH } = require("../scripts/shecan-vnc-http.cjs");
 
 function listen(server: http.Server | net.Server): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -141,6 +144,73 @@ test("reverse timeout falls back to the authenticated loopback hostfwd channel",
     else process.env.NOMREH_VNC_PORT = oldVncPort;
     if (oldTimeout === undefined) delete process.env.NOMREH_VNC_REVERSE_TIMEOUT_MS;
     else process.env.NOMREH_VNC_REVERSE_TIMEOUT_MS = oldTimeout;
+    restoreAuth();
+  }
+});
+
+test("authenticated HTTP channel consumes an early UNIX VNC connection without TCP", async () => {
+  const oldReversePort = process.env.NOMREH_VNC_REVERSE_PORT;
+  const oldUnixSocket = process.env.NOMREH_VNC_UNIX_SOCKET;
+  const restoreAuth = createVncAuthFixture();
+  const directory = mkdtempSync(path.join(tmpdir(), "nomreh-vnc-unix-"));
+  const socketPath = path.join(directory, "vnc.sock");
+  const targetSockets = new Set<net.Socket>();
+  const targetFrames: Buffer[] = [];
+  let targetConnected: () => void = () => undefined;
+  const connected = new Promise<void>((resolve) => { targetConnected = resolve; });
+  const target = net.createServer((socket) => {
+    targetSockets.add(socket);
+    socket.on("close", () => targetSockets.delete(socket));
+    socket.on("data", (chunk) => {
+      targetFrames.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      socket.write(Buffer.from([2, 2]));
+    });
+    socket.on("error", () => undefined);
+    socket.write("RFB 003.008\n");
+    targetConnected();
+  });
+  await new Promise<void>((resolve, reject) => {
+    target.once("error", reject);
+    target.listen(socketPath, () => resolve());
+  });
+  process.env.NOMREH_VNC_REVERSE_PORT = "0";
+  process.env.NOMREH_VNC_UNIX_SOCKET = socketPath;
+  const application = http.createServer((request, response) => {
+    if (handleShecanVncHttp(request, response, applicationPort)) return;
+    response.writeHead(404);
+    response.end();
+  });
+  const applicationPort = await listen(application);
+  const endpoint = `http://127.0.0.1:${applicationPort}${HTTP_CHANNEL_PATH}`;
+  const origin = `http://127.0.0.1:${applicationPort}`;
+  const headers = { Origin: origin, Cookie: "nomreh_session=valid-admin", "X-Nomreh-VNC-Client": "1" };
+  let session = "";
+  try {
+    startShecanVncUnixClient();
+    await connected;
+    const created = await fetch(endpoint, { method: "POST", headers });
+    assert.equal(created.status, 200);
+    session = (await created.json() as { session?: string }).session || "";
+    assert.match(session, /^[a-f0-9]{32}$/);
+    const exchangeHeaders = { ...headers, "X-Nomreh-VNC-Session": session, "Content-Type": "application/octet-stream" };
+    const initial = await fetch(endpoint, { method: "POST", headers: exchangeHeaders, body: Buffer.alloc(0) });
+    assert.equal(initial.status, 200);
+    assert.equal(Buffer.from(await initial.arrayBuffer()).toString("ascii"), "RFB 003.008\n");
+    const reply = await fetch(endpoint, { method: "POST", headers: exchangeHeaders, body: Buffer.from("RFB 003.008\n") });
+    assert.equal(reply.status, 200);
+    assert.deepEqual([...new Uint8Array(await reply.arrayBuffer())], [2, 2]);
+    assert.equal(Buffer.concat(targetFrames).subarray(0, 12).toString("ascii"), "RFB 003.008\n");
+  } finally {
+    closeShecanVncHttpSessions();
+    for (const socket of targetSockets) socket.destroy();
+    application.closeAllConnections();
+    await new Promise<void>((resolve) => application.close(() => resolve()));
+    await new Promise<void>((resolve) => target.close(() => resolve()));
+    rmSync(directory, { recursive: true, force: true });
+    if (oldReversePort === undefined) delete process.env.NOMREH_VNC_REVERSE_PORT;
+    else process.env.NOMREH_VNC_REVERSE_PORT = oldReversePort;
+    if (oldUnixSocket === undefined) delete process.env.NOMREH_VNC_UNIX_SOCKET;
+    else process.env.NOMREH_VNC_UNIX_SOCKET = oldUnixSocket;
     restoreAuth();
   }
 });

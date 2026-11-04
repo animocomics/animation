@@ -79,6 +79,7 @@ docker run --rm --platform linux/amd64 -v "$WORK/rootfs:/out" debian:12-slim \
     test -x /usr/bin/dbus-run-session
     test -x /usr/bin/tinyproxy
     test -x /usr/bin/x11vnc
+    test -x /usr/bin/socat
     /bin/busybox --list | grep -qx wget
   '
 
@@ -177,11 +178,69 @@ set +e
 wait "$RUNNER_PID" 2>/dev/null
 set -e
 RUNNER_PID=''
+
+# Exercise the production UNIX transport independently. Start the framebuffer
+# client before QEMU so the one-shot RFB greeting cannot be lost, then boot a
+# fresh guest with the serial chardev and guest socat relay enabled.
+UNIX_SOCKET="$WORK/vnc.sock"
+rm -f "$UNIX_SOCKET"
+set +e
+VNC_SMOKE_UNIX="$UNIX_SOCKET" VNC_SMOKE_TRACE=1 VNC_READ_TIMEOUT_MS=5000 VNC_SMOKE_ATTEMPTS=60 \
+  python3 "$SOURCE_ROOT/scripts/shecan-vm/vnc-smoke.py" 15900 "$WORK/official-framebuffer-unix.ppm" > "$WORK/vnc-unix.log" 2>&1 &
+VNC_PID=$!
+set -e
+echo "NOMREH_UNIX_VNC_SMOKE_STARTED pid=$VNC_PID"
+NOMREH_VM_PROBE=1 NOMREH_VNC_PORT=15900 NOMREH_VNC_UNIX_SOCKET="$UNIX_SOCKET" NOMREH_PROXY_PORT=18888 \
+  NOMREH_VM_MEMORY=2048M NOMREH_VM_TIMEOUT=300 \
+  "$RUNTIME/run-official.sh" > "$WORK/official-guest-unix.log" 2>&1 &
+RUNNER_PID=$!
+unix_app_ready=0
+for ((attempt = 0; attempt < 300; attempt++)); do
+  if grep -q 'NOMREH_OFFICIAL_APP_PROCESS_ALIVE' "$WORK/official-guest-unix.log"; then unix_app_ready=1; break; fi
+  if grep -q 'NOMREH_OFFICIAL_APP_ERROR\|NOMREH_OFFICIAL_GUEST_ERROR' "$WORK/official-guest-unix.log"; then break; fi
+  if ! kill -0 "$RUNNER_PID" 2>/dev/null; then break; fi
+  sleep 1
+done
+if ((unix_app_ready != 1)); then
+  echo 'Official UNIX guest did not reach its live application marker.' >&2
+  cat "$WORK/official-guest-unix.log"
+  cat "$WORK/vnc-unix.log"
+  exit 1
+fi
+unix_vnc_status=1
+for ((attempt = 0; attempt < 180; attempt++)); do
+  if ! kill -0 "$VNC_PID" 2>/dev/null; then
+    set +e
+    wait "$VNC_PID"
+    unix_vnc_status=$?
+    set -e
+    break
+  fi
+  if ! kill -0 "$RUNNER_PID" 2>/dev/null; then break; fi
+  sleep 1
+done
+if ((unix_vnc_status != 0)) && [[ -n "$VNC_PID" ]]; then kill "$VNC_PID" 2>/dev/null || true; fi
+VNC_PID=''
+cat "$WORK/vnc-unix.log"
+if ((unix_vnc_status != 0)); then
+  echo 'Official UNIX transport did not produce a real rendered VNC framebuffer.' >&2
+  cat "$WORK/official-guest-unix.log"
+  exit 1
+fi
+grep -F 'NOMREH_OFFICIAL_VNC_UNIX_DEVICE_READY' "$WORK/official-guest-unix.log"
+grep -F 'NOMREH_OFFICIAL_VNC_UNIX_RELAY_STARTED' "$WORK/official-guest-unix.log"
+kill "$RUNNER_PID" 2>/dev/null || true
+set +e
+wait "$RUNNER_PID" 2>/dev/null
+set -e
+RUNNER_PID=''
 cat "$WORK/official-guest.log"
 grep -F 'NOMREH_OFFICIAL_APP_PROCESS_ALIVE' "$WORK/official-guest.log"
 grep -F 'NOMREH_OFFICIAL_AI_BROKER_LISTENING' "$WORK/official-guest.log"
 grep -F 'NOMREH_OFFICIAL_APP_BOOT_PASS' "$WORK/official-guest.log"
 grep -F 'NOMREH_VNC_FRAMEBUFFER_PASS' "$WORK/vnc-smoke.log"
+grep -F 'NOMREH_OFFICIAL_APP_BOOT_PASS' "$WORK/official-guest-unix.log"
+grep -F 'NOMREH_VNC_FRAMEBUFFER_PASS' "$WORK/vnc-unix.log"
 
 rm -f "$ARCHIVE"
 (cd "$WORK/full" && zip -q -9 -r "$ARCHIVE" nomreh-vm)

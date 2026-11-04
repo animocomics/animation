@@ -65,6 +65,13 @@ if ! grep -q 'nomreh_probe=1' /proc/cmdline; then
       echo NOMREH_OFFICIAL_GUEST_HOST_HTTP_FAIL > /dev/console
     fi
   fi
+  # The public official Shecan login page is the only external probe. It has no
+  # credentials or update parameters and tells us whether outbound SLIRP works.
+  if /bin/busybox wget -q -T 12 -O /dev/null 'https://my.shecan.ir/panel/auth' >/dev/null 2>&1; then
+    echo NOMREH_OFFICIAL_GUEST_EXTERNAL_SHECAN_OK > /dev/console
+  else
+    echo NOMREH_OFFICIAL_GUEST_EXTERNAL_SHECAN_FAIL > /dev/console
+  fi
 fi
 
 vnc_localhost='-localhost'
@@ -85,6 +92,35 @@ if [ "$xvnc_ready" -ne 1 ]; then
   while true; do sleep 60; done
 fi
 echo NOMREH_OFFICIAL_XVNC_READY > /dev/console
+
+UNIX_VNC_PID=''
+if grep -q 'nomreh_vnc_unix=1' /proc/cmdline; then
+  unix_vnc_device=0
+  for attempt in $(seq 1 100); do
+    if [ -c /dev/ttyS1 ]; then unix_vnc_device=1; break; fi
+    sleep 0.1
+  done
+  if [ "$unix_vnc_device" -ne 1 ]; then
+    echo NOMREH_OFFICIAL_GUEST_ERROR VNC_UNIX_DEVICE > /dev/console
+    poweroff -f
+    while true; do sleep 60; done
+  fi
+  echo NOMREH_OFFICIAL_VNC_UNIX_DEVICE_READY > /dev/console
+  (
+    unix_vnc_attempt=0
+    while kill -0 "$XVNC_PID" 2>/dev/null; do
+      unix_vnc_attempt=$((unix_vnc_attempt + 1))
+      socat OPEN:/dev/ttyS1,raw,echo=0 TCP:127.0.0.1:5900 >> /var/log/vnc-unix.log 2>&1
+      unix_vnc_status=$?
+      if [ "$unix_vnc_attempt" -le 3 ]; then
+        echo "NOMREH_OFFICIAL_VNC_UNIX_RELAY_EXIT_${unix_vnc_status}" > /dev/console
+      fi
+      sleep 1
+    done
+  ) &
+  UNIX_VNC_PID=$!
+  echo NOMREH_OFFICIAL_VNC_UNIX_RELAY_STARTED > /dev/console
+fi
 
 mkdir -p /run/dbus
 if ! dbus-daemon --system --fork --address=unix:path=/run/dbus/system_bus_socket --print-pid=1 > /run/dbus-system.pid; then
@@ -218,9 +254,11 @@ if grep -q 'nomreh_probe=1' /proc/cmdline; then
   head -120 /var/log/shecan-desktop.log > /dev/console 2>&1 || true
   head -60 /var/log/xvnc.log > /dev/console 2>&1 || true
   head -80 /var/log/vnc-reverse.log > /dev/console 2>&1 || true
+  head -40 /var/log/vnc-unix.log > /dev/console 2>&1 || true
   echo NOMREH_OFFICIAL_PROBE_LOG_END > /dev/console
   kill "$APP_PID" 2>/dev/null || true
   if [ -n "$REVERSE_PID" ]; then kill "$REVERSE_PID" 2>/dev/null || true; fi
+  if [ -n "$UNIX_VNC_PID" ]; then kill "$UNIX_VNC_PID" 2>/dev/null || true; fi
   kill "$XVNC_PID" 2>/dev/null || true
   if [ -n "$DBUS_SYSTEM_BUS_PID" ]; then kill "$DBUS_SYSTEM_BUS_PID" 2>/dev/null || true; fi
   sync

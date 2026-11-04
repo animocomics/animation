@@ -10,6 +10,7 @@ KERNEL="$ROOT/guest/vmlinuz-virt"
 INITRAMFS="$ROOT/guest/initramfs-official"
 MEMORY=${NOMREH_VM_MEMORY:-2048M}
 VNC_PORT=${NOMREH_VNC_PORT:-}
+VNC_SOCKET=${NOMREH_VNC_UNIX_SOCKET:-}
 PROXY_PORT=${NOMREH_PROXY_PORT:-}
 SERIAL=${NOMREH_VM_SERIAL:-stdio}
 PROBE=${NOMREH_VM_PROBE:-0}
@@ -29,7 +30,19 @@ NIC='user,model=virtio-net-pci'
 APPEND="console=ttyS0 rdinit=/init panic=1 quiet nomreh_host_port=$HOST_PORT"
 if [ -n "$VNC_PORT" ]; then
   NIC="$NIC,hostfwd=tcp:127.0.0.1:$VNC_PORT-:5900"
-  APPEND="$APPEND nomreh_vnc=hostfwd nomreh_vnc_reverse=15500"
+  APPEND="$APPEND nomreh_vnc=hostfwd"
+  if [ -n "$VNC_SOCKET" ]; then
+    APPEND="$APPEND nomreh_vnc_unix=1"
+  else
+    APPEND="$APPEND nomreh_vnc_reverse=15500"
+  fi
+fi
+if [ -n "$VNC_SOCKET" ]; then
+  if [ -L "$VNC_SOCKET" ]; then
+    echo NOMREH_OFFICIAL_GUEST_ERROR unsafe_vnc_socket
+    exit 1
+  fi
+  rm -f -- "$VNC_SOCKET"
 fi
 if [ -n "$PROXY_PORT" ]; then
   NIC="$NIC,hostfwd=tcp:127.0.0.1:$PROXY_PORT-:8888"
@@ -51,6 +64,11 @@ set -- "$LOADER" --library-path "$LIBRARIES" "$QEMU" \
   -serial "$SERIAL" \
   -monitor none \
   -no-reboot
+if [ -n "$VNC_SOCKET" ]; then
+  set -- "$@" \
+    -chardev "socket,id=nomrehvnc,path=$VNC_SOCKET,server=on,wait=off" \
+    -serial chardev:nomrehvnc
+fi
 if [ "$PROBE" = 1 ]; then
   exec timeout -k 5 "$TIMEOUT" "$@"
 fi

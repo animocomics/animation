@@ -148,6 +148,7 @@ function spawnGuest() {
         ...process.env,
         NOMREH_VM_MEMORY: process.env.NOMREH_VM_MEMORY || "2048M",
         NOMREH_VNC_PORT: process.env.NOMREH_VNC_PORT || "15900",
+        NOMREH_VNC_UNIX_SOCKET: process.env.NOMREH_VNC_UNIX_SOCKET || path.join(stateRoot, "vnc.sock"),
         NOMREH_PROXY_PORT: process.env.NOMREH_PROXY_PORT || "18888",
         NOMREH_VM_SERIAL: `file:${consolePath}`,
         NOMREH_VM_PROBE: "0",

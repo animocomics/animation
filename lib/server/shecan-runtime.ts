@@ -233,6 +233,7 @@ export async function startOfficialRuntime(): Promise<OfficialRuntimeStatus> {
         ...process.env,
         NOMREH_VM_MEMORY: process.env.NOMREH_VM_MEMORY || "2048M",
         NOMREH_VNC_PORT: String(vnc),
+        NOMREH_VNC_UNIX_SOCKET: process.env.NOMREH_VNC_UNIX_SOCKET || path.join(stateRoot(), "vnc.sock"),
         NOMREH_PROXY_PORT: String(proxy),
         NOMREH_VM_SERIAL: `file:${consolePath()}`,
         NOMREH_VM_PROBE: "0",

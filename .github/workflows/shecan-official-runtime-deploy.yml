@@ -40,7 +40,7 @@ jobs:
         if: steps.config.outputs.configured == 'true'
         run: |
           set -euo pipefail
-          archive="$RUNNER_TEMP/nomreh-deploy-shecan-official-v7.zip"
+          archive="$RUNNER_TEMP/nomreh-deploy-shecan-official-v8.zip"
           grep -F 'test -x /usr/bin/x11vnc' scripts/shecan-vm/build-official-runtime.sh > /dev/null
           grep -F 'NOMREH_OFFICIAL_VNC_REVERSE_ATTEMPT_' scripts/shecan-vm/official-guest-init.sh > /dev/null
           grep -F 'const OFFICIAL_RUNTIME_ARCHIVE = /^nomreh-deploy-shecan-official-v[0-9]+' scripts/plesk-browser-diagnostics.cjs > /dev/null
@@ -75,8 +75,8 @@ jobs:
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
           PLESK_BROWSER_ACTION: upload
-          PLESK_ARCHIVE_NAME: nomreh-deploy-shecan-official-v7.zip
-          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-shecan-official-v7.zip
+          PLESK_ARCHIVE_NAME: nomreh-deploy-shecan-official-v8.zip
+          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-shecan-official-v8.zip
           PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-official-upload.md
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
         run: node scripts/plesk-browser-diagnostics.cjs
@@ -88,7 +88,7 @@ jobs:
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
           PLESK_BROWSER_ACTION: runtime-extract
-          PLESK_ARCHIVE_NAME: nomreh-deploy-shecan-official-v7.zip
+          PLESK_ARCHIVE_NAME: nomreh-deploy-shecan-official-v8.zip
           PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-official-extract.md
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
         run: node scripts/plesk-browser-diagnostics.cjs

@@ -16,6 +16,11 @@ const sessions = new Map();
 const reverseSockets = [];
 const reverseWaiters = [];
 let reverseServer = null;
+let unixClient = null;
+let unixRetry = null;
+let unixStopped = true;
+let unixState = "DISABLED";
+let unixAccepted = 0;
 let reverseAccepted = 0;
 let reverseRejected = 0;
 let reverseLastRejection = "NONE";
@@ -174,6 +179,67 @@ function startShecanVncReverseServer() {
   if (port) ensureReverseServer(port);
 }
 
+function configuredUnixSocket() {
+  if (process.env.NOMREH_VNC_UNIX_SOCKET === "") return "";
+  if (process.env.NOMREH_VNC_UNIX_SOCKET) return process.env.NOMREH_VNC_UNIX_SOCKET;
+  const dataDirectory = process.env.NOMREH_DATA_DIR || path.join(process.cwd(), "data");
+  return path.join(dataDirectory, "shecan-official", "vnc.sock");
+}
+
+function startShecanVncUnixClient() {
+  const socketPath = configuredUnixSocket();
+  if (!socketPath || unixClient || unixRetry) return;
+  unixStopped = false;
+  unixState = "WAITING";
+  const schedule = () => {
+    if (unixStopped || unixRetry || unixClient) return;
+    unixRetry = setTimeout(connect, 500);
+    if (typeof unixRetry.unref === "function") unixRetry.unref();
+  };
+  const connect = () => {
+    unixRetry = null;
+    if (unixStopped || unixClient) return;
+    try {
+      if (!fs.lstatSync(socketPath).isSocket()) throw new Error("Not a UNIX socket");
+    } catch {
+      unixState = "WAITING";
+      schedule();
+      return;
+    }
+    const socket = net.createConnection({ path: socketPath });
+    unixClient = socket;
+    unixState = "CONNECTING";
+    socket.once("connect", () => {
+      unixAccepted += 1;
+      unixState = "CONNECTED";
+      socket.pause();
+      socket.on("error", () => undefined);
+      const waiter = reverseWaiters.shift();
+      if (waiter) {
+        clearTimeout(waiter.timer);
+        waiter.resolve(socket);
+      } else if (reverseSockets.length < MAX_SESSIONS) {
+        reverseSockets.push(socket);
+      } else {
+        socket.destroy();
+      }
+    });
+    socket.once("error", () => {
+      if (unixState === "CONNECTING") unixState = "ERROR";
+    });
+    socket.once("close", () => {
+      const index = reverseSockets.indexOf(socket);
+      if (index >= 0) reverseSockets.splice(index, 1);
+      if (unixClient === socket) unixClient = null;
+      if (!unixStopped) {
+        unixState = "RECONNECTING";
+        schedule();
+      }
+    });
+  };
+  schedule();
+}
+
 function reverseDiagnostics(port) {
   const listener = reverseServer?.listening ? "LISTENING" : "NO_LISTENER";
   let guestFlag = "GUEST_UNKNOWN";
@@ -183,7 +249,7 @@ function reverseDiagnostics(port) {
     const command = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8");
     guestFlag = command.includes(`nomreh_vnc_reverse=${port}`) ? "GUEST_FLAG_OK" : "GUEST_FLAG_MISSING";
   } catch { guestFlag = "GUEST_UNKNOWN"; }
-  return `${listener}_${guestFlag}_Q${Math.min(reverseSockets.length, 9)}_A${Math.min(reverseAccepted, 99)}_R${Math.min(reverseRejected, 99)}_${reverseLastRejection}`;
+  return `${listener}_${guestFlag}_Q${Math.min(reverseSockets.length, 9)}_A${Math.min(reverseAccepted, 99)}_R${Math.min(reverseRejected, 99)}_${reverseLastRejection}_U${Math.min(unixAccepted, 9)}_${unixState}`;
 }
 
 function reverseTimeoutMs() {
@@ -192,7 +258,7 @@ function reverseTimeoutMs() {
 }
 
 function takeReverseSocket(port) {
-  ensureReverseServer(port);
+  if (port) ensureReverseServer(port);
   if (reverseSockets.length) return Promise.resolve(reverseSockets.shift());
   return new Promise((resolve, reject) => {
     const waiter = { resolve, reject, timer: null };
@@ -317,7 +383,7 @@ async function createSession(request, response, applicationPort) {
   request.nomrehVncStage = "VNC_CONFIG";
   const reversePort = configuredReversePort();
   let socket;
-  if (reversePort) {
+  if (reversePort || !unixStopped) {
     request.nomrehVncStage = "VNC_REVERSE";
     try {
       socket = await takeReverseSocket(reversePort);
@@ -415,6 +481,10 @@ function handleShecanVncHttp(request, response, applicationPort) {
 }
 
 function closeShecanVncHttpSessions() {
+  unixStopped = true;
+  unixState = "DISABLED";
+  if (unixRetry) { clearTimeout(unixRetry); unixRetry = null; }
+  if (unixClient) { unixClient.destroy(); unixClient = null; }
   for (const session of [...sessions.values()]) destroySession(session);
   for (const socket of reverseSockets.splice(0)) socket.destroy();
   for (const waiter of reverseWaiters.splice(0)) {
@@ -427,4 +497,4 @@ function closeShecanVncHttpSessions() {
   }
 }
 
-module.exports = { handleShecanVncHttp, closeShecanVncHttpSessions, startShecanVncReverseServer, HTTP_CHANNEL_PATH };
+module.exports = { handleShecanVncHttp, closeShecanVncHttpSessions, startShecanVncReverseServer, startShecanVncUnixClient, HTTP_CHANNEL_PATH };
