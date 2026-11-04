@@ -46,6 +46,35 @@ function subscriptionUsage() {
   return Number.isFinite(kibibytes) ? { text: formatMiB(kibibytes), kibibytes } : { text: "unavailable" };
 }
 
+function processReport() {
+  const result = spawnSync("ps", ["-eo", "pid=,etime=,args="], { encoding: "utf8", timeout: 15000 });
+  if (result.error || result.status !== 0) {
+    console.log("Nomreh process report: unavailable");
+    return;
+  }
+  const rows = [];
+  for (const line of String(result.stdout || "").split(/\r?\n/)) {
+    const match = line.trim().match(/^(\d+)\s+(\S+)\s+([\s\S]+)$/);
+    if (!match) continue;
+    const [, pid, elapsed, args] = match;
+    let cwd = "";
+    try { cwd = fs.readlinkSync(`/proc/${pid}/cwd`); } catch { /* CageFS can hide proc cwd. */ }
+    const inApplication = cwd === APP_ROOT || cwd.startsWith(`${APP_ROOT}/`) || args.includes(`${APP_ROOT}/`);
+    if (!inApplication) continue;
+    let kind = "";
+    if (/(?:^|\/)xray(?:\s|$)/.test(args) || args.includes("nomreh-v2ray/xray")) kind = "xray";
+    else if (/next(?:\.js)?\s+build|next\/dist\/bin\/next\s+build/.test(args)) kind = "next-build";
+    else if (/(?:^|\/)node(?:\s|$)/.test(args) && /next|server\.js|npm/.test(args)) kind = "node-app";
+    if (kind) rows.push({ pid, elapsed, kind });
+  }
+  if (!rows.length) {
+    console.log("Nomreh process report: no matching Next/Xray process visible");
+    return;
+  }
+  for (const row of rows.slice(0, 80)) console.log(`Nomreh process: ${row.kind} pid=${row.pid} elapsed=${row.elapsed}`);
+  if (rows.length > 80) console.log(`Nomreh process report: ${rows.length - 80} additional matching processes omitted`);
+}
+
 function freeSpace(target) {
   const existing = fs.existsSync(target) ? target : path.dirname(target);
   const result = spawnSync("df", ["-kP", existing], { encoding: "utf8", timeout: 20000 });
@@ -117,6 +146,7 @@ if (fs.existsSync(runtimeRoot)) {
 }
 
 console.log("");
+processReport();
 console.log(`Available space on application filesystem: ${freeSpace(APP_ROOT)}`);
 console.log(`Available space on data filesystem:        ${freeSpace(DATA_DIR)}`);
 console.log("\nReport complete. No files were changed or deleted.");
