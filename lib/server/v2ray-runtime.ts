@@ -307,10 +307,22 @@ async function startXray(row: V2RayConfigRow): Promise<RunningV2Ray> {
 
 async function stopXray(running: RunningV2Ray | undefined): Promise<void> {
   if (!running) return;
+  const wasClosed = running.closed || running.child.exitCode !== null || running.child.signalCode !== null;
   running.closed = true;
   if (globalStore.__nomrehV2RayRuntime === running) delete globalStore.__nomrehV2RayRuntime;
   await running.agent.close().catch(() => undefined);
-  if (running.child.exitCode === null && !running.child.killed) running.child.kill("SIGTERM");
+  if (!wasClosed) {
+    const child = running.child;
+    const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
+    if (child.exitCode === null && !child.killed) child.kill("SIGTERM");
+    await Promise.race([closed, new Promise<void>((resolve) => setTimeout(resolve, 1200))]);
+    if (child.exitCode === null && child.signalCode === null) {
+      // A failed probe must not leave an orphaned proxy consuming memory or
+      // holding a loopback port. This targets only the child we spawned.
+      child.kill("SIGKILL");
+      await Promise.race([closed, new Promise<void>((resolve) => setTimeout(resolve, 1200))]);
+    }
+  }
   fs.rmSync(running.configPath, { force: true });
 }
 
