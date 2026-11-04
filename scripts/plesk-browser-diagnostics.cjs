@@ -95,7 +95,7 @@ function labelValues(text, labels) {
 }
 
 async function main() {
-  if (!["diagnose", "upload", "extract", "runtime-extract", "vm-probe", "cleanup-vm-probe", "build", "status", "disk", "os-info", "account-network", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime", "cancel-stale-build"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
+  if (!["diagnose", "upload", "extract", "runtime-extract", "vm-probe", "cleanup-vm-probe", "build", "status", "disk", "os-info", "account-network", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime", "cancel-stale-build", "build-process"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
   const panel = normalizePanelUrl(process.env.PLESK_PANEL_URL || "");
   const readOnly = ACTION === "diagnose" || ACTION === "status" || ACTION === "account-network";
   const actionDescription = ACTION === "upload"
@@ -128,6 +128,8 @@ async function main() {
                     ? "Controlled action: remove only exact Nomreh deployment ZIP archives in the application root, preserving the current validated archive and every application, runtime, upload, persistent-data, and user file."
                     : ACTION === "cancel-stale-build"
                   ? "Controlled action: cancel only the visibly matching stale Nomreh build:plesk task. No file, database, DNS, restart, or other domain is touched."
+                : ACTION === "build-process"
+                  ? "Controlled read-only action: inspect only the PID recorded by Nomreh build-progress.txt and verify its build command and application root. No process is signalled and no file or setting is changed."
                 : "Controlled action: run the validated Nomreh production build with its domain-local Node 22 runtime. Node.js enablement and restart remain pending.";
   const lines = ["# Plesk browser diagnostics", "", readOnly
     ? "Read-only browser inspection. No settings, deployments or files were changed."
@@ -470,7 +472,7 @@ async function main() {
         if (statusResult.error) lines.push(`- Status read error: ${sanitize(statusResult.error)}`);
         lines.push("- Read-only status request; no command, restart, or setting change was attempted.", "");
       }
-      if (["diagnose", "build", "status", "disk", "os-info", "account-network", "vm-probe", "cleanup-vm-probe", "cancel-stale-build"].includes(ACTION) && nomrehConsoleLink && await nomrehConsoleLink.count()) {
+      if (["diagnose", "build", "status", "disk", "os-info", "account-network", "vm-probe", "cleanup-vm-probe", "cancel-stale-build", "build-process"].includes(ACTION) && nomrehConsoleLink && await nomrehConsoleLink.count()) {
         const consoleResponsePromise = page.waitForResponse((item) => item.url().includes("/modules/nodejs/index.php/domain/console") && item.request().isNavigationRequest(), { timeout: 15000 }).catch(() => null);
         await nomrehConsoleLink.click({ timeout: 8000 }).catch(() => undefined);
         const consoleResponse = await consoleResponsePromise;
@@ -507,6 +509,32 @@ async function main() {
             for (const line of safeOutput) lines.push(`- Existing output: ${sanitize(line.slice(0, 400))}`);
           }
           lines.push("- Inspection only: no command was entered or executed.", "");
+        }
+        if (ACTION === "build-process") {
+          if (!consoleBody.includes(`Node.js on ${DOMAIN}`) || !consoleBody.includes("/nomreh.arounidea.com")) {
+            throw new Error("The Node command console is not scoped to Nomreh. The build-process inspection was not started.");
+          }
+          const commandInput = page.getByPlaceholder(/Pick a script or command/i).first();
+          const executeButton = page.locator("button[title='Execute command'], button[aria-label='Execute command']").first();
+          const outputElement = page.locator("pre.pul-console-output").first();
+          if (!await commandInput.count() || !await executeButton.count() || !await outputElement.count()) throw new Error("The Nomreh command controls were not found. The build-process inspection was not started.");
+          const source = `const fs=require('fs'),path=require('path');try{const root=process.cwd();if(path.basename(root)!=='nomreh.arounidea.com')throw new Error('BAD_ROOT');const file=path.resolve(root,'../nomreh-data/build-progress.txt');if(!fs.existsSync(file)){console.log('NOMREH_BUILD_PROCESS_NO_PROGRESS');process.exit(0)}const text=fs.readFileSync(file,'utf8').slice(0,16384);const pid=Number((text.match(/^Process ID:\\s*(\\d+)/mi)||[])[1]);const updated=(text.match(/^Updated at:\\s*(.+)$/mi)||[])[1]||'';if(!Number.isInteger(pid)||pid<2){console.log('NOMREH_BUILD_PROCESS_NO_PID');process.exit(0)}let alive=true;try{process.kill(pid,0)}catch(error){alive=error.code!=='ESRCH'}if(!alive){console.log('NOMREH_BUILD_PROCESS_DEAD pid='+pid);process.exit(0)}let cwd='',cmd='',state='';try{cwd=fs.readlinkSync('/proc/'+pid+'/cwd');cmd=fs.readFileSync('/proc/'+pid+'/cmdline','utf8').replace(/\\0/g,' ');const stat=fs.readFileSync('/proc/'+pid+'/stat','utf8');state=(stat.slice(stat.lastIndexOf(')')+2).split(/\\s+/)[0]||'')}catch(error){console.log('NOMREH_BUILD_PROCESS_UNAVAILABLE pid='+pid);process.exit(0)}const verified=cwd===root&&/plesk-node22\\.cjs/.test(cmd)&&/(?:^|\\s)build(?:\\s|$)/.test(cmd);const stale=updated&&Number.isFinite(Date.parse(updated))&&Date.now()-Date.parse(updated)>15*60*1000;console.log('NOMREH_BUILD_PROCESS_ALIVE pid='+pid+' verified='+verified+' stale='+stale+' state='+state);if(!verified)console.log('NOMREH_BUILD_PROCESS_UNSAFE_NO_ACTION');}catch(error){console.log('NOMREH_BUILD_PROCESS_ERROR '+(error.code||'FAILED'));process.exitCode=1}`;
+          const command = `exec -- node -e ${JSON.stringify(source)}`;
+          lines.push("## Controlled read-only Nomreh build-process inspection", "", "- Only the recorded build PID, its executable shape, cwd, state and progress age are inspected. No signal, deletion, restart, or settings change is attempted.", "");
+          await commandInput.fill(command);
+          if (await commandInput.inputValue() !== command) throw new Error("Plesk did not retain the exact build-process inspection command. Nothing was executed.");
+          await executeButton.click({ timeout: 8000 });
+          const startedAt = Date.now();
+          let markers = [];
+          while (Date.now() - startedAt < 65000) {
+            await page.waitForTimeout(1000);
+            const output = await outputElement.innerText().catch(() => "");
+            markers = [...new Set(output.split(/\r?\n/).map((line) => line.trim()).filter((line) => /^NOMREH_BUILD_PROCESS_/.test(line)))];
+            if (markers.some((line) => /NO_PROGRESS|NO_PID|DEAD|ALIVE|UNAVAILABLE|ERROR/.test(line))) break;
+          }
+          if (!markers.length) throw new Error("The scoped build-process inspection did not return a safe marker. No process was signalled.");
+          for (const marker of markers.slice(0, 12)) lines.push(`- Build process: ${sanitize(marker)}`);
+          actionCompleted = true;
         }
         if (ACTION === "cancel-stale-build") {
           if (process.env.PLESK_CONFIRM_STALE_BUILD_CANCEL !== "confirmed") throw new Error("Stale-build cancellation requires the explicit one-time confirmation environment flag. Nothing was clicked.");
@@ -1839,7 +1867,7 @@ async function main() {
         lines.push("## Read-only Nomreh domain logs", "", "- Nomreh's scoped Logs tool was not exposed on the domain card; no alternate domain or log path was accessed.", "");
       }
     }
-    if (["upload", "extract", "runtime-extract", "vm-probe", "cleanup-vm-probe", "build", "status", "disk", "os-info", "account-network", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime", "cancel-stale-build"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Review the reported host state before further action; no live-success claim was made.`);
+    if (["upload", "extract", "runtime-extract", "vm-probe", "cleanup-vm-probe", "build", "status", "disk", "os-info", "account-network", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime", "cancel-stale-build", "build-process"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Review the reported host state before further action; no live-success claim was made.`);
     lines.push("## Result", "", ACTION === "upload"
       ? "The validated application archive was uploaded to Nomreh. Extraction, dependency installation, build, and Node.js enablement remain pending."
       : ACTION === "extract"
@@ -1852,6 +1880,8 @@ async function main() {
               ? "Only the completed harmless probe archive and hash-verified isolated runtime were removed. Subscription usage must be rechecked separately."
         : ACTION === "cancel-stale-build"
           ? "The matched stale Nomreh build task cancellation was requested. No build or live-success claim is made; a fresh validated deployment remains necessary."
+        : ACTION === "build-process"
+          ? "The scoped Nomreh build-process inspection completed without signalling a process or changing files."
         : ACTION === "build"
           ? "The validated Nomreh production build and runtime smoke tests succeeded. Node.js enablement and live validation remain pending."
           : ACTION === "status"
