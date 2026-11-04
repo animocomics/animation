@@ -1,6 +1,6 @@
 name: Nomreh V2Ray live push acceptance
 
-# Fresh bounded activation after the response-body deadline and worker-status fixes.
+# Fresh bounded activation with in-memory-only Xray upstream diagnostics.
 
 on:
   push:
