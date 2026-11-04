@@ -205,17 +205,9 @@ function takeReverseSocket(port) {
   });
 }
 
-async function tcpSelfTest(host) {
-  const server = net.createServer();
-  let socket;
+async function tcpConnectionSelfTest(host, port) {
+  const socket = net.createConnection({ host, port });
   try {
-    await new Promise((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(0, host, resolve);
-    });
-    const address = server.address();
-    if (!address || typeof address === "string") throw new Error("No TCP test port");
-    socket = net.createConnection({ host, port: address.port });
     await new Promise((resolve, reject) => {
       const timer = setTimeout(() => finish(new Error("TCP test timeout")), 2000);
       function finish(error) {
@@ -231,10 +223,7 @@ async function tcpSelfTest(host) {
     });
     return true;
   } catch { return false; }
-  finally {
-    if (socket) socket.destroy();
-    server.close();
-  }
+  finally { socket.destroy(); }
 }
 
 function externalIPv4() {
@@ -247,10 +236,13 @@ function externalIPv4() {
 }
 
 async function loopbackSelfTest() {
-  if (await tcpSelfTest("127.0.0.1")) return "LOCALNET_OK";
-  const external = externalIPv4();
-  if (external && await tcpSelfTest(external)) return "LOCALNET_FAIL_EXTERNAL_OK";
-  return external ? "LOCALNET_FAIL_EXTERNAL_FAIL" : "LOCALNET_FAIL_EXTERNAL_NONE";
+  const port = Number(process.env.NOMREH_HOST_APP_PORT || process.env.PORT || 3000);
+  if (Number.isInteger(port) && port >= 1024 && port <= 65535) {
+    if (await tcpConnectionSelfTest("127.0.0.1", port)) return "APP_LOOPBACK_OK";
+    const external = externalIPv4();
+    if (external && await tcpConnectionSelfTest(external, port)) return "APP_EXTERNAL_OK";
+  }
+  return "APP_TCP_FAIL";
 }
 
 async function connectDirectVnc(request) {
