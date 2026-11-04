@@ -3,6 +3,7 @@ name: Plesk Nomreh read-only disk report
 # Recheck after the harmless VM archive and isolated extraction.
 # Verify the subscription total again after exact probe-artifact cleanup.
 # Re-measure after the validated official-v5 replacement before any further archive retention decision.
+# Verify the post-cleanup subscription total before another runtime archive is built.
 
 on:
   push:
