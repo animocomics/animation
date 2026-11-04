@@ -75,9 +75,15 @@ if ! grep -q 'nomreh_probe=1' /proc/cmdline; then
 fi
 
 vnc_localhost='-localhost'
+vnc_rfb_options=''
 if grep -q 'nomreh_vnc=hostfwd' /proc/cmdline; then vnc_localhost=''; fi
+if grep -q 'nomreh_vnc_unix=1' /proc/cmdline; then
+  # TigerVNC's native UNIX listener avoids the guest's broken local TCP path.
+  # Keep TCP hostfwd available only for the legacy reverse/hostfwd mode.
+  vnc_rfb_options='-rfbport -1 -rfbunixpath /tmp/shecan-vnc.sock -rfbunixmode 0600'
+fi
 /usr/local/bin/Xvnc :0 -geometry 1200x800 -depth 24 \
-  -SecurityTypes None -AlwaysShared $vnc_localhost \
+  -SecurityTypes None -AlwaysShared $vnc_localhost $vnc_rfb_options \
   > /var/log/xvnc.log 2>&1 &
 XVNC_PID=$!
 xvnc_ready=0
@@ -110,7 +116,7 @@ if grep -q 'nomreh_vnc_unix=1' /proc/cmdline; then
     unix_vnc_attempt=0
     while kill -0 "$XVNC_PID" 2>/dev/null; do
       unix_vnc_attempt=$((unix_vnc_attempt + 1))
-      socat OPEN:/dev/ttyS1,raw,echo=0 TCP:127.0.0.1:5900 >> /var/log/vnc-unix.log 2>&1
+      socat OPEN:/dev/ttyS1,raw,echo=0 UNIX-CONNECT:/tmp/shecan-vnc.sock >> /var/log/vnc-unix.log 2>&1
       unix_vnc_status=$?
       if [ "$unix_vnc_attempt" -le 3 ]; then
         echo "NOMREH_OFFICIAL_VNC_UNIX_RELAY_EXIT_${unix_vnc_status}" > /dev/console
