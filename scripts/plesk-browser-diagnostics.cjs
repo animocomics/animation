@@ -733,7 +733,7 @@ async function main() {
             for (const line of contextLines) lines.push(`- Build failure context: ${sanitize(line.slice(0, 500))}`);
             if (!contextLines.length) lines.push("- No sanitized build failure context was exposed by Plesk.");
           };
-          while (Date.now() - buildStartedAt < 40 * 60 * 1000) {
+          while (Date.now() - buildStartedAt < 15 * 60 * 1000) {
             await page.waitForTimeout(4000);
             const currentBody = await page.locator("body").innerText().catch(() => "");
             const currentOutput = currentBody.startsWith(consoleBody) ? currentBody.slice(consoleBody.length) : currentBody;
@@ -758,7 +758,7 @@ async function main() {
           }
           if (!buildSucceeded) {
             appendBuildFailureContext(latestBuildOutput);
-            throw new Error("The Nomreh build did not report completion within 40 minutes. Node.js was not enabled or restarted.");
+            throw new Error("The Nomreh build did not report completion within 15 minutes. Node.js was not enabled or restarted.");
           }
           const buildLines = completedOutput.split(/\r?\n/).map((line) => line.trim()).filter((line) => /\[Nomreh|Node 22|SQLite|canvas|production build|Installing application dependencies|Building Nomreh|added |removed |Compiled|Generating|Finalizing|BUILD_ID/i.test(line) && !/secret|token|password|credential|api.key/i.test(line)).slice(-80);
           for (const line of buildLines) lines.push(`- Build output: ${sanitize(line.slice(0, 400))}`);
