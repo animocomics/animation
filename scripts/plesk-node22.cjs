@@ -79,15 +79,30 @@ function temporaryPath(prefix) {
   return path.join(RUNTIME_ROOT, `.${prefix}-${process.pid}-${Date.now()}`);
 }
 
+function safeChildErrorDetails(value) {
+  return String(value || "").split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !/secret|token|password|credential|api[ ._-]?key|authorization|cookie/i.test(line))
+    .map((line) => line.replace(/(https?:\/\/)[^/\s:@]+(?::[^/\s@]*)?@/gi, "$1[redacted]@").slice(0, 260))
+    .slice(-10).join(" | ").slice(0, 1400);
+}
+
 function execute(command, args, options = {}) {
   const result = spawnSync(command, args, {
     cwd: options.cwd || APP_ROOT,
     env: options.env || process.env,
-    stdio: "inherit",
+    // Keep normal build stdout live, but retain a bounded sanitized error
+    // context when a shared-host child exits without a useful progress stage.
+    stdio: ["inherit", "inherit", "pipe"],
+    encoding: "utf8",
     timeout: options.timeout || 0,
   });
+  if (result.status === 0 && result.stderr) process.stderr.write(result.stderr);
   if (result.error) throw result.error;
-  if (result.status !== 0) throw new Error(`${path.basename(command)} exited with status ${result.status ?? "unknown"}.`);
+  if (result.status !== 0) {
+    const details = safeChildErrorDetails(result.stderr);
+    throw new Error(`${path.basename(command)} exited with status ${result.status ?? "unknown"}.${details ? ` ${details}` : ""}`);
+  }
 }
 
 function hostNpmInvocation() {

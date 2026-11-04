@@ -30,6 +30,8 @@ test("Plesk bootstrap pins Node 22 and delegates both build and production start
   assert.equal(packageJson.scripts.build, "next build --webpack");
   assert.equal(packageJson.dependencies["better-sqlite3"], undefined);
   assert.match(launcher, /require\("node:sqlite"\)/);
+  assert.match(launcher, /safeChildErrorDetails/);
+  assert.match(launcher, /stdio: \["inherit", "inherit", "pipe"\]/);
   assert.match(launcher, /NEXT_TEST_WASM: "1"/);
   assert.match(launcher, /--include=dev", "--omit=optional/);
   assert.match(launcher, /XDG_CACHE_HOME: path\.join\(APP_ROOT, "\.next", "cache"\)/);
