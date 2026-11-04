@@ -51,6 +51,9 @@ interface RunningV2Ray {
   agent: ProxyAgent;
   configPath: string;
   closed: boolean;
+  stderrTail: string;
+  exitCode?: number | null;
+  exitSignal?: string | null;
 }
 
 interface V2RayJob {
@@ -173,7 +176,7 @@ async function reservePort(): Promise<number> {
 function xrayConfig(parsed: ParsedV2RayConfig, port: number, user: string, pass: string): string {
   const outbound = { ...parsed.outbound, tag: "nomreh-ai" };
   return JSON.stringify({
-    log: { loglevel: "none" },
+    log: { loglevel: "warning" },
     inbounds: [{
       tag: "nomreh-loopback-only",
       listen: "127.0.0.1",
@@ -213,7 +216,7 @@ async function startXray(row: V2RayConfigRow): Promise<RunningV2Ray> {
       TMPDIR: process.env.TMPDIR || "/tmp",
       NODE_ENV: process.env.NODE_ENV || "production",
     },
-    stdio: "ignore",
+    stdio: ["ignore", "ignore", "pipe"],
   });
   const token = `Basic ${Buffer.from(`${user}:${pass}`).toString("base64")}`;
   const agent = new ProxyAgent({
@@ -222,10 +225,17 @@ async function startXray(row: V2RayConfigRow): Promise<RunningV2Ray> {
     connect: { timeout: 12_000 },
     requestTls: { timeout: 12_000 },
   });
-  const running: RunningV2Ray = { configId: row.id, child, agent, configPath, closed: false };
+  const running: RunningV2Ray = { configId: row.id, child, agent, configPath, closed: false, stderrTail: "" };
+  child.stderr?.on("data", (chunk: Buffer) => {
+    // Keep diagnostics in memory only. Public status receives a small safe
+    // error code, never this raw log or any endpoint/credential in it.
+    running.stderrTail = `${running.stderrTail}${chunk.toString("utf8")}`.slice(-4096);
+  });
   child.once("error", () => { running.closed = true; });
-  child.once("exit", () => {
+  child.once("exit", (code, signal) => {
     running.closed = true;
+    running.exitCode = code;
+    running.exitSignal = signal;
     fs.rmSync(configPath, { force: true });
     if (globalStore.__nomrehV2RayRuntime === running) delete globalStore.__nomrehV2RayRuntime;
   });
@@ -318,6 +328,15 @@ async function probeAgent(agent: ProxyAgent, timeoutMs = PROBE_TIMEOUT_MS): Prom
 }
 
 function safeV2RayErrorCode(error: unknown): string {
+  const xrayLog = typeof error === "object" && error && "xrayLog" in error && typeof (error as { xrayLog?: unknown }).xrayLog === "string"
+    ? (error as { xrayLog: string }).xrayLog.toLowerCase() : "";
+  if (/prohibited|removed feature|not supported|invalid.*(?:config|address|uuid)|failed to parse/.test(xrayLog)) return "XRAY_CONFIG_REJECTED";
+  if (/blackhole|blocked by routing|route.*block/.test(xrayLog)) return "ROUTE_BLOCKED";
+  if (/no such host|temporary failure in name resolution|dns.*(?:fail|error)|name resolution/.test(xrayLog)) return "UPSTREAM_DNS";
+  if (/x509|certificate|tls.*(?:handshake|error)|handshake.*(?:fail|timeout)/.test(xrayLog)) return "UPSTREAM_TLS";
+  if (/authentication|unauthorized|invalid user|wrong password/.test(xrayLog)) return "UPSTREAM_AUTH";
+  if (/connection refused/.test(xrayLog)) return "UPSTREAM_REFUSED";
+  if (/i\/o timeout|deadline exceeded|failed to dial|failed to connect|timeout/.test(xrayLog)) return "UPSTREAM_TIMEOUT";
   let current = error;
   for (let depth = 0; depth < 5 && current; depth += 1) {
     if (current instanceof Error) {
@@ -325,6 +344,7 @@ function safeV2RayErrorCode(error: unknown): string {
       if (/PROVIDER_PROBE_NOT_JSON/.test(current.message)) return "PROVIDER_NOT_JSON";
       if (/PROVIDER_PROBE_INVALID_JSON/.test(current.message)) return "PROVIDER_INVALID_JSON";
       if (/PROVIDER_PROBE_FAILED/.test(current.message)) return "PROVIDER_REJECTED";
+      if (/^(?:XRAY_CONFIG_REJECTED|ROUTE_BLOCKED|UPSTREAM_DNS|UPSTREAM_TLS|UPSTREAM_AUTH|UPSTREAM_REFUSED|UPSTREAM_TIMEOUT)$/.test(current.message)) return current.message;
       if (/XRAY_EXITED/.test(current.message)) return "XRAY_EXITED";
       if (/هستهٔ Xray|هستهٔ V2Ray/.test(current.message)) return "CORE_INVALID";
     }
@@ -351,7 +371,12 @@ async function testRow(row: V2RayConfigRow): Promise<number> {
       try { return await probeAgent(running.agent); }
       catch (error) { lastError = error; await new Promise((resolve) => setTimeout(resolve, 150)); }
     }
-    throw lastError instanceof Error ? lastError : new Error("V2RAY_PROBE_FAILED");
+    const error = lastError instanceof Error ? lastError : new Error("V2RAY_PROBE_FAILED");
+    (error as Error & { xrayLog?: string }).xrayLog = running.stderrTail;
+    throw error;
+  } catch (error) {
+    if (error instanceof Error) (error as Error & { xrayLog?: string }).xrayLog = running.stderrTail;
+    throw error;
   } finally {
     await stopXray(running);
   }
