@@ -79,7 +79,7 @@ async function main(): Promise<void> {
     ]);
     const runtimePayload = await runtimeResponse.json();
     await adminPage.text();
-    if (adminPage.status !== 200 || !runtimeResponse.ok || runtimePayload.runtime?.applicationKind !== "windows" || !runtimePayload.runtime?.appReady || runtimePayload.runtime?.brokerReady) {
+    if (adminPage.status !== 200 || !runtimeResponse.ok || runtimePayload.runtime?.applicationKind !== "windows" || !runtimePayload.runtime?.appReady || runtimePayload.runtime?.activationReady) {
       throw new Error("The authenticated admin API did not preserve the Windows display/AI readiness boundary");
     }
     const wsOrigin = origin.replace(/^http:/, "ws:");

@@ -81,6 +81,19 @@ test("Windows readiness requires live application/viewer processes and a fresh s
     assert.equal(ready.brokerReady, false, "a visible Windows form must not open the AI route");
     assert.equal(ready.activationReady, false);
 
+    const brokerProcess = tokenProcess("bun.exe");
+    children.push(brokerProcess);
+    assert.ok(brokerProcess.pid);
+    fs.writeFileSync(path.join(state, "status.json"), JSON.stringify({ ...status, brokerPid: brokerProcess.pid }));
+    fs.writeFileSync(path.join(state, "broker-status.json"), JSON.stringify({ brokerReady: true, activationReady: false, updatedAt: new Date().toISOString() }));
+    assert.equal(getOfficialRuntimeStatus().brokerReady, true);
+    assert.equal(getOfficialRuntimeStatus().activationReady, false);
+    fs.writeFileSync(path.join(state, "broker-status.json"), JSON.stringify({ brokerReady: true, activationReady: true, activatedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }));
+    assert.equal(getOfficialRuntimeStatus().activationReady, true);
+    fs.writeFileSync(path.join(state, "broker-status.json"), JSON.stringify({ brokerReady: true, activationReady: true, activatedAt: new Date().toISOString(), updatedAt: new Date(Date.now() - 20_000).toISOString() }));
+    assert.equal(getOfficialRuntimeStatus().brokerReady, false, "a stale broker cannot carry AI traffic");
+    assert.equal(getOfficialRuntimeStatus().activationReady, false);
+
     fs.writeFileSync(path.join(state, "status.json"), JSON.stringify({ ...status, updatedAt: new Date(Date.now() - 20_000).toISOString() }));
     assert.equal(getOfficialRuntimeStatus().appReady, false, "a stale status file is not live proof");
 

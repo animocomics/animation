@@ -9,6 +9,8 @@ import {
   isWindowsRuntimeInstalled,
   startWindowsRuntime,
   stopWindowsRuntime,
+  windowsBrokerControlPort,
+  windowsBrokerTokenPath,
 } from "./shecan-windows-runtime";
 
 const REQUIRED_RUNTIME_FILES = [
@@ -121,6 +123,42 @@ export function officialRuntimePorts(): { vnc: number; proxy: number } {
   return { vnc, proxy };
 }
 
+async function sendWindowsGuestActivation(updateUrl: string, servers: [string, string], timeoutMs: number): Promise<string> {
+  let token = "";
+  try { token = fs.readFileSync(windowsBrokerTokenPath(), "utf8").trim(); } catch { /* The safe channel error below is sufficient. */ }
+  if (!/^[a-f0-9]{64}$/i.test(token)) throw new Error("Isolated Shecan control channel is unavailable");
+  const nonce = randomBytes(8).toString("hex");
+  const encode = (value: string) => Buffer.from(value, "utf8").toString("base64");
+  const command = `ACTIVATE ${nonce} ${token} ${encode(updateUrl)} ${encode(servers[0])} ${encode(servers[1])}\n`;
+  return new Promise<string>((resolve, reject) => {
+    const socket = net.createConnection({ host: "127.0.0.1", port: windowsBrokerControlPort() });
+    let settled = false;
+    let received = "";
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      if (error) reject(error);
+      else resolve(new Date().toISOString());
+    };
+    const timer = setTimeout(() => finish(new Error("Isolated Shecan activation timed out")), timeoutMs);
+    socket.once("connect", () => { socket.write(command); });
+    socket.on("data", (chunk) => {
+      received = `${received}${chunk.toString("utf8")}`.slice(-512);
+      const line = received.split(/\r?\n/, 1)[0].trim();
+      if (!line) return;
+      const [status, responseNonce, rawCode] = line.split(" ");
+      if (responseNonce !== nonce) { finish(new Error("Isolated Shecan control channel returned an invalid response")); return; }
+      if (status === "OK") { finish(); return; }
+      const code = String(rawCode || "FAILED").replace(/[^A-Z0-9_]/g, "").slice(0, 32) || "FAILED";
+      finish(new Error(`Isolated Shecan activation failed: ${code}`));
+    });
+    socket.once("error", () => finish(new Error("Isolated Shecan control channel is unavailable")));
+    socket.once("close", () => { if (!settled) finish(new Error("Isolated Shecan control channel closed")); });
+  });
+}
+
 /** Send one scoped activation command without ever placing the secret in argv or logs. */
 export async function sendOfficialGuestActivation(
   updateUrl: string,
@@ -134,6 +172,7 @@ export async function sendOfficialGuestActivation(
   }
   const socketPath = options.socketPath || controlSocketPath();
   const timeoutMs = Math.max(1000, Math.min(60_000, options.timeoutMs || 45_000));
+  if (isWindowsRuntimeInstalled()) return sendWindowsGuestActivation(updateUrl, servers, timeoutMs);
   const nonce = randomBytes(8).toString("hex");
   const encode = (value: string) => Buffer.from(value, "utf8").toString("base64");
   const command = `ACTIVATE ${nonce} ${encode(updateUrl)} ${encode(servers[0])} ${encode(servers[1])}\n`;

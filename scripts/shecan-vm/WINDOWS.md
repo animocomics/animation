@@ -4,7 +4,8 @@ This path runs the user-supplied `shecan (2).exe` as the **Windows** application
 
 - Installer: `shecan (2).exe`, 19,580,936 bytes, SHA-256 `362f73e9603a49d7c323feab7f747b6c97feaad1dfc4d649df18cef0ccdc54e7`.
 - Installed application: `shecan-desktop.exe` v0.2.15, SHA-256 `6b3e75c103a4db93bbd26b81c09e065ce0a13bb792ce0fa97daa2d59464284db`.
-- Runtime: Wine 9.22, WebView2 133.0.3065.92 and Mesa WGL 26.1.8. The genuine WebView2 executable remains unchanged.
+- Runtime: Wine 9.22, WebView2 133.0.3065.92, Mesa WGL 26.1.8 and Bun Windows 1.4.4 for the isolated AI broker. The genuine WebView2 and Shecan executables remain unchanged.
+- `patch-wine-udp.py` backports only Wine's `SIO_UDP_NETRESET` compatibility to its pinned `ws2_32.dll`; it never modifies Shecan. Upstream `ws2_32` SHA-256 is `0b95ac832d032340beeb90e00e32fbf252f7f0ab0630c2f90925f15709ec5afd`, patched SHA-256 is `6b87090add7975557598eb87691e0a11a4fb3a59f350e0046624e064c5a853f9`.
 - `native/webview2-shim.c` only supplies browser arguments that Wails' read-only options object cannot set, and enables a loopback DevTools endpoint. It forwards environment creation to the genuine `EmbeddedBrowserWebView-real.dll`.
 - `native/winbrand.c` supplies Wine's missing `BrandingFormatString`; its source is based on Wine's LGPL winbrand implementation.
 
@@ -14,19 +15,27 @@ This path runs the user-supplied `shecan (2).exe` as the **Windows** application
 
 Use `SHECAN_PREVIEW_HOST=127.0.0.1` behind Nomreh's authenticated admin proxy. A public `0.0.0.0` bind is only for the isolated Arena live preview. The viewer's `/frame` endpoint returns only the latest JPEG. `/input` accepts the same bounded mouse/keyboard messages over HTTP only from loopback; neither endpoint exposes CDP evaluation.
 
-`windows-supervisor.mjs` owns Xvfb, Wine and the viewer. It checks actual CDP/viewer readiness, restarts failed processes with bounded backoff, and writes a non-secret status file. It does not mark the application ready merely because a PID exists.
+`windows-supervisor.mjs` owns Xvfb, Wine, the viewer and the Windows AI broker. It checks actual CDP/viewer readiness, restarts failed processes with bounded backoff, and writes non-secret status files. It does not mark the application ready merely because a PID exists. The broker is stopped/restarted with the application and never inherits an activation from a previous process.
 
 ## Nomreh admin integration
 
-- `lib/server/shecan-windows-runtime.ts` verifies a format-2 manifest, including the exact installer hash and ten required runtime/application files. Readiness requires live Wine and viewer PIDs plus a fresh supervisor status.
+- `lib/server/shecan-windows-runtime.ts` verifies a format-2 manifest, including the exact installer hash and twelve required runtime/application files. Display readiness requires live Wine and viewer PIDs plus a fresh supervisor status; broker readiness separately requires a live Bun process and fresh broker status.
 - `components/shecan-windows-screen.tsx` draws the genuine screencast inside the existing admin console. It first uses the authenticated same-origin WebSocket `/api/admin/shecan-runtime/windows`, then falls back to polling `windows-frame` and ordered `windows-input` requests when a proxy does not forward upgrades.
 - The WebSocket and HTTP paths require the same admin session and origin checks. HTTP input is limited to 4KB and a bounded client-side queue. No browser code connects to the server's loopback address.
 - `next-server.cjs` and the existing runtime API select the Windows supervisor when its manifest is installed. Existing manual-link, V2Ray and provider settings remain separate.
-- A visible Windows login is **not** AI activation. `brokerReady` and `activationReady` remain false until a real AI broker and activation check exist, so provider traffic cannot fail open through a display-only runtime.
+- A visible Windows login is **not** AI activation. `brokerReady` requires the real loopback broker; `activationReady` additionally requires a successful official update-link response. Provider traffic cannot fail open through a display-only or unactivated runtime.
+
+## Scoped AI broker
+
+`windows-ai-broker.mjs` runs under the same Wine prefix using the verified `windows-ai/bun.exe`. It listens only on loopback: port `18888` accepts HTTP CONNECT and port `18889` accepts the token-authenticated activation command. The control token is a 0600 file in the private state directory and is never printed or placed in the update URL.
+
+CONNECT is restricted to Nomreh's seven provider hostnames and port 443. The broker resolves only those names through scoped Shecan UDP/53, DoH, DoT and UDP/5353 attempts, then tunnels bytes to the returned address. TLS, SNI, Host and certificate validation remain end-to-end between Nomreh's provider client and the provider. There is no direct-IP, system-DNS, host-wide DNS, or arbitrary-destination fallback.
+
+The official update link is sent only over the authenticated loopback control channel. Activation uses the exact Shecan host, bounded documented address fallbacks and HTTPS certificate validation; its path/query is never logged or persisted in broker status. The existing provider test still has to return a valid provider response after activation.
 
 ## Portable runtime finalization
 
-`finalize-windows-runtime.mjs` copies the small `xkbcomp`/`libxkbfile` pair into `xkb/` and changes only the Xvfb helper path from `/usr/bin` to the runtime-relative `xkb/bin`. It preserves the upstream Xvfb beside the patched binary and writes the ten-file hash manifest. This avoids any root account, system-wide symlink, or host XKB installation on the production host.
+`finalize-windows-runtime.mjs` copies the small `xkbcomp`/`libxkbfile` pair into `xkb/` and changes only the Xvfb helper path from `/usr/bin` to the runtime-relative `xkb/bin`. It preserves the upstream Xvfb beside the patched binary and writes the twelve-file hash manifest. This avoids any root account, system-wide symlink, or host XKB installation on the production host.
 
 During runtime assembly, provide the already-built xkbcomp and run:
 
@@ -66,8 +75,9 @@ Validated on the isolated Linux display:
 2. Terminating the Wine application produced a new application PID and returned `phase=ready` with `restarts=1`; the same smoke check passed afterward.
 3. Restarting only the viewer produced a new viewer PID while preserving the application PID; `/healthz` and `/frame` returned healthy again.
 4. The authenticated admin check reported `SHECAN_ADMIN_WINDOWS_SMOKE_OK form=1 filled=true websocket=true http=true authorized=true anonymous_rejected=true`.
-5. After temporary downloads/build directories were removed, cold start and a deliberate application restart both returned to ready and two consecutive smoke checks passed. The remaining runtime measured 2,078,273,581 bytes; no `/usr/bin/xkbcomp` dependency is used.
+5. After temporary downloads/build directories were removed, cold start and a deliberate application restart both returned to ready and two consecutive smoke checks passed. The pre-broker runtime measured 2,078,273,581 bytes; no `/usr/bin/xkbcomp` dependency is used.
 6. The independent Windows WGL test reported OpenGL 4.6, Mesa 26.1.8, llvmpipe (LLVM 23.1.1).
+7. With the broker installed and its test staging removed, the runtime measures 2,194,953,475 bytes. The enumerated download record is 1,732,505,061 bytes plus a separately recorded 23,653,966-byte npm cache; it is not a complete historical network counter.
 
 ## Native module rebuilds and hashes
 
@@ -77,3 +87,9 @@ Validated on the isolated Linux display:
 - `native/bin/winbrand.dll`: `d6d71a8f664913f6342238b511340e023209690d397b71dc518b0dfb420d318c`.
 
 Mesa WGL came from `@gjsify/gl-runtime-win32-x64@0.64.19` (npm tarball 23,626,978 bytes, SHA-256 `b448df8e4eb46082e512ded3985997c79537f21acecfdd4209c3f2c1ac696a7d`). Its `mesa-dist-win.json` pins Mesa 26.1.8 and the included DLL hashes were verified before use.
+
+Bun Windows came from `@oven/bun-windows-x64@1.4.4`; the npm tarball is 55,606,022 bytes with SHA-512 integrity `sha512-a3LNctBVO8PjePsFZfwDleF2JXYf2BfQ1u/PLRnBDLnC2Riml+4+LgJpKj4xRGhB92KweGyQI5PXaTkP9qypMQ==`. The extracted `windows-ai/bun.exe` SHA-256 is `cb1d8e6564e655e49d30cead359750a1cbbd12f42651caa4b62244d7bd93c244`.
+
+## Current live validation boundary
+
+The isolated Arena instance has passed genuine WebView2 frame/input, Bun Windows TCP and pinned-SNI TLS smokes, authenticated admin transports, non-provider CONNECT rejection, provider fail-closed behavior, and application-plus-broker restart recovery. Its live state is `appReady=true`, `brokerReady=true`, `activationReady=false`: outbound Shecan activation/provider endpoints are not reachable from this sandbox, so no AI routing or real grading success is claimed here. Production activation must be proven separately on the user's host.

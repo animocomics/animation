@@ -8,6 +8,8 @@ const xkbLibrarySource = path.resolve(process.env.SHECAN_XKB_LIB_SOURCE || path.
 const xvfbRelative = 'x-server-aws/package/lib/aws-2/poppler-0.26-xvfb/bin/Xvfb';
 const requiredFiles = [
   'wine-src/wine/bin/wine64',
+  'wine-src/wine/lib/wine/x86_64-windows/ws2_32.dll',
+  'windows-ai/bun.exe',
   'x-server-aws/package/lib/aws-2/poppler-0.26-xvfb/bin/Xvfb',
   'xkb/bin/xkbcomp',
   'xkb/lib/libxkbfile.so.1',

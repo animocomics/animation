@@ -18,8 +18,18 @@ function openSocket(url) {
   });
 }
 
-const targets = await (await fetch(`${cdpHttp}/json/list`, { signal: AbortSignal.timeout(5000) })).json();
-const target = targets.find((item) => item.type === 'page' && item.url.startsWith('http://wails.localhost/'));
+let target;
+const targetDeadline = Date.now() + 45_000;
+while (!target && Date.now() < targetDeadline) {
+  try {
+    const response = await fetch(`${cdpHttp}/json/list`, { signal: AbortSignal.timeout(5000) });
+    if (response.ok) {
+      const targets = await response.json();
+      target = targets.find((item) => item.type === 'page' && item.url.startsWith('http://wails.localhost/'));
+    }
+  } catch { /* The supervisor may still be starting Wine/CDP. */ }
+  if (!target) await sleep(250);
+}
 if (!target) throw new Error('Shecan WebView2 page is not available');
 const cdp = await openSocket(target.webSocketDebuggerUrl);
 let nextId = 0;

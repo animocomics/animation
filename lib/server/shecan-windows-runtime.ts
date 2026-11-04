@@ -8,6 +8,8 @@ export const SHECAN_WINDOWS_INSTALLER_SHA256 = "362f73e9603a49d7c323feab7f747b6c
 
 export const REQUIRED_WINDOWS_RUNTIME_FILES = [
   "wine-src/wine/bin/wine64",
+  "wine-src/wine/lib/wine/x86_64-windows/ws2_32.dll",
+  "windows-ai/bun.exe",
   "x-server-aws/package/lib/aws-2/poppler-0.26-xvfb/bin/Xvfb",
   "xkb/bin/xkbcomp",
   "xkb/lib/libxkbfile.so.1",
@@ -25,7 +27,9 @@ type WindowsStatusFile = {
   updatedAt?: string;
   applicationPid?: number;
   previewPid?: number;
+  brokerPid?: number;
   xvfbPid?: number;
+  brokerError?: string;
   supervisorPid?: number;
   lastError?: string;
 };
@@ -43,6 +47,8 @@ function supervisorScriptPath(): string {
 }
 
 function statusPath(): string { return path.join(windowsStateRoot(), "status.json"); }
+function brokerStatusPath(): string { return path.join(windowsStateRoot(), "broker-status.json"); }
+export function windowsBrokerTokenPath(): string { return path.join(windowsStateRoot(), "broker-control-token"); }
 function supervisorPidPath(): string { return path.join(windowsStateRoot(), "supervisor.pid"); }
 function stopRequestedPath(): string { return path.join(windowsStateRoot(), "stop-requested"); }
 
@@ -98,6 +104,21 @@ function readStatus(): WindowsStatusFile {
   } catch { return {}; }
 }
 
+type WindowsBrokerStatus = {
+  brokerReady?: boolean;
+  activationReady?: boolean;
+  activatedAt?: string;
+  updatedAt?: string;
+  lastError?: string;
+};
+
+function readBrokerStatus(): WindowsBrokerStatus {
+  try {
+    const value = JSON.parse(fs.readFileSync(brokerStatusPath(), "utf8")) as WindowsBrokerStatus;
+    return value && typeof value === "object" ? value : {};
+  } catch { return {}; }
+}
+
 function freshTimestamp(value: string | undefined): boolean {
   const timestamp = value ? Date.parse(value) : 0;
   return Number.isFinite(timestamp) && timestamp > 0 && Date.now() - timestamp >= 0 && Date.now() - timestamp < 15_000;
@@ -111,28 +132,34 @@ function safeError(value: string | undefined): string | undefined {
 export function getWindowsRuntimeStatus(): OfficialRuntimeStatus {
   const installed = isWindowsRuntimeInstalled();
   const status = readStatus();
+  const broker = readBrokerStatus();
   const running = processHasToken(status.applicationPid, "shecan-desktop.exe");
   const previewRunning = processHasToken(status.previewPid, "live-preview.mjs");
+  const brokerRunning = processHasToken(status.brokerPid, "bun.exe");
   const supervisorRunning = processHasToken(readPid(supervisorPidPath()), "windows-supervisor.mjs");
   const appReady = Boolean(installed && running && previewRunning && status.phase === "ready" && freshTimestamp(status.updatedAt));
+  const brokerReady = Boolean(appReady && brokerRunning && broker.brokerReady === true && freshTimestamp(broker.updatedAt));
+  const activationReady = Boolean(brokerReady && broker.activationReady === true && Date.parse(broker.activatedAt || "") > 0);
   const errorCode = safeError(status.lastError);
   const markers = [
     running ? "NOMREH_WINDOWS_APP_PROCESS_ALIVE" : "",
     appReady ? "NOMREH_WINDOWS_APP_READY" : "",
     supervisorRunning ? "NOMREH_WINDOWS_SUPERVISOR_RUNNING" : "",
+    brokerReady ? "NOMREH_WINDOWS_AI_BROKER_LISTENING" : "",
+    activationReady ? "NOMREH_WINDOWS_AI_ACTIVATED" : "",
   ].filter(Boolean);
   return {
     installed,
     running,
     appReady,
-    // The real AI broker is a separate readiness boundary. A visible login
-    // form must never make provider traffic fail open through this runtime.
-    brokerReady: false,
-    activationReady: false,
+    brokerReady,
+    activationReady,
     supervisorRunning,
     markers,
     applicationKind: "windows",
     displayTransport: "cdp-screencast",
+    // Display readiness is deliberately independent of activation so a healthy
+    // app never falls back to a startup prompt merely because AI is not ready.
     phase: !installed ? "not-installed" : errorCode ? "error" : appReady ? "ready" : running ? "starting" : "stopped",
     startedAt: status.startedAt,
     errorCode,
@@ -140,11 +167,13 @@ export function getWindowsRuntimeStatus(): OfficialRuntimeStatus {
       ? "بستهٔ ویندوز شکن روی سرور نصب نشده است."
       : errorCode
         ? "اجرای برنامهٔ ویندوز کامل نشد؛ مسیر AI از این محیط استفاده نمی‌کند."
-        : appReady
-          ? "برنامهٔ رسمی ویندوز شکن و نمایش تعاملی آن در حال اجرا هستند."
-          : running
-            ? "برنامهٔ ویندوز شکن در حال راه‌اندازی است."
-            : "محیط ویندوز شکن متوقف است.",
+        : !appReady
+          ? running ? "برنامهٔ ویندوز شکن در حال راه‌اندازی است." : "محیط ویندوز شکن متوقف است."
+          : !brokerReady
+            ? "برنامهٔ رسمی ویندوز و نمایش آن آماده‌اند؛ broker اختصاصی AI هنوز آماده نیست."
+            : !activationReady
+              ? "برنامه و broker ویندوز آماده‌اند؛ فعال‌سازی AI هنوز انجام نشده است."
+              : "برنامهٔ رسمی ویندوز و مسیر اختصاصی AI در حال اجرا هستند.",
   };
 }
 
@@ -169,6 +198,8 @@ function launchWindowsSupervisor(): void {
         SHECAN_PREVIEW_HOST: process.env.NOMREH_SHECAN_WINDOWS_PREVIEW_HOST || "127.0.0.1",
         SHECAN_PREVIEW_PORT: process.env.NOMREH_SHECAN_WINDOWS_PREVIEW_PORT || "6099",
         SHECAN_CDP_PORT: process.env.NOMREH_SHECAN_WINDOWS_CDP_PORT || "9222",
+        SHECAN_PROXY_PORT: process.env.NOMREH_PROXY_PORT || "18888",
+        SHECAN_BROKER_CONTROL_PORT: String(windowsBrokerControlPort()),
       },
     });
     child.on("error", () => undefined);
@@ -178,6 +209,12 @@ function launchWindowsSupervisor(): void {
 
 export function ensureWindowsRuntimeSupervisor(): void {
   if (isWindowsRuntimeInstalled() && !regularFile(stopRequestedPath())) launchWindowsSupervisor();
+}
+
+export function windowsBrokerControlPort(): number {
+  const port = Number(process.env.NOMREH_SHECAN_WINDOWS_CONTROL_PORT || 18889);
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error("Invalid Windows Shecan broker control port");
+  return port;
 }
 
 export async function startWindowsRuntime(_options: { supervise?: boolean } = {}): Promise<OfficialRuntimeStatus> {
@@ -218,7 +255,7 @@ export async function stopWindowsRuntime(): Promise<OfficialRuntimeStatus> {
     await new Promise<void>((resolve) => setTimeout(resolve, 150));
   }
   const status = readStatus();
-  for (const [pid, token] of [[status.previewPid, "live-preview.mjs"], [status.applicationPid, "shecan-desktop.exe"], [status.xvfbPid, "Xvfb"]] as const) {
+  for (const [pid, token] of [[status.previewPid, "live-preview.mjs"], [status.applicationPid, "shecan-desktop.exe"], [status.brokerPid, "bun.exe"], [status.xvfbPid, "Xvfb"]] as const) {
     if (!processHasToken(pid, token)) continue;
     try { process.kill(-pid, "SIGKILL"); } catch {
       try { process.kill(pid, "SIGKILL"); } catch { /* Already exited. */ }

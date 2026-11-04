@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -7,9 +8,13 @@ const stateRoot = path.resolve(process.env.SHECAN_WINDOWS_STATE_DIR || path.join
 const displayNumber = Number(process.env.SHECAN_DISPLAY_NUMBER || 100);
 const previewPort = Number(process.env.SHECAN_PREVIEW_PORT || 6099);
 const cdpPort = Number(process.env.SHECAN_CDP_PORT || 9222);
+const proxyPort = Number(process.env.SHECAN_PROXY_PORT || process.env.NOMREH_PROXY_PORT || 18888);
+const controlPort = Number(process.env.SHECAN_BROKER_CONTROL_PORT || 18889);
 const previewHost = process.env.SHECAN_PREVIEW_HOST || '127.0.0.1';
 const scriptPath = path.resolve(process.cwd(), 'scripts', 'shecan-vm', 'live-preview.mjs');
+const brokerScript = path.resolve(process.cwd(), 'scripts', 'shecan-vm', 'windows-ai-broker.mjs');
 const wineRoot = path.resolve(process.env.SHECAN_WINE_ROOT || path.join(runtimeRoot, 'wine-src', 'wine'));
+const bunBinary = path.join(runtimeRoot, 'windows-ai', 'bun.exe');
 const wineBinary = path.join(wineRoot, 'bin', 'wine64');
 const wineServer = path.join(wineRoot, 'bin', 'wineserver');
 const prefix = path.resolve(process.env.SHECAN_WINE_PREFIX || path.join(runtimeRoot, 'prefix'));
@@ -22,16 +27,21 @@ const statusPath = path.join(stateRoot, 'status.json');
 const supervisorPidPath = path.join(stateRoot, 'supervisor.pid');
 const stopPath = path.join(stateRoot, 'stop-requested');
 const appLogPath = path.join(stateRoot, 'windows-application.log');
+const brokerLogPath = path.join(stateRoot, 'windows-ai-broker.log');
+const brokerTokenPath = path.join(stateRoot, 'broker-control-token');
 const supervisorLogPath = path.join(stateRoot, 'supervisor.log');
 const startedAt = new Date().toISOString();
 let xvfb = null;
 let application = null;
 let preview = null;
+let broker = null;
+let brokerRestartTimer = null;
 let applicationStartedAt = 0;
 let lastReadyAt = 0;
 let restarts = 0;
 let stopping = false;
 let appLog;
+let brokerLog;
 let supervisorLog;
 
 function writeStatus(patch) {
@@ -48,6 +58,7 @@ function writeStatus(patch) {
     cdpPort,
     applicationPid: application?.pid || null,
     previewPid: preview?.pid || null,
+    brokerPid: broker?.pid || null,
     xvfbPid: xvfb?.pid || null,
     restarts,
     updatedAt: new Date().toISOString(),
@@ -105,6 +116,76 @@ function spawnLogged(command, args, options = {}) {
   });
 }
 
+function asWinePath(target) {
+  const resolved = path.resolve(target);
+  if (!resolved.startsWith('/')) throw new Error('Invalid Linux runtime path');
+  return `Z:${resolved.replaceAll('/', '\\')}`;
+}
+
+function ensureBrokerToken() {
+  try {
+    if (/^[a-f0-9]{64}$/i.test(fs.readFileSync(brokerTokenPath, 'utf8').trim())) return;
+  } catch { /* Create a fresh private token below. */ }
+  const temporary = `${brokerTokenPath}.${process.pid}.tmp`;
+  fs.writeFileSync(temporary, `${randomBytes(32).toString('hex')}\n`, { mode: 0o600 });
+  fs.renameSync(temporary, brokerTokenPath);
+}
+
+function scheduleBrokerRestart() {
+  if (stopping || brokerRestartTimer || !application) return;
+  brokerRestartTimer = setTimeout(() => {
+    brokerRestartTimer = null;
+    startBroker();
+  }, 3000);
+  brokerRestartTimer.unref();
+}
+
+function startBroker() {
+  if (stopping || broker || !application || !fs.existsSync(bunBinary) || !fs.existsSync(brokerScript)) return;
+  try {
+    ensureBrokerToken();
+    broker = spawn(wineBinary, [asWinePath(bunBinary), asWinePath(brokerScript)], {
+      cwd: runtimeRoot,
+      detached: true,
+      stdio: ['ignore', brokerLog, brokerLog],
+      env: {
+        ...environment(),
+        SHECAN_BROKER_RUN: '1',
+        SHECAN_BROKER_STATE_DIR: asWinePath(stateRoot),
+        SHECAN_BROKER_TOKEN_FILE: asWinePath(brokerTokenPath),
+        SHECAN_BROKER_PORT: String(proxyPort),
+        SHECAN_BROKER_CONTROL_PORT: String(controlPort),
+      },
+    });
+    writeStatus({ brokerStartedAt: new Date().toISOString(), brokerError: undefined });
+    log('SHECAN_WINDOWS_AI_BROKER_STARTED');
+    broker.once('error', () => {
+      broker = null;
+      writeStatus({ brokerError: 'BROKER_SPAWN_FAILED' });
+      scheduleBrokerRestart();
+    });
+    broker.once('exit', (code, signal) => {
+      broker = null;
+      if (stopping) return;
+      writeStatus({ brokerError: `BROKER_EXIT_${signal || code}` });
+      scheduleBrokerRestart();
+    });
+  } catch {
+    broker = null;
+    writeStatus({ brokerError: 'BROKER_SPAWN_FAILED' });
+    scheduleBrokerRestart();
+  }
+}
+
+function stopBroker() {
+  if (brokerRestartTimer) {
+    clearTimeout(brokerRestartTimer);
+    brokerRestartTimer = null;
+  }
+  terminate(broker);
+  broker = null;
+}
+
 function startXvfb() {
   if (stopping || xvfb) return;
   writeStatus({ phase: 'starting', startedAt, lastError: undefined });
@@ -129,6 +210,7 @@ function startXvfb() {
 
 function startApplication() {
   if (stopping || application || !xvfb) return;
+  stopBroker();
   stopWineProcesses();
   applicationStartedAt = Date.now();
   application = spawnLogged(wineBinary, [windowsApplication], { env: environment() });
@@ -139,6 +221,7 @@ function startApplication() {
   });
   application.once('exit', (code, signal) => {
     application = null;
+    stopBroker();
     if (stopping) return;
     restarts += 1;
     writeStatus({ phase: 'degraded', lastError: `APP_EXIT_${signal || code}` });
@@ -185,6 +268,7 @@ async function monitor() {
   const isReady = await ready();
   if (isReady) {
     lastReadyAt = Date.now();
+    startBroker();
     writeStatus({ phase: 'ready', readyAt: new Date(lastReadyAt).toISOString(), lastError: undefined });
   } else {
     const stuck = application && Date.now() - applicationStartedAt > 120_000;
@@ -225,6 +309,7 @@ function shutdown() {
   if (stopping) return;
   stopping = true;
   writeStatus({ phase: 'stopped', stoppedAt: new Date().toISOString() });
+  stopBroker();
   terminate(preview);
   terminate(application);
   stopWineProcesses();
@@ -234,6 +319,7 @@ function shutdown() {
       if (Number(fs.readFileSync(supervisorPidPath, 'utf8').trim()) === process.pid) fs.unlinkSync(supervisorPidPath);
     } catch { /* Lock already removed. */ }
     if (appLog !== undefined) fs.closeSync(appLog);
+    if (brokerLog !== undefined) fs.closeSync(brokerLog);
     if (supervisorLog !== undefined) fs.closeSync(supervisorLog);
     process.exit(0);
   }, 1200).unref();
@@ -251,6 +337,7 @@ if (process.argv[2] === '--stop') {
   try { fs.unlinkSync(stopPath); } catch { /* Automatic start clears a previous stop. */ }
   fs.mkdirSync(stateRoot, { recursive: true, mode: 0o700 });
   appLog = fs.openSync(appLogPath, 'a', 0o600);
+  brokerLog = fs.openSync(brokerLogPath, 'a', 0o600);
   supervisorLog = fs.openSync(supervisorLogPath, 'a', 0o600);
   process.once('SIGTERM', shutdown);
   process.once('SIGINT', shutdown);
