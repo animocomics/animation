@@ -1,5 +1,7 @@
 name: Nomreh V2Ray live push acceptance
 
+# Second live run after the v50 production build and Passenger restart.
+
 on:
   push:
     branches: [arena/f4b832aa-animation]
