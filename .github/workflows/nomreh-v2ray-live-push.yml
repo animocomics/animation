@@ -1,6 +1,6 @@
 name: Nomreh V2Ray live push acceptance
 
-# Second live run after the v50 production build and Passenger restart.
+# Read-only transport diagnosis after the second live run; no activation is requested.
 
 on:
   push:
@@ -37,6 +37,7 @@ jobs:
           NOMREH_ADMIN_USERNAME: ${{ secrets.NOMREH_ADMIN_USERNAME }}
           NOMREH_ADMIN_PASSWORD: ${{ secrets.NOMREH_ADMIN_PASSWORD }}
           NOMREH_ALLOW_DEMO_ACCOUNTS: "1"
+          NOMREH_V2RAY_READ_ONLY: "1"
           NOMREH_V2RAY_LIVE_OUTPUT: /tmp/nomreh-v2ray-live-test.md
         run: |
           set -euo pipefail
