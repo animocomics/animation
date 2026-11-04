@@ -18,11 +18,23 @@ Use `SHECAN_PREVIEW_HOST=127.0.0.1` behind Nomreh's authenticated admin proxy. A
 
 ## Nomreh admin integration
 
-- `lib/server/shecan-windows-runtime.ts` verifies a format-2 manifest, including the exact installer hash and eight required runtime/application files. Readiness requires live Wine and viewer PIDs plus a fresh supervisor status.
+- `lib/server/shecan-windows-runtime.ts` verifies a format-2 manifest, including the exact installer hash and ten required runtime/application files. Readiness requires live Wine and viewer PIDs plus a fresh supervisor status.
 - `components/shecan-windows-screen.tsx` draws the genuine screencast inside the existing admin console. It first uses the authenticated same-origin WebSocket `/api/admin/shecan-runtime/windows`, then falls back to polling `windows-frame` and ordered `windows-input` requests when a proxy does not forward upgrades.
 - The WebSocket and HTTP paths require the same admin session and origin checks. HTTP input is limited to 4KB and a bounded client-side queue. No browser code connects to the server's loopback address.
 - `next-server.cjs` and the existing runtime API select the Windows supervisor when its manifest is installed. Existing manual-link, V2Ray and provider settings remain separate.
 - A visible Windows login is **not** AI activation. `brokerReady` and `activationReady` remain false until a real AI broker and activation check exist, so provider traffic cannot fail open through a display-only runtime.
+
+## Portable runtime finalization
+
+`finalize-windows-runtime.mjs` copies the small `xkbcomp`/`libxkbfile` pair into `xkb/` and changes only the Xvfb helper path from `/usr/bin` to the runtime-relative `xkb/bin`. It preserves the upstream Xvfb beside the patched binary and writes the ten-file hash manifest. This avoids any root account, system-wide symlink, or host XKB installation on the production host.
+
+During runtime assembly, provide the already-built xkbcomp and run:
+
+```bash
+SHECAN_XKB_COMP_SOURCE=/path/to/xkbcomp node scripts/shecan-vm/finalize-windows-runtime.mjs
+```
+
+The current patched Xvfb SHA-256 is `bfbf982aa7436ae4fcf49964be261ef7fcecd68874ed88849263670bdee16233`. Finalization is idempotent and refuses an ambiguous binary patch.
 
 ## Validation
 
@@ -54,7 +66,8 @@ Validated on the isolated Linux display:
 2. Terminating the Wine application produced a new application PID and returned `phase=ready` with `restarts=1`; the same smoke check passed afterward.
 3. Restarting only the viewer produced a new viewer PID while preserving the application PID; `/healthz` and `/frame` returned healthy again.
 4. The authenticated admin check reported `SHECAN_ADMIN_WINDOWS_SMOKE_OK form=1 filled=true websocket=true http=true authorized=true anonymous_rejected=true`.
-5. The independent Windows WGL test reported OpenGL 4.6, Mesa 26.1.8, llvmpipe (LLVM 23.1.1).
+5. After temporary downloads/build directories were removed, cold start and a deliberate application restart both returned to ready and two consecutive smoke checks passed. The remaining runtime measured 2,078,273,581 bytes; no `/usr/bin/xkbcomp` dependency is used.
+6. The independent Windows WGL test reported OpenGL 4.6, Mesa 26.1.8, llvmpipe (LLVM 23.1.1).
 
 ## Native module rebuilds and hashes
 

@@ -9,6 +9,8 @@ export const SHECAN_WINDOWS_INSTALLER_SHA256 = "362f73e9603a49d7c323feab7f747b6c
 export const REQUIRED_WINDOWS_RUNTIME_FILES = [
   "wine-src/wine/bin/wine64",
   "x-server-aws/package/lib/aws-2/poppler-0.26-xvfb/bin/Xvfb",
+  "xkb/bin/xkbcomp",
+  "xkb/lib/libxkbfile.so.1",
   "prefix/drive_c/Program Files/shecan/shecan-desktop/shecan-desktop.exe",
   "prefix/drive_c/Program Files (x86)/Microsoft/EdgeWebView/Application-Shim/133.0.3065.92/msedgewebview2.exe",
   "prefix/drive_c/Program Files (x86)/Microsoft/EdgeWebView/Application-Shim/133.0.3065.92/EBWebView/x64/EmbeddedBrowserWebView.dll",

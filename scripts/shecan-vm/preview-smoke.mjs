@@ -51,7 +51,12 @@ async function readForm() {
   return result.result.value;
 }
 
-const initial = await readForm();
+let initial = await readForm();
+const formDeadline = Date.now() + 15_000;
+while ((initial.forms !== 1 || initial.ready !== 'complete') && Date.now() < formDeadline) {
+  await sleep(250);
+  initial = await readForm();
+}
 if (initial.forms !== 1 || initial.ready !== 'complete') throw new Error('Shecan login form is not ready');
 if (initial.value && initial.value !== expected) throw new Error('Refusing to replace a non-empty username field');
 
