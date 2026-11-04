@@ -3,6 +3,7 @@
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const net = require("node:net");
+const os = require("node:os");
 const path = require("node:path");
 const { authorizeUpgrade } = require("./shecan-vnc-websocket.cjs");
 
@@ -204,19 +205,19 @@ function takeReverseSocket(port) {
   });
 }
 
-async function loopbackSelfTest() {
+async function tcpSelfTest(host) {
   const server = net.createServer();
   let socket;
   try {
     await new Promise((resolve, reject) => {
       server.once("error", reject);
-      server.listen(0, "127.0.0.1", resolve);
+      server.listen(0, host, resolve);
     });
     const address = server.address();
-    if (!address || typeof address === "string") throw new Error("No loopback test port");
-    socket = net.createConnection({ host: "127.0.0.1", port: address.port });
+    if (!address || typeof address === "string") throw new Error("No TCP test port");
+    socket = net.createConnection({ host, port: address.port });
     await new Promise((resolve, reject) => {
-      const timer = setTimeout(() => finish(new Error("Loopback test timeout")), 1000);
+      const timer = setTimeout(() => finish(new Error("TCP test timeout")), 2000);
       function finish(error) {
         clearTimeout(timer);
         socket.off("connect", onConnect);
@@ -228,12 +229,28 @@ async function loopbackSelfTest() {
       socket.once("connect", onConnect);
       socket.once("error", onError);
     });
-    return "LOCALNET_OK";
-  } catch { return "LOCALNET_FAIL"; }
+    return true;
+  } catch { return false; }
   finally {
     if (socket) socket.destroy();
     server.close();
   }
+}
+
+function externalIPv4() {
+  for (const entries of Object.values(os.networkInterfaces())) {
+    for (const entry of entries || []) {
+      if (entry.family === "IPv4" && !entry.internal) return entry.address;
+    }
+  }
+  return "";
+}
+
+async function loopbackSelfTest() {
+  if (await tcpSelfTest("127.0.0.1")) return "LOCALNET_OK";
+  const external = externalIPv4();
+  if (external && await tcpSelfTest(external)) return "LOCALNET_FAIL_EXTERNAL_OK";
+  return external ? "LOCALNET_FAIL_EXTERNAL_FAIL" : "LOCALNET_FAIL_EXTERNAL_NONE";
 }
 
 async function connectDirectVnc(request) {

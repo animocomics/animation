@@ -27,7 +27,7 @@ jobs:
           DELTA_FILES: components/official-shecan-console.tsx,components/official-vnc-http-channel.ts,lib/server/provider-config.ts,lib/server/shecan-runtime.ts,scripts/next-server.cjs,scripts/shecan-runtime-watchdog.cjs,scripts/shecan-vnc-http.cjs,scripts/shecan-vnc-websocket.cjs,types/novnc.d.ts
         run: |
           set -euo pipefail
-          archive="$RUNNER_TEMP/nomreh-deploy-official-http-v45.zip"
+          archive="$RUNNER_TEMP/nomreh-deploy-official-http-v46.zip"
           git archive --format=zip --output="$archive" "$GITHUB_SHA" $(printf '%s' "$DELTA_FILES" | tr ',' ' ')
           test "$(unzip -Z1 "$archive" | grep -vc '/$')" -eq 9
           grep -F 'new OfficialVncHttpChannel' components/official-shecan-console.tsx > /dev/null
@@ -53,8 +53,8 @@ jobs:
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
           PLESK_BROWSER_ACTION: upload
-          PLESK_ARCHIVE_NAME: nomreh-deploy-official-http-v45.zip
-          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-official-http-v45.zip
+          PLESK_ARCHIVE_NAME: nomreh-deploy-official-http-v46.zip
+          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-official-http-v46.zip
           PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-http-upload.md
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
         run: node scripts/plesk-browser-diagnostics.cjs
@@ -66,7 +66,7 @@ jobs:
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
           PLESK_BROWSER_ACTION: extract
-          PLESK_ARCHIVE_NAME: nomreh-deploy-official-http-v45.zip
+          PLESK_ARCHIVE_NAME: nomreh-deploy-official-http-v46.zip
           PLESK_DELTA_SOURCE: ${{ github.sha }}
           PLESK_DELTA_FILES: components/official-shecan-console.tsx,components/official-vnc-http-channel.ts,lib/server/provider-config.ts,lib/server/shecan-runtime.ts,scripts/next-server.cjs,scripts/shecan-runtime-watchdog.cjs,scripts/shecan-vnc-http.cjs,scripts/shecan-vnc-websocket.cjs,types/novnc.d.ts
           PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-http-extract.md
