@@ -52,6 +52,14 @@ test("stored-link official activation uses the guest activator, real provider-te
   });
   assert.equal(preserved.transport, "dns");
   assert.equal(unexpectedActivation, false, "deployment must not override the manager's selected transport");
+
+  await saveAndTestApiNetwork({ enabled: false, plan: "pro", servers: ["178.22.122.101", "185.51.200.1"], transport: "official-vm" }, admin.id);
+  getDb().prepare("INSERT INTO v2ray_settings (id,enabled,last_test_status,last_test_message,updated_at,updated_by) VALUES (1,1,'success','',?,?) ON CONFLICT(id) DO UPDATE SET enabled=1,last_test_status='success',updated_at=excluded.updated_at,updated_by=excluded.updated_by").run(new Date().toISOString(), admin.id);
+  const guarded = await activateOfficialShecanFromStoredLink({
+    officialActivator: async () => { unexpectedActivation = true; throw new Error("must not activate alongside V2Ray"); },
+  });
+  assert.equal(guarded.enabled, false);
+  assert.equal(unexpectedActivation, false, "an active V2Ray selection must remain mutually exclusive");
 });
 
 test.after(() => {
