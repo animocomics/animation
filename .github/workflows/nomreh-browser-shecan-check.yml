@@ -1,0 +1,84 @@
+name: Nomreh real-browser Shecan and provider check
+
+# Application source under test: 39b666bf238fa820d9e7b42ec3ba470f4e7cb043
+# Hosted source verified by SHA-256 in extraction run 41586651661; app runtime restarted in run 41587101689.
+# Read-only OTP UI inspection sends no real identifier, SMS, OTP, activation, or provider request. The account probe remains credential-free; activation run 41580613143 is still the latest real network attempt.
+
+on:
+  push:
+    branches: [arena/f4b832aa-animation]
+    paths:
+      - deploy/shecan-check.trigger
+
+permissions:
+  contents: read
+  checks: write
+
+concurrency:
+  group: nomreh-browser-shecan-check
+  cancel-in-progress: false
+
+jobs:
+  browser-shecan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install browser diagnostics
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund --package-lock=false
+          npm install --no-save --package-lock=false --ignore-scripts --no-audit --no-fund playwright
+          npx playwright install --with-deps chromium
+      - name: Select activation or read-only stored-result inspection
+        id: mode
+        run: |
+          if grep -Fxq 'mode=read-only' deploy/shecan-check.trigger; then
+            echo 'read_only=1' >> "$GITHUB_OUTPUT"
+          else
+            echo 'read_only=0' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Run controlled real-browser Shecan/provider inspection
+        env:
+          NOMREH_BROWSER_READ_ONLY: ${{ steps.mode.outputs.read_only }}
+          NOMREH_ADMIN_USERNAME: ${{ secrets.NOMREH_ADMIN_USERNAME }}
+          NOMREH_ADMIN_PASSWORD: ${{ secrets.NOMREH_ADMIN_PASSWORD }}
+          SHECAN_UPDATE_URL: ${{ secrets.SHECAN }}
+          NOMREH_BROWSER_SHECAN_OUTPUT: /tmp/nomreh-browser-shecan.md
+        run: node scripts/nomreh-browser-shecan-check.cjs
+      - name: Publish redacted browser evidence
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          test -s /tmp/nomreh-browser-shecan.md
+          python - <<'PY'
+          from pathlib import Path
+          import os, re
+          text = Path('/tmp/nomreh-browser-shecan.md').read_text()
+          if re.search(r'AIza[0-9A-Za-z_-]{8,}|nomreh_session=[^ ]+|Bearer\s+[A-Za-z0-9]|https?://', text):
+              raise SystemExit('Credential-like data or a private link was found in the browser report')
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write(text)
+          print(text)
+          PY
+      - name: Store browser evidence in check output
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          test -s /tmp/nomreh-browser-shecan.md
+          check_id=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs" --jq '.check_runs[] | select(.name == "browser-shecan") | .id' | head -n 1)
+          test -n "$check_id"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          text = Path('/tmp/nomreh-browser-shecan.md').read_text()
+          Path('/tmp/nomreh-browser-shecan-check.json').write_text(json.dumps({'output': {'title': 'Nomreh real-browser Shecan and provider check', 'summary': text}}))
+          PY
+          gh api --method PATCH "repos/${GITHUB_REPOSITORY}/check-runs/${check_id}" --input /tmp/nomreh-browser-shecan-check.json >/dev/null

@@ -1,0 +1,101 @@
+name: Run harmless Shecan VM probe on Plesk
+
+# Timeout reports retain only sanitized QEMU/loader diagnostics, never credentials.
+# Node spawnSync avoids npm package resolution and inherits the harmless VM console.
+# The echoed command is excluded from marker and failure matching.
+
+on:
+  push:
+    branches: [arena/f4b832aa-animation]
+    paths: [.github/workflows/shecan-vm-probe-run.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+  actions: read
+
+concurrency:
+  group: plesk-nomreh-browser
+  cancel-in-progress: false
+
+jobs:
+  run-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check private Plesk browser configuration
+        id: config
+        env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+        run: |
+          configured=false
+          if [ -n "$PLESK_PANEL_URL" ] && [ -n "$PLESK_API_USERNAME" ] && [ -n "$PLESK_API_PASSWORD" ]; then configured=true; fi
+          echo "configured=$configured" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the bounded VM controller
+        if: steps.config.outputs.configured == 'true'
+        uses: actions/checkout@v4
+
+      - name: Verify isolated extraction and harmless VM invariants
+        if: steps.config.outputs.configured == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          test "$(gh api repos/${GITHUB_REPOSITORY}/actions/runs/41593154663 --jq '.status + " " + .conclusion')" = 'completed success'
+          grep -F -- '-nic none' scripts/shecan-vm/run-probe.sh
+          grep -F -- '-m 128M' scripts/shecan-vm/run-probe.sh
+          grep -F 'timeout -k 5 120' scripts/shecan-vm/run-probe.sh
+          grep -F 'NOMREH_VM_PROBE_SHECAN_INCLUDED no' scripts/shecan-vm/probe-init.c
+
+      - name: Prepare an isolated temporary browser
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/plesk-browser"
+          cd "$RUNNER_TEMP/plesk-browser"
+          npm init -y > /dev/null
+          npm install --ignore-scripts --no-audit --no-fund playwright@1.64.1
+          npx playwright install --with-deps chromium
+
+      - name: Boot the networkless diskless VM and require PASS
+        id: probe
+        if: steps.config.outputs.configured == 'true'
+        env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+          PLESK_BROWSER_ACTION: vm-probe
+          PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-plesk-vm-probe-run.md
+          NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
+        run: node scripts/plesk-browser-diagnostics.cjs
+
+      - name: Publish the sanitized Plesk VM result
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CONFIGURED: ${{ steps.config.outputs.configured }}
+          PROBE_OUTCOME: ${{ steps.probe.outcome }}
+        run: |
+          set -euo pipefail
+          conclusion=neutral
+          summary='Plesk browser execution is not configured; no host was contacted.'
+          if [ "$CONFIGURED" = true ]; then
+            conclusion=success
+            if [ "$PROBE_OUTCOME" != success ]; then conclusion=failure; fi
+            if [ -f "$RUNNER_TEMP/nomreh-plesk-vm-probe-run.md" ]; then
+              summary="$(cat "$RUNNER_TEMP/nomreh-plesk-vm-probe-run.md")"
+            else
+              summary='The bounded Plesk VM probe did not produce a report. No Shecan execution, login, activation, connectivity, build, restart, or settings change is claimed.'
+            fi
+          fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name="Harmless Shecan VM on Plesk" \
+            -f head_sha="${GITHUB_SHA}" \
+            -f status=completed \
+            -f conclusion="$conclusion" \
+            -f 'output[title]=Real networkless QEMU compatibility result' \
+            --raw-field "output[summary]=${summary}" > /dev/null

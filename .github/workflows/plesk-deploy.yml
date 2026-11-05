@@ -1,0 +1,74 @@
+name: Deploy to Plesk
+
+on:
+  push:
+    branches:
+      - arena/f4b832aa-animation
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check private Plesk deployment configuration
+        id: config
+        env:
+          PLESK_GIT_URL: ${{ secrets.PLESK_GIT_URL }}
+          PLESK_GIT_USERNAME: ${{ secrets.PLESK_GIT_USERNAME }}
+          PLESK_GIT_PASSWORD: ${{ secrets.PLESK_GIT_PASSWORD }}
+        run: |
+          if [ -z "$PLESK_GIT_URL" ] || [ -z "$PLESK_GIT_USERNAME" ] || [ -z "$PLESK_GIT_PASSWORD" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "Plesk push deployment is not configured; skipping without changing the server."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out the current branch
+        if: steps.config.outputs.configured == 'true'
+        uses: actions/checkout@v4
+
+      - name: Push the current branch to the private Plesk repository
+        id: push
+        if: steps.config.outputs.configured == 'true'
+        continue-on-error: true
+        env:
+          PLESK_GIT_URL: ${{ secrets.PLESK_GIT_URL }}
+          PLESK_GIT_USERNAME: ${{ secrets.PLESK_GIT_USERNAME }}
+          PLESK_GIT_PASSWORD: ${{ secrets.PLESK_GIT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          trap 'status=$?; echo "status=$status" >> "$GITHUB_OUTPUT"' EXIT
+          auth="$(printf '%s:%s' "$PLESK_GIT_USERNAME" "$PLESK_GIT_PASSWORD" | base64 | tr -d '\n')"
+          echo "::add-mask::$auth"
+          clean_url="$(node -e 'const url = new URL(process.env.PLESK_GIT_URL); url.username = ""; url.password = ""; process.stdout.write(url.toString())')"
+          {
+            git -c http.extraHeader="Authorization: Basic ${auth}" push "$clean_url" "HEAD:refs/heads/${GITHUB_REF_NAME}"
+            echo "Pushed ${GITHUB_SHA} to the Plesk repository on branch ${GITHUB_REF_NAME}."
+          } > /tmp/plesk-push.log 2>&1
+          cat /tmp/plesk-push.log
+
+      - name: Publish the Plesk deployment result
+        if: always() && steps.config.outputs.configured == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PUSH_STATUS: ${{ steps.push.outputs.status }}
+        run: |
+          set -u
+          conclusion=success
+          if [ "${PUSH_STATUS:-1}" != "0" ]; then conclusion=failure; fi
+          summary='Plesk deployment completed successfully.'
+          if [ "$conclusion" = failure ]; then summary='Plesk deployment failed. Review the sanitized Git response below.'; fi
+          if [ -f /tmp/plesk-push.log ]; then summary="${summary}"$'\n\n'"$(cat /tmp/plesk-push.log)"; fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name="Plesk deployment" \
+            -f head_sha="${GITHUB_SHA}" \
+            -f status=completed \
+            -f conclusion="$conclusion" \
+            -f 'output[title]=Plesk deployment' \
+            --raw-field "output[summary]=${summary}" > /dev/null
+          if [ "$conclusion" = failure ]; then exit 1; fi

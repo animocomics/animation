@@ -1,0 +1,116 @@
+name: Plesk Nomreh archive extraction
+
+# Validated application source: the exact commit triggering this workflow.
+# Hosted delta verification stays in the live File Manager session without AJAX-resetting navigation.
+# Binary delta manifests allow the verified 6.6 MiB SWC tarball with a bounded 32 MiB per-file limit.
+
+on:
+  push:
+    branches:
+      - arena/f4b832aa-animation
+    paths:
+      - .github/workflows/plesk-browser-extract.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+  actions: read
+
+concurrency:
+  group: plesk-nomreh-browser
+  cancel-in-progress: false
+
+jobs:
+  extract-archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check private Plesk browser configuration
+        id: config
+        env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+        run: |
+          set -u
+          configured=false
+          if [ -n "$PLESK_PANEL_URL" ] && [ -n "$PLESK_API_USERNAME" ] && [ -n "$PLESK_API_PASSWORD" ]; then configured=true; fi
+          echo "configured=$configured" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the browser control script
+        if: steps.config.outputs.configured == 'true'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify the validated Passenger-aware archive upload
+        if: steps.config.outputs.configured == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          upload_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41648639089" --jq '.status + " " + .conclusion')"
+          legacy_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41648582360" --jq '.status + " " + .conclusion')"
+          base_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41647519774" --jq '.status + " " + .conclusion')"
+          test "$upload_state" = "completed success"
+          test "$legacy_state" = "completed success"
+          test "$base_state" = "completed success"
+          grep -F 'Nomreh Passenger-aware launcher is active for this build.' scripts/plesk-node22.cjs > /dev/null
+          grep -F 'return [mainFile];' scripts/plesk-node22.cjs > /dev/null
+          grep -F 'syncPublicStatic();' scripts/plesk-node22.cjs > /dev/null
+          grep -F '"--include=dev", "--omit=optional"' scripts/plesk-node22.cjs > /dev/null
+          grep -F 'webpackBuildWorker: false' next.config.mjs > /dev/null
+          grep -F 'await extractedActions.evaluate((element) => element.click());' scripts/plesk-browser-diagnostics.cjs > /dev/null
+
+      - name: Prepare an isolated temporary browser
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/plesk-browser"
+          cd "$RUNNER_TEMP/plesk-browser"
+          npm init -y > /dev/null
+          npm install --ignore-scripts --no-audit --no-fund playwright@1.64.1
+          npx playwright install --with-deps chromium
+
+      - name: Replace tracked files and verify the validated Nomreh source
+        id: extract
+        if: steps.config.outputs.configured == 'true'
+        env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+          PLESK_BROWSER_ACTION: extract
+          PLESK_ARCHIVE_NAME: nomreh-deploy-offline-swc-v36.zip
+          PLESK_DELTA_SOURCE: ${{ github.sha }}
+          PLESK_DELTA_FILES: package-lock.json,package.json,scripts/plesk-node22.cjs,vendor/next-swc-wasm-nodejs-16.4.3.tgz
+          PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-plesk-extract.md
+          NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
+        run: node scripts/plesk-browser-diagnostics.cjs
+
+      - name: Publish the sanitized extraction result
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CONFIGURED: ${{ steps.config.outputs.configured }}
+          EXTRACT_OUTCOME: ${{ steps.extract.outcome }}
+        run: |
+          set -euo pipefail
+          conclusion=neutral
+          summary='Plesk browser extraction is not configured; no host was contacted.'
+          if [ "$CONFIGURED" = true ]; then
+            conclusion=success
+            if [ "$EXTRACT_OUTCOME" != success ]; then conclusion=failure; fi
+            if [ -f "$RUNNER_TEMP/nomreh-plesk-extract.md" ]; then
+              summary="$(cat "$RUNNER_TEMP/nomreh-plesk-extract.md")"
+            else
+              summary='Extraction did not produce a report; no build, restart, or settings change was attempted.'
+            fi
+          fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name="Plesk Nomreh archive extraction" \
+            -f head_sha="${GITHUB_SHA}" \
+            -f status=completed \
+            -f conclusion="$conclusion" \
+            -f 'output[title]=Nomreh controlled archive extraction' \
+            --raw-field "output[summary]=${summary}" > /dev/null

@@ -1,0 +1,99 @@
+name: Extract harmless Shecan VM probe
+
+# Verification uses the extracted row itself, avoiding the unrelated File Manager tree.
+
+on:
+  push:
+    branches: [arena/f4b832aa-animation]
+    paths: [.github/workflows/shecan-vm-probe-extract.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+  actions: read
+
+concurrency:
+  group: plesk-nomreh-browser
+  cancel-in-progress: false
+
+jobs:
+  extract-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check private Plesk browser configuration
+        id: config
+        env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+        run: |
+          configured=false
+          if [ -n "$PLESK_PANEL_URL" ] && [ -n "$PLESK_API_USERNAME" ] && [ -n "$PLESK_API_PASSWORD" ]; then configured=true; fi
+          echo "configured=$configured" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the scoped extraction controller
+        if: steps.config.outputs.configured == 'true'
+        uses: actions/checkout@v4
+
+      - name: Verify the successful harmless build and upload
+        if: steps.config.outputs.configured == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          test "$(gh api repos/${GITHUB_REPOSITORY}/actions/runs/41592769619 --jq '.status + " " + .conclusion')" = 'completed success'
+          grep -F 'NOMREH_VM_PROBE_NO_NETWORK yes' scripts/shecan-vm/probe-init.c
+          grep -F 'NOMREH_VM_PROBE_SHECAN_INCLUDED no' scripts/shecan-vm/probe-init.c
+          grep -F -- '-nic none' scripts/shecan-vm/run-probe.sh
+
+      - name: Prepare an isolated temporary browser
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/plesk-browser"
+          cd "$RUNNER_TEMP/plesk-browser"
+          npm init -y > /dev/null
+          npm install --ignore-scripts --no-audit --no-fund playwright@1.64.1
+          npx playwright install --with-deps chromium
+
+      - name: Extract only nomreh-vm/probe and verify its runner hash
+        id: extract
+        if: steps.config.outputs.configured == 'true'
+        env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+          PLESK_BROWSER_ACTION: runtime-extract
+          PLESK_ARCHIVE_NAME: nomreh-deploy-shecan-vm-probe-v1.zip
+          PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-plesk-vm-probe-extract.md
+          NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
+        run: node scripts/plesk-browser-diagnostics.cjs
+
+      - name: Publish the sanitized isolated extraction result
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CONFIGURED: ${{ steps.config.outputs.configured }}
+          EXTRACT_OUTCOME: ${{ steps.extract.outcome }}
+        run: |
+          set -euo pipefail
+          conclusion=neutral
+          summary='Plesk browser extraction is not configured; no host was contacted.'
+          if [ "$CONFIGURED" = true ]; then
+            conclusion=success
+            if [ "$EXTRACT_OUTCOME" != success ]; then conclusion=failure; fi
+            if [ -f "$RUNNER_TEMP/nomreh-plesk-vm-probe-extract.md" ]; then
+              summary="$(cat "$RUNNER_TEMP/nomreh-plesk-vm-probe-extract.md")"
+            else
+              summary='The isolated extraction did not produce a report. No VM execution, build, restart, DNS, or settings change was attempted.'
+            fi
+          fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name="Harmless Shecan VM probe extraction" \
+            -f head_sha="${GITHUB_SHA}" \
+            -f status=completed \
+            -f conclusion="$conclusion" \
+            -f 'output[title]=Isolated nomreh-vm/probe extraction only' \
+            --raw-field "output[summary]=${summary}" > /dev/null

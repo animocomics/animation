@@ -1,0 +1,82 @@
+name: Pin official Shecan guest inputs
+
+on:
+  push:
+    branches: [arena/f4b832aa-animation]
+    paths: [.github/workflows/shecan-official-rpm-metadata.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  official-rpm-metadata:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download and hash official guest inputs without executing them
+        id: metadata
+        run: |
+          set -uo pipefail
+          report="$RUNNER_TEMP/shecan-guest-metadata.txt"
+          : > "$report"
+          failures=0
+          rpm="$RUNNER_TEMP/shecan-v3.0.30-linux-amd64.rpm"
+          rpm_cookies="$RUNNER_TEMP/shecan-rpm.cookies"
+          rpm_url='https://dl.shecan.ir/download/linux/amd64?version=v3.0.30&format=rpm'
+          rpm_http="$(curl --silent --show-error --fail --location --max-time 180 \
+            --user-agent 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/142.0 Safari/537.36' \
+            --cookie "$rpm_cookies" --cookie-jar "$rpm_cookies" \
+            --output "$rpm" --write-out '%{http_code}' "$rpm_url" 2> "$RUNNER_TEMP/rpm-curl.log")"
+          rpm_status=$?
+          if [ "$rpm_status" -ne 0 ]; then
+            echo "Official Shecan RPM download failed with curl exit ${rpm_status}, HTTP ${rpm_http:-000}; no package was executed." >> "$report"
+            rm -f "$rpm"
+            failures=1
+          else
+            rpm_bytes="$(stat -c %s "$rpm")"
+            if [ "$rpm_bytes" -le 20000000 ] || [ "$rpm_bytes" -ge 120000000 ]; then
+              echo "Official Shecan RPM had an unexpected size of ${rpm_bytes} bytes; no package was executed." >> "$report"
+              failures=1
+            else
+              rpm_hash="$(sha256sum "$rpm" | cut -d' ' -f1)"
+              echo "Official Shecan v3.0.30 Linux x86-64 RPM; HTTPS ${rpm_http}; bytes ${rpm_bytes}; SHA-256 ${rpm_hash}; not executed." >> "$report"
+            fi
+          fi
+
+          alpine="$RUNNER_TEMP/alpine-netboot-3.24.2-initramfs-virt"
+          alpine_url='https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/x86_64/netboot-3.24.2/initramfs-virt'
+          if curl --fail --location --silent --show-error --retry 4 --retry-all-errors \
+            --max-time 180 --output "$alpine" "$alpine_url" 2> "$RUNNER_TEMP/alpine-curl.log"; then
+            if gzip -t "$alpine" 2>/dev/null; then
+              alpine_bytes="$(stat -c %s "$alpine")"
+              alpine_hash="$(sha256sum "$alpine" | cut -d' ' -f1)"
+              echo "Alpine v3.24.2 x86-64 netboot initramfs-virt; bytes ${alpine_bytes}; SHA-256 ${alpine_hash}; gzip verified." >> "$report"
+            else
+              echo 'Alpine initramfs was not a valid gzip stream and was rejected.' >> "$report"
+              failures=1
+            fi
+          else
+            alpine_status=$?
+            echo "Alpine initramfs download failed with curl exit ${alpine_status}; no guest was built." >> "$report"
+            failures=1
+          fi
+          cat "$report"
+          exit "$failures"
+      - name: Publish the sanitized package metadata
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          METADATA_OUTCOME: ${{ steps.metadata.outcome }}
+        run: |
+          set -euo pipefail
+          conclusion=neutral
+          if [ "$METADATA_OUTCOME" != success ]; then conclusion=failure; fi
+          summary='Guest input metadata did not complete; no binary was executed.'
+          if [ -f "$RUNNER_TEMP/shecan-guest-metadata.txt" ]; then summary="$(cat "$RUNNER_TEMP/shecan-guest-metadata.txt")"; fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name="Official Shecan guest input hashes" -f head_sha="$GITHUB_SHA" \
+            -f status=completed -f conclusion="$conclusion" \
+            -f 'output[title]=Verified official package and Alpine hashes' \
+            --raw-field "output[summary]=${summary}" > /dev/null

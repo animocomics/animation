@@ -1,0 +1,12 @@
+name: Actions billing probe
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Confirm runner starts
+        run: echo "RUNNER_STARTED_OK"

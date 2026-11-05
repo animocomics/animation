@@ -1,0 +1,146 @@
+name: Plesk Nomreh archive upload
+
+on:
+  push:
+    branches:
+      - arena/f4b832aa-animation
+    paths:
+      - .github/workflows/plesk-browser-upload.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+  actions: read
+
+concurrency:
+  group: plesk-nomreh-browser
+  cancel-in-progress: false
+
+jobs:
+  upload-archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check private Plesk browser configuration
+        id: config
+        env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+        run: |
+          set -u
+          configured=false
+          if [ -n "$PLESK_PANEL_URL" ] && [ -n "$PLESK_API_USERNAME" ] && [ -n "$PLESK_API_PASSWORD" ]; then configured=true; fi
+          echo "configured=$configured" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the validated application source
+        if: steps.config.outputs.configured == 'true'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify the successful host chain and compact legacy build
+        if: steps.config.outputs.configured == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          for run_id in 41581708445 41581849727 41581998451 41582273458 41596867321; do
+            test "$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}" --jq '.status + " " + .conclusion')" = 'completed success'
+          done
+
+      - name: Create and verify the tracked runtime delta archive
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          source_sha="$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$source_sha"
+          archive="$RUNNER_TEMP/nomreh-deploy-offline-swc-v36.zip"
+          expected='package-lock.json package.json scripts/plesk-node22.cjs vendor/next-swc-wasm-nodejs-16.4.3.tgz'
+          git archive --format=zip --output="$archive" "$source_sha" $expected
+          for required in $expected; do
+            unzip -Z1 "$archive" | grep -Fx "$required" > /dev/null
+          done
+          test "$(unzip -Z1 "$archive" | grep -vc '/$')" -eq 4
+          test "$(git show "$source_sha:vendor/ws-8.22.1.tgz" | sha256sum | cut -d' ' -f1)" = a5cdb19c7090b816ffc109b6d928d352aa2bce73e38f73bd9678d484a62d2f75
+          test "$(git show "$source_sha:vendor/novnc-novnc-1.7.0.tgz" | sha256sum | cut -d' ' -f1)" = 32689f18d6abe96bc6530828a6bd0b9ae33bda07c083a6575ed255b5a8f2e903
+          test "$(git show "$source_sha:vendor/next-swc-wasm-nodejs-16.4.3.tgz" | sha256sum | cut -d' ' -f1)" = f3891128551b931b7189fa4f65619eaa0791fe9be4558efdd34d979ee056ada3
+          git show "$source_sha:package.json" | grep -F '"ws": "file:vendor/ws-8.22.1.tgz"' > /dev/null
+          git show "$source_sha:package.json" | grep -F '"@novnc/novnc": "file:vendor/novnc-novnc-1.7.0.tgz"' > /dev/null
+          git show "$source_sha:package.json" | grep -F '"@next/swc-wasm-nodejs": "file:vendor/next-swc-wasm-nodejs-16.4.3.tgz"' > /dev/null
+          git show "$source_sha:scripts/plesk-node22.cjs" | grep -F 'NEXT_TEST_WASM_DIR: wasmDirectory' > /dev/null
+          git show "$source_sha:scripts/plesk-node22.cjs" | grep -F 'Nomreh Passenger-aware launcher is active for this build.' > /dev/null
+          git show "$source_sha:scripts/plesk-node22.cjs" | grep -F 'return [mainFile];' > /dev/null
+          git show "$source_sha:scripts/plesk-node22.cjs" | grep -F 'syncPublicStatic();' > /dev/null
+          git show "$source_sha:scripts/plesk-node22.cjs" | grep -F '"--include=dev", "--omit=optional"' > /dev/null
+          git show "$source_sha:next.config.mjs" | grep -F 'webpackBuildWorker: false' > /dev/null
+          git show "$source_sha:package.json" | grep -F '"@napi-rs/canvas-linux-x64-gnu": "0.1.100"' > /dev/null
+          git show "$source_sha:components/admin-panel.tsx" | grep -F '<OfficialShecanConsole />' > /dev/null
+          if git show "$source_sha:components/admin-panel.tsx" | grep -F '<ApiNetworkConnection />' > /dev/null; then
+            echo 'The rejected substitute OTP panel is still mounted in admin.' >&2
+            exit 1
+          fi
+          git show "$source_sha:scripts/next-server.cjs" | grep -F 'attachShecanVncWebSocket(server, port)' > /dev/null
+          git show "$source_sha:lib/server/provider-network.ts" | grep -F 'network.transport === "official-vm"' > /dev/null
+          if unzip -Z1 "$archive" | grep -E '(^|/)(nomreh-data|node_modules|\.next|uploads?)(/|$)|(^|/)\.env$|(^|/)\.env\.(local|production|development|test)$'; then
+            echo 'Sensitive, persistent, uploaded, or generated content was included in the archive.' >&2
+            exit 1
+          fi
+          if git show "$source_sha:package.json" | grep -q 'better-sqlite3'; then
+            echo 'The archive source still contains the rejected native SQLite dependency.' >&2
+            exit 1
+          fi
+          sha256sum "$archive"
+          stat -c 'Archive bytes: %s' "$archive"
+
+      - name: Prepare an isolated temporary browser
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/plesk-browser"
+          cd "$RUNNER_TEMP/plesk-browser"
+          npm init -y > /dev/null
+          npm install --ignore-scripts --no-audit --no-fund playwright@1.64.1
+          npx playwright install --with-deps chromium
+
+      - name: Upload only the validated archive to Nomreh after reopening the scoped File Manager
+        id: upload
+        if: steps.config.outputs.configured == 'true'
+        env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+          PLESK_BROWSER_ACTION: upload
+          PLESK_ARCHIVE_NAME: nomreh-deploy-offline-swc-v36.zip
+          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-offline-swc-v36.zip
+          PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-plesk-upload.md
+          NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
+        run: node scripts/plesk-browser-diagnostics.cjs
+
+      - name: Publish the sanitized upload result
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CONFIGURED: ${{ steps.config.outputs.configured }}
+          UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
+        run: |
+          set -euo pipefail
+          conclusion=neutral
+          summary='Plesk browser upload is not configured; no host was contacted.'
+          if [ "$CONFIGURED" = true ]; then
+            conclusion=success
+            if [ "$UPLOAD_OUTCOME" != success ]; then conclusion=failure; fi
+            if [ -f "$RUNNER_TEMP/nomreh-plesk-upload.md" ]; then
+              summary="$(cat "$RUNNER_TEMP/nomreh-plesk-upload.md")"
+            else
+              summary='Archive preparation or upload did not produce a report; no extraction, build, restart, or settings change was attempted.'
+            fi
+          fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name="Plesk Nomreh archive upload" \
+            -f head_sha="${GITHUB_SHA}" \
+            -f status=completed \
+            -f conclusion="$conclusion" \
+            -f 'output[title]=Nomreh controlled archive upload' \
+            --raw-field "output[summary]=${summary}" > /dev/null

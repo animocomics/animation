@@ -1,0 +1,399 @@
+name: Inspect official Shecan app authentication
+
+on:
+  push:
+    branches: [arena/f4b832aa-animation]
+    paths:
+      - .github/workflows/shecan-official-app-inspect.yml
+
+permissions:
+  contents: read
+  checks: write
+
+concurrency:
+  group: shecan-official-app-inspect
+  cancel-in-progress: false
+
+jobs:
+  inspect-public-apps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Download only the official public app packages
+        run: |
+          set -uo pipefail
+          mkdir -p "$RUNNER_TEMP/shecan-app-inspect"
+          cd "$RUNNER_TEMP/shecan-app-inspect"
+          : > download-report.txt
+          download_official() {
+            local artifact="$1"
+            local url="$2"
+            echo "Official $artifact URL: $url" | tee -a download-report.txt
+            if curl --silent --show-error --fail --location --max-time 120 --user-agent "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/142.0 Safari/537.36" --cookie "$artifact.cookies" --cookie-jar "$artifact.cookies" --output "$artifact" --write-out "HTTP %{http_code}; final origin $(printf '%s' "$url" | sed -E 's#(https?://[^/]+).*#\1#')\n" "$url" 2> "$artifact.curl.log" | tee -a download-report.txt; then
+              echo "Official $artifact package downloaded." | tee -a download-report.txt
+              file "$artifact"
+              stat -c "$artifact bytes=%s" "$artifact"
+              sha256sum "$artifact"
+            else
+              local exit_code=$?
+              echo "Official $artifact download failed with curl exit $exit_code: $(tail -n 2 "$artifact.curl.log" | tr '\n' ' ')" | tee -a download-report.txt
+              rm -f "$artifact"
+            fi
+          }
+          download_official windows.bin "https://dl.shecan.ir/download/windows/amd64?version=v3.0.30"
+          download_official linux.rpm "https://dl.shecan.ir/download/linux/amd64?version=v3.0.30&format=rpm"
+          download_official shecan.apk "https://dl.shecan.ir/download/android/universal?version=v3.0.30"
+          download_official shecan-chrome-extension.zip "https://gitlab.shcn.ir/h.sadeghynejad/shecan-chrome-extension-public/-/releases/permalink/latest/downloads/shecan-chrome-extension.zip"
+
+      - name: Statically extract the official Windows package without executing it
+        run: |
+          set -uo pipefail
+          cd "$RUNNER_TEMP/shecan-app-inspect"
+          if [ ! -f windows.bin ]; then exit 0; fi
+          mkdir -p windows-extracted
+          7z x -y -owindows-extracted windows.bin > windows-extract.log 2>&1 || true
+          tail -35 windows-extract.log || true
+          find windows-extracted -maxdepth 6 -type f \( -name 'app.asar' -o -name 'nxtdns.exe' -o -name 'package.json' -o -name '*.exe' \) -printf '%p %s bytes\n' | head -80 || true
+          app_asar="$(find windows-extracted -type f -name app.asar | head -n 1 || true)"
+          if [ -n "$app_asar" ]; then
+            npx --yes @electron/asar extract "$app_asar" windows-app
+            echo 'The official Electron app archive was statically extracted.'
+          fi
+          find windows-app -maxdepth 4 -type f \( -name '*.js' -o -name 'package.json' \) -printf '%p\n' 2>/dev/null | head -100 || true
+
+      - name: Statically extract the official Linux package without executing it
+        run: |
+          set -uo pipefail
+          cd "$RUNNER_TEMP/shecan-app-inspect"
+          if [ ! -f linux.rpm ]; then exit 0; fi
+          mkdir -p linux-extracted
+          7z x -y -olinux-extracted linux.rpm > linux-extract.log 2>&1 || true
+          tail -35 linux-extract.log || true
+          find linux-extracted -maxdepth 7 -type f \( -iname '*shecan*' -o -name '*.so' -o -name 'package.json' -o -name '*.asar' \) -printf '%p %s bytes\n' | head -120 || true
+          cpio_file="$(find linux-extracted -type f -name '*.cpio' | head -n 1 || true)"
+          if [ -n "$cpio_file" ]; then
+            mkdir -p linux-root
+            7z x -y -olinux-root "$cpio_file" > linux-cpio-extract.log 2>&1 || true
+            tail -25 linux-cpio-extract.log || true
+            find linux-root -maxdepth 8 -type f \( -iname '*shecan*' -o -iname '*nxtdns*' -o -name '*.service' -o -name '*.json' -o -name '*.desktop' \) -printf '%p %s bytes\n' | head -120 || true
+          fi
+
+      - name: Inspect official Linux desktop runtime dependencies without execution
+        run: |
+          set -uo pipefail
+          cd "$RUNNER_TEMP/shecan-app-inspect"
+          {
+            desktop="linux-root/usr/local/bin/shecan-desktop"
+            if [ -f "$desktop" ]; then
+              file "$desktop"
+              stat -c 'Official desktop bytes=%s' "$desktop"
+              echo '## Dynamic dependencies (static ELF inspection only)'
+              readelf -d "$desktop" | grep -E 'NEEDED|RPATH|RUNPATH' || true
+              echo '## Program interpreter (static ELF inspection only)'
+              readelf -l "$desktop" | grep -A1 'interpreter' || true
+              echo '## Official desktop launcher'
+              cat linux-root/usr/share/applications/shecan-desktop.desktop || true
+              echo '## GUI/runtime evidence from printable strings'
+              strings -a "$desktop" | grep -Ei 'fyne|wails|webkit|webengine|electron|gtk|golang.org/x/exp/shiny|github.com/gen2brain/dlgs|X11|wayland|GLFW' | awk 'length($0) <= 240' | sort -u | head -60 || true
+              echo '## Official Linux service definitions'
+              find linux-root -type f \( -name '*.service' -o -name '*.timer' \) -print | sort
+              find linux-root -type f -name '*.service' -exec sh -c 'for unit do echo "--- $unit"; cat "$unit"; done' sh {} +
+              echo '## Supporting official executable dependencies'
+              for binary in shecan-nextdns shecan-game shecan-updater; do
+                echo "--- $binary"
+                readelf -d "linux-root/usr/local/bin/$binary" 2>/dev/null | grep -E 'NEEDED|RPATH|RUNPATH' || echo 'No dynamic NEEDED entries'
+              done
+              echo '## Relevant binary and library sizes'
+              du -sh linux-root linux-extracted linux.rpm
+              find linux-root/usr/local/bin -maxdepth 1 -type f -printf '%f %s bytes\n' | sort
+            else
+              echo 'Official desktop binary was not present in the extracted package.'
+            fi
+          } 2>&1 | tee "$RUNNER_TEMP/shecan-linux-runtime.md"
+
+      - name: Publish the small official Linux runtime report
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = `${process.env.RUNNER_TEMP}/shecan-linux-runtime.md`;
+          const report = fs.existsSync(path) ? fs.readFileSync(path, 'utf8') : 'No Linux runtime report was produced.';
+          const payload = {
+            name: 'Official Shecan Linux runtime',
+            head_sha: process.env.GITHUB_SHA,
+            status: 'completed',
+            conclusion: 'neutral',
+            output: {
+              title: 'Official desktop dependencies; static inspection only',
+              summary: 'The official RPM was extracted but no Shecan binary was executed and no credentials were used.',
+              text: report.slice(0, 60000),
+            },
+          };
+          fetch(`https://api.github.com/repos/${process.env.GITHUB_REPOSITORY}/check-runs`, {
+            method: 'POST',
+            headers: { authorization: `Bearer ${process.env.GH_TOKEN}`, accept: 'application/vnd.github+json', 'content-type': 'application/json' },
+            body: JSON.stringify(payload),
+          }).then(async response => {
+            if (!response.ok) throw new Error(`Check-run publication returned ${response.status}`);
+            console.log('Published the small static Linux runtime report.');
+          }).catch(error => { console.error(error.message); process.exitCode = 1; });
+          NODE
+
+      - name: Statically extract the official Android package without executing it
+        run: |
+          set -uo pipefail
+          cd "$RUNNER_TEMP/shecan-app-inspect"
+          if [ ! -f shecan.apk ]; then exit 0; fi
+          mkdir -p android-app
+          unzip -q -o shecan.apk -d android-app || true
+          find android-app -maxdepth 4 -type f \( -name '*.bundle' -o -name '*.so' -o -name 'AndroidManifest.xml' -o -name 'resources.arsc' -o -name '*.json' \) -printf '%p %s bytes\n' | head -100 || true
+
+      - name: Statically extract the official public Chrome extension without executing it
+        run: |
+          set -uo pipefail
+          cd "$RUNNER_TEMP/shecan-app-inspect"
+          if [ ! -f shecan-chrome-extension.zip ]; then exit 0; fi
+          mkdir -p chrome-extension
+          unzip -q -o shecan-chrome-extension.zip -d chrome-extension || true
+          find chrome-extension -maxdepth 5 -type f \( -name '*.js' -o -name '*.json' -o -name '*.html' \) -printf '%p %s bytes\n' | head -100 || true
+
+      - name: Report only sanitized public endpoints and authentication-related strings
+        id: inspect-report
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/shecan-app-inspect"
+          python - <<'PY' | tee "$RUNNER_TEMP/shecan-app-report.md"
+          from pathlib import Path
+          import re
+          from urllib.parse import urlsplit, urlunsplit
+
+          download_report = Path('download-report.txt')
+          if download_report.exists():
+              print('## Official download results')
+              print(download_report.read_text())
+          print('## Official package inventory')
+          for name in ['windows.bin', 'linux.rpm', 'shecan.apk', 'shecan-chrome-extension.zip']:
+              path = Path(name)
+              if not path.exists():
+                  print(f'{name}: not downloaded')
+                  continue
+              data = path.read_bytes()[:100]
+              printable = ''.join(chr(byte) if 32 <= byte < 127 else '.' for byte in data)
+              print(f'{name}: {path.stat().st_size} bytes; first bytes {printable}')
+          roots = [Path('windows-app'), Path('windows-extracted'), Path('linux-extracted'), Path('linux-root'), Path('android-app'), Path('chrome-extension')]
+          for root in roots:
+              files = [path for path in root.rglob('*') if path.is_file()] if root.exists() else []
+              print(f'{root}: {len(files)} extracted files')
+              for path in files[:20]:
+                  print(f'  {path} ({path.stat().st_size} bytes)')
+          urls = set()
+          strings = set()
+          url_pattern = re.compile(rb'https?://[A-Za-z0-9._~:/?#\[\]@!$&\'()*+,;=%-]{4,500}')
+          string_pattern = re.compile(rb'[\x20-\x7e]{5,350}')
+          keyword = re.compile(r'(?i)(login|log in|signin|sign in|auth|ddns|update.?url|update.?link|ip.?update|static.?ip|dynamic.?ip|access.?token|refresh.?token)')
+          for root in roots:
+              if not root.exists():
+                  continue
+              for path in root.rglob('*'):
+                  if not path.is_file() or path.suffix.lower() in {'.png', '.jpg', '.jpeg', '.gif', '.ico', '.woff', '.woff2', '.ttf', '.zip', '.dll'}:
+                      continue
+                  try:
+                      if path.stat().st_size > 120_000_000:
+                          continue
+                      data = path.read_bytes()
+                  except OSError:
+                      continue
+                  for match in url_pattern.findall(data):
+                      try:
+                          value = match.decode('ascii').rstrip('.,;\\')
+                          parsed = urlsplit(value)
+                          if not re.search(r'(?i)(shecan|ddns|auth|login)', parsed.netloc + parsed.path):
+                              continue
+                          urls.add(urlunsplit((parsed.scheme, parsed.netloc, parsed.path, '', '')))
+                      except Exception:
+                          pass
+                  if path.suffix.lower() in {'.js', '.json', '.ts', '.html', '.bundle', '.so', '.exe', '.arsc'} or path.name in {'nxtdns.exe', 'windows.bin'}:
+                      for raw in string_pattern.findall(data):
+                          try:
+                              value = raw.decode('ascii').strip()
+                          except Exception:
+                              continue
+                          if not keyword.search(value):
+                              continue
+                          if len(value) > 350 or re.search(r'(?i)(api[_-]?key|client[_-]?secret|authorization:)', value):
+                              continue
+                          value = re.sub(r'([?&](?:token|key|secret|password|code)=)[^&\s]+', r'\1[redacted]', value, flags=re.I)
+                          strings.add(f'{path}: {value}')
+          print('\n## Sanitized public endpoint candidates (query strings removed)')
+          for value in sorted(urls)[:160]:
+              print(value)
+          print('\n## Authentication/update string candidates from official packages')
+          for value in sorted(strings)[:180]:
+              print(value[:500])
+          print('\nNo user credential was supplied; no app was executed; no host or DNS setting was contacted or changed.')
+          PY
+
+      - name: Probe every official proxy and inspect local-only Linux evidence without credentials
+        if: always()
+        run: |
+          set -uo pipefail
+          cd "$RUNNER_TEMP/shecan-app-inspect"
+          report="$RUNNER_TEMP/shecan-sni-report.md"
+          raw="$RUNNER_TEMP/shecan-sni-raw.txt"
+          : > "$report"
+          : > "$raw"
+          echo '# Official Shecan full SNI matrix and Linux local-mode evidence; no credentials or API keys' >> "$report"
+          echo '## Static Linux inventory; binaries were not executed' >> "$report"
+          find linux-root -type f -perm /111 -printf '%p %s bytes\n' 2>/dev/null | head -80 >> "$report" || true
+          python - <<'PY' >> "$report"
+          from pathlib import Path
+          import re
+          needles = [b'127.0.0.1', b'localhost', b'socks5', b'tun2socks', b'shecan.service', b'nxtdns', b'administrator', b'root', b'usage: shecan']
+          for path in Path('linux-root').rglob('*'):
+              if not path.is_file() or path.stat().st_size > 120_000_000:
+                  continue
+              if not any(word in path.name.lower() for word in ['shecan', 'nxtdns', 'service']):
+                  continue
+              try:
+                  data = path.read_bytes()
+              except OSError:
+                  continue
+              found = [needle.decode() for needle in needles if needle in data]
+              if found:
+                  print(f'{path}: literal presence only: {", ".join(found)}')
+              shown = 0
+              for needle in [b'socks5', b'tun2socks', b'shecan.service', b'usage: shecan']:
+                  start = 0
+                  while shown < 12:
+                      offset = data.find(needle, start)
+                      if offset < 0:
+                          break
+                      start = offset + len(needle)
+                      raw = data[max(0, offset - 180):offset + 500]
+                      text = ''.join(chr(byte) if 32 <= byte < 127 else ' ' for byte in raw)
+                      text = re.sub(r'\s+', ' ', text).strip()
+                      if re.search(r'(?i)(api[_-]?key|authorization|password|client[_-]?secret)', text):
+                          continue
+                      text = re.sub(r'([?&](?:token|key|secret|code)=)[^&\s]+', r'\1[redacted]', text, flags=re.I)
+                      print(f'{path} context {offset}: {text[:650]}')
+                      shown += 1
+          print('Literal presence or a nearby string is not evidence of a supported userspace/local-proxy mode.')
+          PY
+          echo '## Direct baselines' >> "$report"
+          probe_sni() {
+            local url="$1" host="$2" address="$3"
+            local http exit_code log
+            log="$(mktemp)"
+            exit_code=0
+            http="$(curl --silent --show-error --output /dev/null --connect-timeout 4 --max-time 7 --resolve "$host:443:$address" --write-out '%{http_code}' "$url" 2> "$log")" || exit_code=$?
+            printf '%s via %s: curl=%s HTTP=%s %s\n' "$host" "$address" "$exit_code" "$http" "$(tail -n 1 "$log" | sed -E 's#https?://[^ ]+#[url]#g')" >> "$RUNNER_TEMP/shecan-sni-raw.txt"
+            rm -f "$log"
+          }
+          export -f probe_sni
+          for host in my.shecan.ir ddns.shecan.ir nddns.shecan.ir generativelanguage.googleapis.com; do
+            case "$host" in
+              my.shecan.ir) path='/my/account.json' ;;
+              generativelanguage.googleapis.com) path='/v1beta/models' ;;
+              *) path='/' ;;
+            esac
+            exit_code=0
+            http="$(curl --silent --show-error --output /dev/null --connect-timeout 4 --max-time 7 --write-out '%{http_code}' "https://$host$path" 2> /tmp/shecan-direct-curl.log)" || exit_code=$?
+            echo "$host direct: curl=$exit_code HTTP=$http $(tail -n 1 /tmp/shecan-direct-curl.log | sed -E 's#https?://[^ ]+#[url]#g')" >> "$report"
+          done
+          python - <<'PY' > "$RUNNER_TEMP/shecan-probe-matrix.txt"
+          nodes = [
+              ('de1.check.shecan.ir', ['144.76.1.88']),
+              ('de5.check.shecan.ir', ['50.7.177.110', '50.7.177.12']),
+              ('de7.check.shecan.ir', ['94.130.13.19']),
+              ('de8.check.shecan.ir', ['94.130.50.12']),
+              ('de10.check.shecan.ir', ['138.201.54.122']),
+              ('de11.check.shecan.ir', ['94.130.70.160']),
+              ('de12.check.shecan.ir', ['94.130.33.41']),
+              ('fi2.check.shecan.ir', ['65.109.34.234']),
+              ('uk3.check.shecan.ir', ['82.39.133.108']),
+              ('us1.check.shecan.ir', ['63.141.252.203']),
+              ('us3.check.shecan.ir', ['142.54.178.211']),
+              ('mahan.check.shecan.ir', ['5.202.75.100', '5.202.75.165', '5.202.75.166', '5.202.75.168', '5.202.75.176', '5.202.75.177', '5.202.75.179', '5.202.75.180', '5.202.75.181', '5.202.75.185', '5.202.75.186', '5.202.75.187', '5.202.75.190', '5.202.75.191', '5.202.75.192']),
+              ('fi31.check.shecan.ir', ['95.216.69.37']),
+              ('ie1-superproxy.check.shecan.ir', ['50.7.4.242']),
+              ('mizban.check.shecan.ir', ['88.218.19.178', '88.218.19.179', '88.218.19.180', '88.218.19.181', '88.218.19.182']),
+          ]
+          targets = [
+              ('my.shecan.ir', '/my/account.json'),
+              ('ddns.shecan.ir', '/'),
+              ('nddns.shecan.ir', '/'),
+              ('generativelanguage.googleapis.com', '/v1beta/models'),
+          ]
+          for domain, addresses in nodes:
+              for address in addresses:
+                  print(f'https://{domain}/ {domain} {address}')
+                  for host, path in targets:
+                      print(f'https://{host}{path} {host} {address}')
+          PY
+          xargs -n 3 -P 10 bash -c 'probe_sni "$1" "$2" "$3"' _ < "$RUNNER_TEMP/shecan-probe-matrix.txt"
+          echo '## Full certificate-validating SNI matrix from GitHub; this is not Plesk evidence' >> "$report"
+          sort "$raw" >> "$report"
+
+      - name: Prepare the official CLI authentication source report
+        if: always()
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/shecan-app-inspect"
+          python - <<'PY'
+          from pathlib import Path
+          import os, re
+          output = ['# Official Shecan scoped proxy and DDNS source context', '', 'No credential was supplied and no executable was run.', '']
+          needles = [b'nddns.shecan.ir', b'updateIP', b'proxies.json', b'proxies-all.json', b'super_proxy', b'justDns', b'update_link', b'ddns.shecan.ir/update']
+          seen = set()
+          for name in ['windows-extracted/shecan-cli.exe', 'windows-extracted/shecan-desktop.exe']:
+              path = Path(name)
+              if not path.exists():
+                  continue
+              data = path.read_bytes()
+              output += ['', f'## Static string context: {name}', '']
+              count = 0
+              for needle in needles:
+                  start = 0
+                  while count < 24:
+                      offset = data.find(needle, start)
+                      if offset < 0:
+                          break
+                      start = offset + len(needle)
+                      key = (name, offset // 500)
+                      if key in seen:
+                          continue
+                      seen.add(key)
+                      raw = data[max(0, offset - 700):offset + 1800]
+                      text = ''.join(chr(byte) if 32 <= byte < 127 else '\n' for byte in raw)
+                      text = re.sub(r'\n{2,}', '\n', text)
+                      text = re.sub(r'([?&](?:token|key|secret|password|code)=)[^&\s]+', r'\1[redacted]', text, flags=re.I)
+                      output += [f'OFFSET {offset}:', text, '']
+                      count += 1
+          Path(os.environ['RUNNER_TEMP'] + '/shecan-cli-source.md').write_text('\n'.join(output)[:59000])
+          PY
+
+      - name: Publish the sanitized inspection report
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INSPECT_OUTCOME: ${{ steps.inspect-report.outcome }}
+        run: |
+          set -euo pipefail
+          test -s "$RUNNER_TEMP/shecan-app-report.md"
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          text = Path(os.environ['RUNNER_TEMP'] + '/shecan-sni-report.md').read_text()[:60000]
+          conclusion = 'success' if os.environ.get('INSPECT_OUTCOME') == 'success' else 'failure'
+          payload = {
+              'name': 'Official Shecan app authentication inspection',
+              'head_sha': os.environ['GITHUB_SHA'],
+              'status': 'completed',
+              'conclusion': conclusion,
+              'output': {'title': 'Official Shecan app public static inspection', 'summary': text},
+          }
+          Path(os.environ['RUNNER_TEMP'] + '/shecan-app-check.json').write_text(json.dumps(payload))
+          PY
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" --input "$RUNNER_TEMP/shecan-app-check.json" > /dev/null

@@ -1,0 +1,157 @@
+name: Deploy validated official Shecan runtime
+
+on:
+  push:
+    branches: [arena/f4b832aa-animation]
+    paths: [.github/workflows/shecan-official-runtime-deploy.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+  actions: read
+
+concurrency:
+  group: plesk-nomreh-browser
+  cancel-in-progress: false
+
+jobs:
+  build-upload-extract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      SHECAN_RPM_SHA256: 59a300035e25a9dbe0b4e26f44333883bcb26b9e7ab1af5bac88310095f122b2
+      ALPINE_INITRAMFS_SHA256: c990c63e4602aa84b92d7df54fd180cb0e56590d61b71221ba6d60e913d26357
+    steps:
+      - name: Check private Plesk browser configuration
+        id: config
+        env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+        run: |
+          configured=false
+          if [ -n "$PLESK_PANEL_URL" ] && [ -n "$PLESK_API_USERNAME" ] && [ -n "$PLESK_API_PASSWORD" ]; then configured=true; fi
+          echo "configured=$configured" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        if: steps.config.outputs.configured == 'true'
+      - name: Rebuild and revalidate the exact official guest before any host action
+        id: build
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/nomreh-deploy-shecan-official-v13.zip"
+          grep -F 'test -x /usr/bin/x11vnc' scripts/shecan-vm/build-official-runtime.sh > /dev/null
+          grep -F 'NOMREH_OFFICIAL_VNC_REVERSE_ATTEMPT_' scripts/shecan-vm/official-guest-init.sh > /dev/null
+          grep -F 'const OFFICIAL_RUNTIME_ARCHIVE = /^nomreh-deploy-shecan-official-v[0-9]+' scripts/plesk-browser-diagnostics.cjs > /dev/null
+          bash scripts/shecan-vm/build-official-runtime.sh "$GITHUB_WORKSPACE" "$archive" 2>&1 | tee "$RUNNER_TEMP/shecan-official-deploy-build.log"
+      - name: Prepare an isolated temporary browser
+        if: steps.build.outcome == 'success'
+        run: |
+          mkdir -p "$RUNNER_TEMP/plesk-browser"
+          cd "$RUNNER_TEMP/plesk-browser"
+          npm init -y > /dev/null
+          npm install --ignore-scripts --no-audit --no-fund playwright@1.64.1
+          npx playwright install --with-deps chromium
+      - name: Stop the previous official guest before replacing its verified files
+        id: stop
+        if: steps.build.outcome == 'success'
+        env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+          NOMREH_ADMIN_USERNAME: ${{ secrets.NOMREH_ADMIN_USERNAME }}
+          NOMREH_ADMIN_PASSWORD: ${{ secrets.NOMREH_ADMIN_PASSWORD }}
+          NOMREH_ALLOW_DEMO_ACCOUNTS: "1"
+          NOMREH_OFFICIAL_RUNTIME_CONTROL: stop
+          NOMREH_E2E_OUTPUT: ${{ runner.temp }}/nomreh-official-stop.md
+          NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
+        run: node scripts/nomreh-admin-readiness.cjs
+      - name: Upload only the framebuffer-validated official runtime
+        id: upload
+        if: steps.stop.outcome == 'success'
+        env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+          PLESK_BROWSER_ACTION: upload
+          PLESK_ARCHIVE_NAME: nomreh-deploy-shecan-official-v13.zip
+          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-shecan-official-v13.zip
+          PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-official-upload.md
+          NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
+        run: node scripts/plesk-browser-diagnostics.cjs
+      - name: Extract only nomreh-vm/official and verify its runner hash
+        id: extract
+        if: steps.upload.outcome == 'success'
+        env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+          PLESK_BROWSER_ACTION: runtime-extract
+          PLESK_ARCHIVE_NAME: nomreh-deploy-shecan-official-v13.zip
+          PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-official-extract.md
+          NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
+        run: node scripts/plesk-browser-diagnostics.cjs
+      - name: Start the replaced official guest and its independent supervisor
+        id: start
+        if: steps.extract.outcome == 'success'
+        env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+          NOMREH_ADMIN_USERNAME: ${{ secrets.NOMREH_ADMIN_USERNAME }}
+          NOMREH_ADMIN_PASSWORD: ${{ secrets.NOMREH_ADMIN_PASSWORD }}
+          NOMREH_ALLOW_DEMO_ACCOUNTS: "1"
+          NOMREH_OFFICIAL_RUNTIME_CONTROL: start
+          NOMREH_E2E_OUTPUT: ${{ runner.temp }}/nomreh-official-start.md
+          NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
+        run: node scripts/nomreh-admin-readiness.cjs
+      - name: Validate the authenticated real noVNC framebuffer on the replaced runtime
+        id: live
+        if: steps.start.outcome == 'success'
+        env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+          NOMREH_ADMIN_USERNAME: ${{ secrets.NOMREH_ADMIN_USERNAME }}
+          NOMREH_ADMIN_PASSWORD: ${{ secrets.NOMREH_ADMIN_PASSWORD }}
+          NOMREH_ALLOW_DEMO_ACCOUNTS: "1"
+          NOMREH_OFFICIAL_ONLY: "1"
+          NOMREH_VALIDATE_OFFICIAL_RUNTIME: "1"
+          NOMREH_RESTART_ON_VNC_FAILURE: "0"
+          NOMREH_E2E_OUTPUT: ${{ runner.temp }}/nomreh-official-live.md
+          NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
+        run: node scripts/nomreh-admin-readiness.cjs
+      - name: Publish the sanitized official runtime deployment result
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CONFIGURED: ${{ steps.config.outputs.configured }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          STOP_OUTCOME: ${{ steps.stop.outcome }}
+          UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
+          EXTRACT_OUTCOME: ${{ steps.extract.outcome }}
+          START_OUTCOME: ${{ steps.start.outcome }}
+          LIVE_OUTCOME: ${{ steps.live.outcome }}
+        run: |
+          set -euo pipefail
+          conclusion=neutral
+          summary='Plesk browser deployment is not configured; no host was contacted.'
+          if [ "$CONFIGURED" = true ]; then
+            conclusion=success
+            if [ "$BUILD_OUTCOME" != success ] || [ "$STOP_OUTCOME" != success ] || [ "$UPLOAD_OUTCOME" != success ] || [ "$EXTRACT_OUTCOME" != success ] || [ "$START_OUTCOME" != success ] || [ "$LIVE_OUTCOME" != success ]; then conclusion=failure; fi
+            if [ -f "$RUNNER_TEMP/nomreh-official-live.md" ]; then
+              summary="$(cat "$RUNNER_TEMP/nomreh-official-live.md")"
+            elif [ -f "$RUNNER_TEMP/nomreh-official-extract.md" ]; then
+              summary="$(cat "$RUNNER_TEMP/nomreh-official-extract.md")"
+            elif [ -f "$RUNNER_TEMP/nomreh-official-upload.md" ]; then
+              summary="$(cat "$RUNNER_TEMP/nomreh-official-upload.md")"
+            elif [ -f "$RUNNER_TEMP/shecan-official-deploy-build.log" ]; then
+              summary="$(tail -c 55000 "$RUNNER_TEMP/shecan-official-deploy-build.log")"
+            fi
+          fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name="Official Shecan runtime on Plesk" -f head_sha="$GITHUB_SHA" \
+            -f status=completed -f conclusion="$conclusion" \
+            -f 'output[title]=Official runtime deployment and authenticated live framebuffer acceptance' \
+            --raw-field "output[summary]=${summary}" > /dev/null

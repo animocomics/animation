@@ -1,0 +1,65 @@
+name: Nomreh V2Ray live push acceptance
+
+# Fresh activation with verified loopback readiness and AI-only inbound routing.
+
+on:
+  push:
+    branches: [arena/f4b832aa-animation]
+    paths:
+      - .github/workflows/nomreh-v2ray-live-push.yml
+      - scripts/fixtures/v2ray-live-input.txt
+
+permissions:
+  contents: read
+  checks: write
+
+concurrency:
+  group: nomreh-v2ray-live-push
+  cancel-in-progress: false
+
+jobs:
+  v2ray-live-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install the parser and live-test dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Run the real V2Ray-only activation and Gemini acceptance
+        id: live
+        env:
+          NOMREH_ADMIN_USERNAME: ${{ secrets.NOMREH_ADMIN_USERNAME }}
+          NOMREH_ADMIN_PASSWORD: ${{ secrets.NOMREH_ADMIN_PASSWORD }}
+          NOMREH_ALLOW_DEMO_ACCOUNTS: "1"
+          NOMREH_V2RAY_LIVE_OUTPUT: /tmp/nomreh-v2ray-live-test.md
+        run: |
+          set -euo pipefail
+          export NOMREH_V2RAY_TEST_CONFIGS="$(cat scripts/fixtures/v2ray-live-input.txt)"
+          npx tsx scripts/nomreh-v2ray-live-test.ts
+      - name: Publish only redacted V2Ray evidence
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -s /tmp/nomreh-v2ray-live-test.md
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, os, re
+          text = Path('/tmp/nomreh-v2ray-live-test.md').read_text()
+          if re.search(r'(?:vless|vmess|trojan|ss):[^\s]+|nomreh_session=|Bearer\s+[A-Za-z0-9]|AIza[0-9A-Za-z_-]{8,}', text, re.I):
+              raise SystemExit('Credential-like material was found in the V2Ray report')
+          Path('/tmp/nomreh-v2ray-check.json').write_text(json.dumps({'output': {'title': 'Nomreh V2Ray live activation and AI acceptance', 'summary': text}}))
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write(text)
+          print(text)
+          PY
+          check_id=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs" --jq '.check_runs[] | select(.name == "v2ray-live-push") | .id' | head -n 1)
+          test -n "$check_id"
+          gh api --method PATCH "repos/${GITHUB_REPOSITORY}/check-runs/${check_id}" --input /tmp/nomreh-v2ray-check.json >/dev/null

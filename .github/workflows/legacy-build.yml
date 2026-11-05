@@ -1,0 +1,100 @@
+name: Verify legacy Plesk build
+
+on:
+  push:
+    branches:
+      - arena/f4b832aa-animation
+    paths:
+      - .github/workflows/legacy-build.yml
+      - next.config.mjs
+      - package.json
+      - package-lock.json
+      - scripts/compact-production.cjs
+      - scripts/plesk-node22.cjs
+      - scripts/plesk-runtime/node-v22.22.3-linux-x64-glibc-217.tar.xz
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  legacy-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out the deployment branch
+        uses: actions/checkout@v4
+
+      - name: Prepare the pinned glibc-2.17 Node runtime
+        env:
+          NODE_VERSION: 22.22.3
+          EXPECTED_SHA256: 5de83ffe678e6c478b7be75708458c2a2f552c300c8a24fb4bdcd1574cb7e132
+          EXPECTED_SIZE: 31403312
+        run: |
+          set -euo pipefail
+          archive="scripts/plesk-runtime/node-v${NODE_VERSION}-linux-x64-glibc-217.tar.xz"
+          test "$(stat -c %s "$archive")" = "$EXPECTED_SIZE"
+          printf '%s  %s\n' "$EXPECTED_SHA256" "$archive" | sha256sum --check -
+          data="$RUNNER_TEMP/nomreh-legacy-data"
+          mkdir -p "$data/runtime/node"
+          tar -xJf "$archive" -C "$data/runtime/node" --strip-components=1
+          printf '{"nodeVersion":"%s","kind":"nodejs-unofficial-glibc-217"}\n' "$NODE_VERSION" > "$data/runtime/runtime.json"
+
+      - name: Run the complete Plesk build on CentOS 7 and glibc 2.17
+        id: legacy
+        env:
+          NODE_VERSION: 22.22.3
+        run: |
+          set -uo pipefail
+          log="$RUNNER_TEMP/nomreh-legacy-build.log"
+          # Docker Hub occasionally returns a transient manifest 502. Retry the
+          # immutable public base image pull before the actual build, without
+          # changing the pinned runtime or weakening build verification.
+          pulled=false
+          for attempt in 1 2 3; do
+            if docker pull centos:7 > "$RUNNER_TEMP/centos-pull.log" 2>&1; then pulled=true; break; fi
+            sleep 10
+          done
+          if [ "$pulled" != true ]; then tail -60 "$RUNNER_TEMP/centos-pull.log" > "$log"; exit 1; fi
+          docker run --rm \
+            --volume "$GITHUB_WORKSPACE:/work" \
+            --volume "$RUNNER_TEMP/nomreh-legacy-data:/nomreh-data-legacy-check" \
+            --workdir /work \
+            --env NOMREH_DATA_DIR=../nomreh-data-legacy-check \
+            --env NODE_VERSION \
+            centos:7 \
+            /bin/bash -c '
+              set -euo pipefail
+              export PATH="/nomreh-data-legacy-check/runtime/node/bin:$PATH"
+              node --version
+              test "$(node --version)" = "v${NODE_VERSION}"
+              ldd --version
+              npm run build:plesk
+            ' > "$log" 2>&1
+          status=$?
+          tail -100 "$log"
+          exit "$status"
+
+      - name: Publish the sanitized legacy build result
+        if: always() && steps.legacy.outcome != 'skipped'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUILD_CONCLUSION: ${{ steps.legacy.outcome }}
+        run: |
+          set -euo pipefail
+          conclusion=success
+          if [ "$BUILD_CONCLUSION" != success ]; then conclusion=failure; fi
+          summary='Legacy glibc 2.17 build completed.'
+          if [ "$conclusion" = failure ]; then summary='Legacy glibc 2.17 build failed. Last build output:'; fi
+          if [ -f "$RUNNER_TEMP/nomreh-legacy-build.log" ]; then
+            details="$(tail -c 55000 "$RUNNER_TEMP/nomreh-legacy-build.log" | tr '\r' '\n')"
+            summary="${summary}"$'\n\n```text\n'"${details}"$'\n```'
+          fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name="Legacy glibc 2.17 build" \
+            -f head_sha="${GITHUB_SHA}" \
+            -f status=completed \
+            -f conclusion="$conclusion" \
+            -f 'output[title]=Legacy Plesk build' \
+            --raw-field "output[summary]=${summary}" > /dev/null

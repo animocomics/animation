@@ -1,0 +1,106 @@
+name: Plesk Nomreh Passenger restart
+
+on:
+  push:
+    branches:
+      - arena/f4b832aa-animation
+    paths:
+      - .github/workflows/plesk-browser-restart-runtime.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+  actions: read
+
+concurrency:
+  group: plesk-nomreh-browser
+  cancel-in-progress: false
+
+jobs:
+  restart-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    steps:
+      - name: Check private Plesk browser configuration
+        id: config
+        env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+        run: |
+          set -u
+          configured=false
+          if [ -n "$PLESK_PANEL_URL" ] && [ -n "$PLESK_API_USERNAME" ] && [ -n "$PLESK_API_PASSWORD" ]; then configured=true; fi
+          echo "configured=$configured" >> "$GITHUB_OUTPUT"
+
+      - name: Check out the scoped runtime control
+        if: steps.config.outputs.configured == 'true'
+        uses: actions/checkout@v4
+
+      - name: Verify the successful host build, disk report, and enablement
+        if: steps.config.outputs.configured == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          build_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41649715807" --jq '.status + " " + .conclusion')"
+          disk_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41570728828" --jq '.status + " " + .conclusion')"
+          enable_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41430311614" --jq '.status + " " + .conclusion')"
+          test "$build_state" = "completed success"
+          test "$disk_state" = "completed success"
+          test "$enable_state" = "completed success"
+          echo "9710c01c7c548a9699cd5d24bbd7e68b950eca596005293e0cd71462c5fa3294  package.json" | sha256sum --check -
+          echo "5fdf01154fffcabbfe558a67a43268bafd0b0300f83117021239b66f8a765515  tsconfig.json" | sha256sum --check -
+          grep -F 'syncPublicStatic();' scripts/plesk-node22.cjs > /dev/null
+          grep -F '"--include=dev", "--omit=optional"' scripts/plesk-node22.cjs > /dev/null
+          grep -F 'webpackBuildWorker: false' next.config.mjs > /dev/null
+
+      - name: Prepare an isolated temporary browser
+        if: steps.config.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/plesk-browser"
+          cd "$RUNNER_TEMP/plesk-browser"
+          npm init -y > /dev/null
+          npm install --ignore-scripts --no-audit --no-fund playwright@1.64.1
+          npx playwright install --with-deps chromium
+
+      - name: Restart only the enabled Nomreh application and record acknowledgement
+        id: restart
+        if: steps.config.outputs.configured == 'true'
+        env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+          PLESK_BROWSER_ACTION: restart-runtime
+          PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-plesk-restart.md
+          NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
+        run: node scripts/plesk-browser-diagnostics.cjs
+
+      - name: Publish the sanitized restart acknowledgement
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CONFIGURED: ${{ steps.config.outputs.configured }}
+          RESTART_OUTCOME: ${{ steps.restart.outcome }}
+        run: |
+          set -euo pipefail
+          conclusion=neutral
+          summary='Plesk browser control is not configured; no host was contacted.'
+          if [ "$CONFIGURED" = true ]; then
+            conclusion=success
+            if [ "$RESTART_OUTCOME" != success ]; then conclusion=failure; fi
+            if [ -f "$RUNNER_TEMP/nomreh-plesk-restart.md" ]; then
+              summary="$(cat "$RUNNER_TEMP/nomreh-plesk-restart.md")"
+            else
+              summary='The restart action did not produce a report; no live-success claim was made.'
+            fi
+          fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name="Plesk Nomreh Passenger restart" \
+            -f head_sha="${GITHUB_SHA}" \
+            -f status=completed \
+            -f conclusion="$conclusion" \
+            -f 'output[title]=Nomreh Passenger restart request only' \
+            --raw-field "output[summary]=${summary}" > /dev/null

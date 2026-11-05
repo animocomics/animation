@@ -1,0 +1,94 @@
+#!/bin/sh
+# Boot the official Shecan guest with rootless QEMU user networking.
+set -eu
+
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+LOADER="$ROOT/glibc/lib/x86_64-linux-gnu/ld-2.27.so"
+QEMU="$ROOT/qemu/bin/qemu-system-x86_64"
+LIBRARIES="$ROOT/glibc/lib/x86_64-linux-gnu:$ROOT/qemu/lib"
+KERNEL="$ROOT/guest/vmlinuz-virt"
+INITRAMFS="$ROOT/guest/initramfs-official"
+MEMORY=${NOMREH_VM_MEMORY:-2048M}
+VNC_PORT=${NOMREH_VNC_PORT:-}
+VNC_SOCKET=${NOMREH_VNC_UNIX_SOCKET:-}
+CONTROL_SOCKET=${NOMREH_CONTROL_UNIX_SOCKET:-}
+PROXY_PORT=${NOMREH_PROXY_PORT:-}
+SERIAL=${NOMREH_VM_SERIAL:-stdio}
+PROBE=${NOMREH_VM_PROBE:-0}
+TIMEOUT=${NOMREH_VM_TIMEOUT:-240}
+HOST_PORT=${NOMREH_HOST_APP_PORT:-${PORT:-3000}}
+case "$HOST_PORT" in *[!0-9]*|'') HOST_PORT=3000 ;; esac
+
+for required in "$LOADER" "$QEMU" "$KERNEL" "$INITRAMFS"; do
+  if [ ! -f "$required" ]; then
+    echo "NOMREH_OFFICIAL_GUEST_ERROR missing_runtime_file"
+    exit 1
+  fi
+done
+unset LD_LIBRARY_PATH LD_PRELOAD http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY
+# The control and VNC UNIX sockets are private to this Plesk user. The nonce
+# protects protocol responses; it is not a substitute for filesystem permissions.
+umask 077
+
+NIC='user,model=virtio-net-pci'
+APPEND="console=ttyS0 rdinit=/init panic=1 quiet nomreh_host_port=$HOST_PORT"
+if [ -n "$VNC_PORT" ]; then
+  NIC="$NIC,hostfwd=tcp:127.0.0.1:$VNC_PORT-:5900"
+  APPEND="$APPEND nomreh_vnc=hostfwd"
+  if [ -n "$VNC_SOCKET" ]; then
+    APPEND="$APPEND nomreh_vnc_unix=1"
+  else
+    APPEND="$APPEND nomreh_vnc_reverse=15500"
+  fi
+fi
+if [ -n "$VNC_SOCKET" ]; then
+  if [ -L "$VNC_SOCKET" ]; then
+    echo NOMREH_OFFICIAL_GUEST_ERROR unsafe_vnc_socket
+    exit 1
+  fi
+  rm -f -- "$VNC_SOCKET"
+fi
+if [ -n "$CONTROL_SOCKET" ]; then
+  if [ -L "$CONTROL_SOCKET" ]; then
+    echo NOMREH_OFFICIAL_GUEST_ERROR unsafe_control_socket
+    exit 1
+  fi
+  rm -f -- "$CONTROL_SOCKET"
+  CONTROL_TTY=ttyS1
+  if [ -n "$VNC_SOCKET" ]; then CONTROL_TTY=ttyS2; fi
+  APPEND="$APPEND nomreh_control=$CONTROL_TTY"
+fi
+if [ -n "$PROXY_PORT" ]; then
+  NIC="$NIC,hostfwd=tcp:127.0.0.1:$PROXY_PORT-:8888"
+  APPEND="$APPEND nomreh_proxy=1"
+fi
+if [ "$PROBE" = 1 ]; then APPEND="$APPEND nomreh_probe=1"; fi
+
+set -- "$LOADER" --library-path "$LIBRARIES" "$QEMU" \
+  -L "$ROOT/qemu/share/qemu" \
+  -machine pc,accel=tcg \
+  -cpu max \
+  -smp 1 \
+  -m "$MEMORY" \
+  -kernel "$KERNEL" \
+  -initrd "$INITRAMFS" \
+  -append "$APPEND" \
+  -nic "$NIC" \
+  -display none \
+  -serial "$SERIAL" \
+  -monitor none \
+  -no-reboot
+if [ -n "$VNC_SOCKET" ]; then
+  set -- "$@" \
+    -chardev "socket,id=nomrehvnc,path=$VNC_SOCKET,server=on,wait=off" \
+    -serial chardev:nomrehvnc
+fi
+if [ -n "$CONTROL_SOCKET" ]; then
+  set -- "$@" \
+    -chardev "socket,id=nomrehcontrol,path=$CONTROL_SOCKET,server=on,wait=off" \
+    -serial chardev:nomrehcontrol
+fi
+if [ "$PROBE" = 1 ]; then
+  exec timeout -k 5 "$TIMEOUT" "$@"
+fi
+exec "$@"

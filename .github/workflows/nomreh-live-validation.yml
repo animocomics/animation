@@ -1,0 +1,110 @@
+name: Nomreh live HTTPS validation
+
+on:
+  push:
+    branches:
+      - arena/f4b832aa-animation
+    paths:
+      - .github/workflows/nomreh-live-validation.yml
+      - scripts/nomreh-live-check.cjs
+  workflow_dispatch:
+    inputs:
+      configs:
+        description: "Optional one-time V2Ray links for the isolated V2Ray-only job"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  checks: write
+  actions: read
+
+concurrency:
+  group: nomreh-live-validation
+  cancel-in-progress: false
+
+jobs:
+  public-live-check:
+    if: ${{ !inputs.configs }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out the independent live validator
+        uses: actions/checkout@v4
+
+      - name: Verify the acknowledged Passenger restart
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          restart_state="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/41618399321" --jq '.status + " " + .conclusion')"
+          test "$restart_state" = "completed success"
+
+      - name: Validate the real public Nomreh site
+        id: live
+        env:
+          NOMREH_LIVE_OUTPUT: ${{ runner.temp }}/nomreh-live.md
+        run: node scripts/nomreh-live-check.cjs
+
+      - name: Publish the independent live-validation evidence
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LIVE_OUTCOME: ${{ steps.live.outcome }}
+        run: |
+          set -euo pipefail
+          conclusion=failure
+          summary='The live validator did not produce a report; no live-success claim was made.'
+          if [ "$LIVE_OUTCOME" = success ]; then conclusion=success; fi
+          if [ -f "$RUNNER_TEMP/nomreh-live.md" ]; then summary="$(cat "$RUNNER_TEMP/nomreh-live.md")"; fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name="Nomreh live HTTPS validation" \
+            -f head_sha="${GITHUB_SHA}" \
+            -f status=completed \
+            -f conclusion="$conclusion" \
+            -f 'output[title]=Independent public Nomreh response checks' \
+            --raw-field "output[summary]=${summary}" > /dev/null
+  v2ray-live:
+    if: ${{ !!inputs.configs }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install the parser and live-test dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Activate the supplied configs through the real admin API
+        id: live
+        env:
+          NOMREH_ADMIN_USERNAME: ${{ secrets.NOMREH_ADMIN_USERNAME }}
+          NOMREH_ADMIN_PASSWORD: ${{ secrets.NOMREH_ADMIN_PASSWORD }}
+          NOMREH_ALLOW_DEMO_ACCOUNTS: "1"
+          NOMREH_V2RAY_TEST_CONFIGS: ${{ inputs.configs }}
+          NOMREH_V2RAY_LIVE_OUTPUT: /tmp/nomreh-v2ray-live-test.md
+        run: npx tsx scripts/nomreh-v2ray-live-test.ts
+      - name: Publish only redacted V2Ray evidence
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -s /tmp/nomreh-v2ray-live-test.md
+          python3 - <<'PY'
+          from pathlib import Path
+          import json, os, re
+          text = Path('/tmp/nomreh-v2ray-live-test.md').read_text()
+          if re.search(r'(?:vless|vmess|trojan|ss):[^\s]+|nomreh_session=|Bearer\s+[A-Za-z0-9]|AIza[0-9A-Za-z_-]{8,}', text, re.I):
+              raise SystemExit('Credential-like material was found in the V2Ray report')
+          Path('/tmp/nomreh-v2ray-check.json').write_text(json.dumps({'output': {'title': 'Nomreh V2Ray live activation and AI acceptance', 'summary': text}}))
+          with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+              summary.write(text)
+          print(text)
+          PY
+          check_id=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/check-runs" --jq '.check_runs[] | select(.name == "v2ray-live") | .id' | head -n 1)
+          test -n "$check_id"
+          gh api --method PATCH "repos/${GITHUB_REPOSITORY}/check-runs/${check_id}" --input /tmp/nomreh-v2ray-check.json >/dev/null

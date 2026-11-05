@@ -1,0 +1,157 @@
+name: Deploy the official app HTTP console transport
+
+# v57 also carries the bounded Xray child reaper and sanitized launcher errors.
+
+on:
+  push:
+    branches: [arena/f4b832aa-animation]
+    paths: [.github/workflows/plesk-official-http-deploy.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+
+concurrency:
+  group: plesk-nomreh-browser
+  cancel-in-progress: false
+
+jobs:
+  upload-extract-build-restart:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Create and verify the bounded application delta
+        env:
+          DELTA_FILES: components/admin-panel.tsx,components/v2ray-connection.tsx,components/official-shecan-console.tsx,components/official-vnc-http-channel.ts,components/shecan-windows-screen.tsx,app/features.css,app/api/admin/v2ray/route.ts,app/api/admin/shecan-runtime/route.ts,app/api/admin/shecan-runtime/windows-frame/route.ts,app/api/admin/shecan-runtime/windows-input/route.ts,instrumentation.ts,lib/api-network.ts,lib/server/api-network.ts,lib/server/db.ts,lib/server/provider-config.ts,lib/server/provider-network.ts,lib/server/v2ray-config.ts,lib/server/v2ray-runtime.ts,lib/server/shecan-runtime.ts,lib/server/shecan-windows-runtime.ts,scripts/next-server.cjs,scripts/nomreh-admin-readiness.cjs,scripts/plesk-node22.cjs,scripts/shecan-official-deploy.ts,scripts/shecan-runtime-watchdog.cjs,scripts/shecan-vm/official-guest-init.sh,scripts/shecan-vm/patch-official-runtime.cjs,scripts/shecan-vm/run-official.sh,scripts/shecan-vm/live-preview.mjs,scripts/shecan-vm/windows-supervisor.mjs,scripts/shecan-vm/windows-ai-broker.mjs,scripts/shecan-vm/preview-smoke.mjs,scripts/shecan-vm/finalize-windows-runtime.mjs,scripts/shecan-vm/patch-wine-udp.py,scripts/shecan-vm/WINDOWS.md,scripts/shecan-vnc-http.cjs,scripts/shecan-vnc-websocket.cjs,types/novnc.d.ts
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/nomreh-deploy-official-http-v57.zip"
+          git archive --format=zip --output="$archive" "$GITHUB_SHA" $(printf '%s' "$DELTA_FILES" | tr ',' ' ')
+          test "$(unzip -Z1 "$archive" | grep -vc '/$')" -eq 38
+          grep -F 'new OfficialVncHttpChannel' components/official-shecan-console.tsx > /dev/null
+          grep -F 'handleShecanVncHttp(request, response, port)' scripts/next-server.cjs > /dev/null
+          grep -F 'startShecanVncReverseServer();' scripts/next-server.cjs > /dev/null
+          grep -F 'ShecanWindowsScreen' components/shecan-windows-screen.tsx > /dev/null
+          grep -F 'isWindowsRuntimeInstalled' scripts/shecan-official-deploy.ts > /dev/null
+          grep -F 'readBrokerStatus' lib/server/shecan-windows-runtime.ts > /dev/null
+          grep -F 'socket = await connectDirectVnc(request);' scripts/shecan-vnc-http.cjs > /dev/null
+          grep -F 'await authorizeUpgrade(request, applicationPort);' scripts/shecan-vnc-http.cjs > /dev/null
+          grep -F 'transport: network.transport' lib/server/provider-config.ts > /dev/null
+          grep -F 'v2rayProviderFetch' lib/server/provider-network.ts > /dev/null
+          grep -F 'parseV2RayConfigListDetailed' lib/server/v2ray-config.ts > /dev/null
+          grep -F 'last_error_code' lib/server/v2ray-runtime.ts > /dev/null
+          grep -F 'inboundTag: ["nomreh-loopback-only"]' lib/server/v2ray-runtime.ts > /dev/null
+          grep -F 'assertAiProviderUrl(url)' lib/server/v2ray-runtime.ts > /dev/null
+          grep -F 'waitForXrayListen' lib/server/v2ray-runtime.ts > /dev/null
+          grep -F 'coreValidation' lib/server/v2ray-runtime.ts > /dev/null
+          grep -F 'response: { type: "http" }' lib/server/v2ray-runtime.ts > /dev/null
+          grep -F 'new AbortController()' lib/server/v2ray-runtime.ts > /dev/null
+          grep -F 'reader.cancel()' lib/server/v2ray-runtime.ts > /dev/null
+          grep -F 'stderrTail' lib/server/v2ray-runtime.ts > /dev/null
+          grep -F 'loglevel: "info"' lib/server/v2ray-runtime.ts > /dev/null
+          grep -F 'startV2RayActivation' app/api/admin/v2ray/route.ts > /dev/null
+          grep -F 'safeChildErrorDetails' scripts/plesk-node22.cjs > /dev/null
+          grep -F 'stdio: ["inherit", "inherit", "pipe"]' scripts/plesk-node22.cjs > /dev/null
+          sha256sum "$archive"
+          stat -c 'Delta bytes: %s' "$archive"
+      - name: Add the pinned lightweight Xray core without a VM image
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/nomreh-deploy-official-http-v57.zip"
+          mkdir -p "$RUNNER_TEMP/delta/nomreh-v2ray"
+          curl --fail --location --silent --show-error --retry 5 --retry-all-errors \
+            --output "$RUNNER_TEMP/Xray-linux-64.zip" \
+            https://github.com/XTLS/Xray-core/releases/download/v26.10.31/Xray-linux-64.zip
+          printf '%s  %s\n' 'e4bd9119f50ae7c41658b1abd0679ae06f98bd864a2907ff33f2f2cf7081b214' "$RUNNER_TEMP/Xray-linux-64.zip" | sha256sum --check --quiet
+          unzip -q "$RUNNER_TEMP/Xray-linux-64.zip" xray -d "$RUNNER_TEMP/delta/nomreh-v2ray"
+          chmod 0755 "$RUNNER_TEMP/delta/nomreh-v2ray/xray"
+          binary_sha="$(sha256sum "$RUNNER_TEMP/delta/nomreh-v2ray/xray" | awk '{print $1}')"
+          printf '{"format":1,"version":"v26.10.31","sha256":"%s"}\n' "$binary_sha" > "$RUNNER_TEMP/delta/nomreh-v2ray/runtime-manifest.json"
+          (cd "$RUNNER_TEMP/delta" && zip -q -9 -r "$archive" nomreh-v2ray)
+          test "$(unzip -Z1 "$archive" | grep -vc '/$')" -eq 40
+          stat -c 'Delta with Xray bytes: %s' "$archive"
+      - name: Prepare an isolated temporary browser
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/plesk-browser"
+          cd "$RUNNER_TEMP/plesk-browser"
+          npm init -y > /dev/null
+          npm install --ignore-scripts --no-audit --no-fund playwright@1.64.1
+          npx playwright install --with-deps chromium
+      - name: Upload the validated application delta
+        id: upload
+        env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+          PLESK_BROWSER_ACTION: upload
+          PLESK_ARCHIVE_NAME: nomreh-deploy-official-http-v57.zip
+          PLESK_UPLOAD_ARCHIVE: ${{ runner.temp }}/nomreh-deploy-official-http-v57.zip
+          PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-http-upload.md
+          NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
+        run: node scripts/plesk-browser-diagnostics.cjs
+      - name: Extract and hash-verify every hosted delta file
+        id: extract
+        if: steps.upload.outcome == 'success'
+        env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+          PLESK_BROWSER_ACTION: extract
+          PLESK_ARCHIVE_NAME: nomreh-deploy-official-http-v57.zip
+          PLESK_DELTA_SOURCE: ${{ github.sha }}
+          PLESK_DELTA_FILES: components/admin-panel.tsx,components/v2ray-connection.tsx,components/official-shecan-console.tsx,components/official-vnc-http-channel.ts,components/shecan-windows-screen.tsx,app/features.css,app/api/admin/v2ray/route.ts,app/api/admin/shecan-runtime/route.ts,app/api/admin/shecan-runtime/windows-frame/route.ts,app/api/admin/shecan-runtime/windows-input/route.ts,instrumentation.ts,lib/api-network.ts,lib/server/api-network.ts,lib/server/db.ts,lib/server/provider-config.ts,lib/server/provider-network.ts,lib/server/v2ray-config.ts,lib/server/v2ray-runtime.ts,lib/server/shecan-runtime.ts,lib/server/shecan-windows-runtime.ts,scripts/next-server.cjs,scripts/nomreh-admin-readiness.cjs,scripts/plesk-node22.cjs,scripts/shecan-official-deploy.ts,scripts/shecan-runtime-watchdog.cjs,scripts/shecan-vm/official-guest-init.sh,scripts/shecan-vm/patch-official-runtime.cjs,scripts/shecan-vm/run-official.sh,scripts/shecan-vm/live-preview.mjs,scripts/shecan-vm/windows-supervisor.mjs,scripts/shecan-vm/windows-ai-broker.mjs,scripts/shecan-vm/preview-smoke.mjs,scripts/shecan-vm/finalize-windows-runtime.mjs,scripts/shecan-vm/patch-wine-udp.py,scripts/shecan-vm/WINDOWS.md,scripts/shecan-vnc-http.cjs,scripts/shecan-vnc-websocket.cjs,types/novnc.d.ts
+          PLESK_DELTA_EXTRA_FILES: nomreh-v2ray/xray,nomreh-v2ray/runtime-manifest.json
+          PLESK_DELTA_EXTRA_ROOT: ${{ runner.temp }}/delta
+          PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-http-extract.md
+          NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
+        run: node scripts/plesk-browser-diagnostics.cjs
+      - name: Run and watch the real Nomreh production build
+        id: build
+        if: steps.extract.outcome == 'success'
+        env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+          PLESK_BROWSER_ACTION: build
+          PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-http-build.md
+          NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
+        run: node scripts/plesk-browser-diagnostics.cjs
+      - name: Restart only the existing Nomreh Node application
+        id: restart
+        if: steps.build.outcome == 'success'
+        env:
+          PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
+          PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
+          PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
+          PLESK_BROWSER_ACTION: restart-runtime
+          PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-http-restart.md
+          NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
+        run: node scripts/plesk-browser-diagnostics.cjs
+      - name: Publish the sanitized deployment result
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
+          EXTRACT_OUTCOME: ${{ steps.extract.outcome }}
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          RESTART_OUTCOME: ${{ steps.restart.outcome }}
+        run: |
+          set -euo pipefail
+          conclusion=success
+          if [ "$UPLOAD_OUTCOME" != success ] || [ "$EXTRACT_OUTCOME" != success ] || [ "$BUILD_OUTCOME" != success ] || [ "$RESTART_OUTCOME" != success ]; then conclusion=failure; fi
+          summary='The official HTTP console deployment did not produce a report; no live success was claimed.'
+          for report in nomreh-http-restart.md nomreh-http-build.md nomreh-http-extract.md nomreh-http-upload.md; do
+            if [ -f "$RUNNER_TEMP/$report" ]; then summary="$(cat "$RUNNER_TEMP/$report")"; break; fi
+          done
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+            -f name="Official app HTTP console deployment" \
+            -f head_sha="$GITHUB_SHA" \
+            -f status=completed \
+            -f conclusion="$conclusion" \
+            -f 'output[title]=Authenticated HTTP raw-channel console on Plesk' \
+            --raw-field "output[summary]=${summary}" > /dev/null

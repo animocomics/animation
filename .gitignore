@@ -1,0 +1,16 @@
+node_modules/
+.next/
+out/
+.env
+.env.local
+.env.*.local
+*.log
+.DS_Store
+.vercel
+coverage/
+*.tsbuildinfo
+data/
+*.db
+*.db-shm
+*.db-wal
+.nomreh-public-next-backup-*

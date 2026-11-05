@@ -1,0 +1,9 @@
+{
+  "name": "nomreh-plesk-node22-runtime",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Pinned bootstrap package for Nomreh's domain-local Node.js runtime",
+  "dependencies": {
+    "node": "22.22.3"
+  }
+}
