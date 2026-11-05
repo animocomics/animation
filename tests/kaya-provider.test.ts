@@ -166,3 +166,18 @@ test("diagnosis is reachable without a shell", () => {
   assert.match(hostInspect, /execFile/, "host inspection must use execFile, never a shell");
   assert.ok(!/exec\s*\(|shell:\s*true/.test(hostInspect), "no shell interpolation");
 });
+
+test("host inspection does not mistake our own runtime for a foreign VPN", () => {
+  // The app's own Shecan runtime lives under nomreh-vm/ and its process paths
+  // contain words like "official", which previously produced a false
+  // "a VPN is running" verdict on a host with no VPN at all.
+  const inspector = fs.readFileSync(path.join(root, "lib/server/host-network-inspect.ts"), "utf8");
+  assert.match(inspector, /OWN_PATHS/, "our own installation paths must be excluded");
+  assert.match(inspector, /nomreh-vm/, "nomreh-vm must be in the exclusion list");
+  // Process matching must look at the command name, not the whole command line.
+  assert.match(inspector, /split\(\/\\s\+\/\)\[1\]/, "match the command name only");
+
+  const script = fs.readFileSync(path.join(root, "scripts/nomreh-diagnose.cjs"), "utf8");
+  assert.match(script, /OWN_PATHS/);
+  assert.ok(!/\|shecan\|/.test(script), "a bare 'shecan' substring must not flag our own runtime");
+});

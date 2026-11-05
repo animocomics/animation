@@ -28,7 +28,8 @@ const MATRIX = [
   ["213.176.6.243", 443],
   ["140.82.121.6", 443],
 ];
-const PROXY_PROCESS = /(v2ray|xray|sing-box|shecan|dns2socks|psiphon|tun2socks|warp|openvpn|wireguard)/i;
+const PROXY_PROCESS = /^(v2ray|xray|sing-box|sing_box|dns2socks|psiphon|tun2socks|warp-svc|openvpn|wg-quick|wireguard|hysteria|naive|trojan|shadowsocks|ss-local|ss-redir|clash|mihomo)/i;
+const OWN_PATHS = /(nomreh-vm|nomreh-data|nomreh\.arounidea\.com|shecan-runtime|next-server)/;
 const REDIRECT_RULE = /(REDIRECT|TPROXY|DNAT|REJECT|DROP)/;
 const SERVICES = ["v2ray", "xray", "sing-box", "shecan", "tun2socks"];
 
@@ -127,13 +128,23 @@ async function main() {
   // 2. proxy processes, listeners, tun devices
   console.log("\n== 2. proxy / VPN artifacts");
   const ps = await run("ps", ["ax", "-o", "pid=,comm=,args="]);
-  const proxyProcs = ps.stdout.split("\n").filter((row) => PROXY_PROCESS.test(row)).map((row) => row.trim().slice(0, 120));
+  const proxyProcs = ps.stdout
+    .split("\n")
+    .map((row) => row.trim())
+    .filter((row) => row && !OWN_PATHS.test(row))
+    .filter((row) => PROXY_PROCESS.test(row.split(/\s+/)[1] || ""))
+    .map((row) => row.slice(0, 120));
   line(proxyProcs.length === 0, proxyProcs.length ? `${proxyProcs.length} proxy process(es) running` : "no VPN/DNS proxy process");
   proxyProcs.slice(0, 6).forEach((row) => console.log(`         ${row}`));
   if (proxyProcs.length) findings.push("proxy-process");
 
   const ss = await run("ss", ["-lntup"]);
-  const listeners = ss.stdout.split("\n").filter((row) => /:(53|5353|1080|10808|10809|7300|8400)\b/.test(row));
+  // Exclude our own runtime: the app deliberately listens on loopback ports for
+  // its providers, and counting those as "a proxy is installed" is wrong.
+  const listeners = ss.stdout
+    .split("\n")
+    .filter((row) => /:(53|5353|1080|10808|10809|7300|8400)\b/.test(row))
+    .filter((row) => !OWN_PATHS.test(row));
   line(listeners.length === 0, listeners.length ? `${listeners.length} local proxy port(s) listening` : "no local proxy port");
   if (listeners.length) findings.push("proxy-listener");
 

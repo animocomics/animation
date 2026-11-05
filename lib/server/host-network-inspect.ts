@@ -26,13 +26,14 @@ export interface HostInspection {
   tunDevices: string[];
   firewallRules: string[];
   services: Array<{ name: string; state: string }>;
+  publicIp?: string;
   lines: InspectionLine[];
   verdict: string;
   suggestions: string[];
 }
 
 const PROXY_PORT = /:(53|5353|1080|1081|3128|7300|8080|8081|8400|10808|10809|10810)\b/;
-const PROXY_PROCESS = /(v2ray|xray|sing-box|sing_box|shecan|dns2socks|psiphon|tun2socks|warp|openvpn|wireguard|hysteria|naive)/i;
+const PROXY_PROCESS = /^(v2ray|xray|sing-box|sing_box|dns2socks|psiphon|tun2socks|warp-svc|openvpn|wg-quick|wireguard|hysteria|naive|trojan|shadowsocks|ss-local|ss-redir|clash|mihomo)/i;
 const REDIRECT_RULE = /(REDIRECT|TPROXY|DNAT|MASQUERADE|REJECT|DROP)/;
 const SERVICES = ["v2ray", "xray", "sing-box", "shecan", "tun2socks", "wg-quick@wg0", "openvpn"];
 
@@ -89,12 +90,18 @@ export async function inspectHost(): Promise<HostInspection> {
     .slice(0, 12)
     .map((line) => line.trim().slice(0, 160));
 
+  // Match the command name only. Matching the whole command line flagged our own
+  // application, whose paths contain "official", and produced a false "VPN is
+  // running" verdict for a host with no VPN at all.
+  const OWN_PATHS = /(nomreh-vm|nomreh-data|nomreh\.arounidea\.com|shecan-runtime|next-server)/;
   const processes = psOut.ok
     ? psOut.stdout
         .split("\n")
-        .filter((line) => PROXY_PROCESS.test(line))
+        .map((line) => line.trim())
+        .filter((line) => line && !OWN_PATHS.test(line))
+        .filter((line) => PROXY_PROCESS.test(line.split(/\s+/)[1] || ""))
         .slice(0, 10)
-        .map((line) => line.trim().slice(0, 160))
+        .map((line) => line.slice(0, 160))
     : [];
 
   const tunDevices = ipLinkOut.ok
@@ -182,9 +189,29 @@ export async function inspectHost(): Promise<HostInspection> {
     suggestions.push("iptables-save > /root/iptables.bak", "iptables -S | grep -E 'REDIRECT|TPROXY|DNAT|REJECT|DROP'", "iptables -D <زنجیره> <شمارهٔ قاعده>");
   }
   if (!verdict) {
-    verdict = "هیچ نشانه‌ای از DNS محلی، تونل، پروسهٔ VPN یا قاعدهٔ redirect روی سرور پیدا نشد. اگر اتصال هنوز timeout می‌شود، محدودیت از طرف شبکهٔ سرویس‌دهنده است.";
-    suggestions.push("node scripts/nomreh-network-check.cjs", "curl -sS -o /dev/null -w '%{http_code}\\n' --max-time 10 https://api.github.com");
+    // Everything LOCAL is clean. When even 1.1.1.1 times out, no application
+    // setting can help: the relay/firewall in front of the VPS is dropping
+    // packets, and that is the hosting provider's layer.
+    verdict =
+      "روی خود سرور هیچ نشانه‌ای از DNS محلی، تونل، پروسهٔ VPN یا قاعدهٔ redirect نیست. اگر با این حال حتی 1.1.1.1 هم timeout می‌شود، بسته‌ها قبل از رسیدن به سرور دور ریخته می‌شوند؛ این لایهٔ سرویس‌دهنده/فایروال بالادست است و با هیچ تنظیمی داخل برنامه حل نمی‌شود.";
+    suggestions.push(
+      "curl -sS -o /dev/null -w '%{http_code}\\n' --max-time 10 https://api.github.com",
+      "curl -sS --max-time 8 https://api.ipify.org   # آیا IP عمومی سرور عوض شده؟",
+    );
   }
 
-  return { resolvConf, listeners, processes, tunDevices, firewallRules, services, lines, verdict, suggestions };
+  // The public IP tells the operator whether the host still owns the address the
+  // site used to serve from. If it changed, egress filtering is at the new
+  // address and the hosting provider is the only one who can lift it.
+  const publicIp = await run("curl", ["-sS", "--max-time", "6", "https://api.ipify.org"], 7000)
+    .then((result) => (result.ok ? result.stdout.trim().slice(0, 60) : ""))
+    .catch(() => "");
+  lines.push({
+    label: "IP عمومی خروجی",
+    value: publicIp || "قابل تشخیص نبود (خروجی بسته است)",
+    ok: publicIp ? true : null,
+    hint: publicIp ? "این آدرسی است که ترافیک شما با آن به اینترنت می‌رود" : undefined,
+  });
+
+  return { resolvConf, listeners, processes, tunDevices, firewallRules, services, publicIp, lines, verdict, suggestions };
 }
