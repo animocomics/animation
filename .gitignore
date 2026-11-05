@@ -14,3 +14,7 @@ data/
 *.db-shm
 *.db-wal
 .nomreh-public-next-backup-*
+
+# Local validation runtime state (never commit host data)
+/nomreh-data/
+/local-validation/
