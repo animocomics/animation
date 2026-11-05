@@ -146,3 +146,23 @@ test("network diagnostics cannot exceed the reverse proxy timeout", () => {
   // A failed TCP connect must not trigger two more identical timeouts.
   assert.match(source, /skipped: true/);
 });
+
+test("diagnosis is reachable without a shell", () => {
+  // The operator may only have the panel's npm console, so every check must be
+  // available as a dependency-free npm script and inside the admin panel.
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as { scripts: Record<string, string> };
+  assert.ok(pkg.scripts.diagnose, "npm run diagnose must exist");
+  assert.match(pkg.scripts.diagnose, /nomreh-diagnose\.cjs/);
+
+  const script = fs.readFileSync(path.join(root, "scripts/nomreh-diagnose.cjs"), "utf8");
+  assert.ok(!/require\(["'](?!node:)/.test(script), "the diagnosis script must have no third-party dependency");
+  assert.match(script, /resolv\.conf/);
+  assert.match(script, /NOMREH_DIAGNOSE_OK/);
+  // It must never read or print a credential.
+  assert.ok(!/apiKey|api_key|NOMREH_SECRET/.test(script), "diagnosis must not touch secrets");
+
+  // The same inspection must be available in the panel.
+  const hostInspect = fs.readFileSync(path.join(root, "lib/server/host-network-inspect.ts"), "utf8");
+  assert.match(hostInspect, /execFile/, "host inspection must use execFile, never a shell");
+  assert.ok(!/exec\s*\(|shell:\s*true/.test(hostInspect), "no shell interpolation");
+});

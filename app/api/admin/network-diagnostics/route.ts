@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { AuthError, requireAdmin } from "@/lib/server/auth";
 import { getApiNetworkStatus } from "@/lib/server/api-network";
 import { inspectAddresses, addressConclusion } from "@/lib/server/network-probe";
+import { inspectHost } from "@/lib/server/host-network-inspect";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -222,6 +223,8 @@ export async function GET(request: Request) {
 
   const hostnames = [...new Set(selected.map((target) => new URL(target.url).hostname))];
 
+  const hostInspectionPromise = inspectHost().catch((error) => ({ verdict: `بازرسی میزبان انجام نشد: ${describe(error)}`, lines: [], suggestions: [] }));
+
   const [networkMode, results, egress, addressChecks] = await Promise.all([
     withBudget(networkModePromise, 4000, { error: "timeout" } as Record<string, unknown>),
     Promise.all(selected.map((target) => withBudget(probeTarget(target), 16000, { label: target.label, hostname: new URL(target.url).hostname, probes: [] }))),
@@ -239,6 +242,8 @@ export async function GET(request: Request) {
       ),
     ),
   ]);
+
+  const host = await withBudget(hostInspectionPromise, 9000, { verdict: "بازرسی میزبان در زمان مجاز تمام نشد.", lines: [], suggestions: [] } as unknown as Awaited<ReturnType<typeof inspectHost>>);
 
   const anyOpen = egress.some((probe) => probe.ok);
   const egressConclusion = anyOpen
@@ -258,12 +263,13 @@ export async function GET(request: Request) {
   return NextResponse.json({
     // Lets the operator confirm the deploy actually took effect: if this marker
     // is missing, the browser is talking to an older build.
-    diagnosticsVersion: "v7",
+    diagnosticsVersion: "v8",
     checkedAt: new Date().toISOString(),
     elapsedMs: Date.now() - startedAt,
     runtimeVersion: process.version,
     platform: process.platform,
     networkMode,
+    host,
     egress,
     egressConclusion,
     addressChecks,

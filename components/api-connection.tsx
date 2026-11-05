@@ -35,6 +35,7 @@ export function ApiConnection() {
     conclusion: string;
     egressConclusion: string;
     egress: Array<{ step: string; ok: boolean; detail: string; ms: number }>;
+    host?: { verdict: string; lines: Array<{ label: string; value: string; ok: boolean | null; hint?: string }>; suggestions: string[] };
     rows: Array<{ label: string; hostname: string; step: string; ok: boolean; detail: string; ms: number }>;
   }>({ loading: false, conclusion: "", egressConclusion: "", egress: [], rows: [] });
 
@@ -67,6 +68,7 @@ export function ApiConnection() {
         error?: string;
         egressConclusion?: string;
         egress?: Array<{ step: string; ok: boolean; detail: string; ms: number }>;
+        host?: { verdict: string; lines: Array<{ label: string; value: string; ok: boolean | null; hint?: string }>; suggestions: string[] };
         results?: Array<{ label: string; hostname: string; probes: Array<{ step: string; ok: boolean; detail: string; ms: number }> }>;
       }>(response, "تشخیص شبکه");
       if (!response.ok) throw new Error(payload.error || "تشخیص شبکه انجام نشد.");
@@ -78,6 +80,7 @@ export function ApiConnection() {
         conclusion: payload.conclusion || "",
         egressConclusion: payload.egressConclusion || "",
         egress: payload.egress || [],
+        host: (payload as { host?: { verdict: string; lines: Array<{ label: string; value: string; ok: boolean | null; hint?: string }>; suggestions: string[] } }).host,
         rows,
       });
     } catch (error) {
@@ -163,6 +166,30 @@ export function ApiConnection() {
 
         {(diagnostics.conclusion || diagnostics.rows.length > 0 || diagnostics.egress.length > 0) && (
           <div className="notice notice-info network-diagnostics" dir="ltr" style={{ gridColumn: "1 / -1", fontFamily: "monospace", fontSize: 12 }}>
+            {diagnostics.host?.verdict && (
+              <div dir="rtl" style={{ marginBottom: 8 }}>
+                <strong>بازرسی سرور: </strong>
+                {diagnostics.host.verdict}
+                {diagnostics.host.lines?.length ? (
+                  <div style={{ marginTop: 6 }}>
+                    {diagnostics.host.lines.map((line) => (
+                      <div key={line.label}>
+                        {line.ok === null ? "?" : line.ok ? "OK  " : "FAIL"} {line.label}: {line.value}
+                        {line.hint ? ` (${line.hint})` : ""}
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+                {diagnostics.host.suggestions?.length ? (
+                  <div style={{ marginTop: 6 }}>
+                    <div>دستورهای پیشنهادی (در ترمینال سرور با دسترسی root):</div>
+                    {diagnostics.host.suggestions.map((command) => (
+                      <div key={command} dir="ltr" style={{ userSelect: "all" }}>{command}</div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            )}
             {diagnostics.egressConclusion && <p dir="rtl"><strong>{diagnostics.egressConclusion}</strong></p>}
             {diagnostics.egress.map((probe) => (
               <div key={`egress-${probe.step}`}>
