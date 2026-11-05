@@ -3,7 +3,7 @@ import { AuthError, requireAdmin } from "@/lib/server/auth";
 import { getApiNetworkStatus } from "@/lib/server/api-network";
 
 export const runtime = "nodejs";
-export const maxDuration = 30;
+export const maxDuration = 60;
 export const dynamic = "force-dynamic";
 
 // Network diagnostics for the admin console.
@@ -67,9 +67,9 @@ async function probeTcp(hostname: string): Promise<ProbeResult> {
       socket.destroy();
       resolve({ step: "tcp", ok, detail, ms: Date.now() - started });
     };
-    socket.setTimeout(8000);
+    socket.setTimeout(6000);
     socket.once("connect", () => done(true, "port 443 accepted"));
-    socket.once("timeout", () => done(false, "ETIMEDOUT: port 443 did not answer within 8s"));
+    socket.once("timeout", () => done(false, "ETIMEDOUT: port 443 did not answer within 6s"));
     socket.once("error", (error) => done(false, describe(error)));
   });
 }
@@ -84,7 +84,7 @@ async function probeTls(hostname: string): Promise<ProbeResult> {
       socket.destroy();
       resolve({ step: "tls", ok, detail, ms: Date.now() - started });
     };
-    socket.setTimeout(10000);
+    socket.setTimeout(8000);
     socket.once("secureConnect", () => {
       const certificate = socket.getPeerCertificate();
       const issuer = certificate && certificate.issuer ? certificate.issuer.O || certificate.issuer.CN || "unknown" : "unknown";
@@ -102,7 +102,7 @@ async function probeHttp(url: string): Promise<ProbeResult> {
     const response = await fetch(url, {
       method: "GET",
       redirect: "follow",
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(10000),
       cache: "no-store",
       headers: { "User-Agent": "nomreh-network-diagnostics" },
     });
@@ -164,6 +164,9 @@ export async function GET(request: Request) {
     .find((entry) => !entry.probe.ok);
 
   return NextResponse.json({
+    // Lets the operator confirm the deploy actually took effect: if this marker
+    // is missing, the browser is talking to an older build.
+    diagnosticsVersion: "v3",
     checkedAt: new Date().toISOString(),
     runtimeVersion: process.version,
     platform: process.platform,

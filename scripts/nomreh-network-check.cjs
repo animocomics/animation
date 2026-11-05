@@ -20,7 +20,27 @@ const https = require("node:https");
 
 const TARGETS = process.argv.slice(2).length
   ? process.argv.slice(2)
-  : ["kayaai.ir", "api.deepseek.com", "generativelanguage.googleapis.com"];
+  : ["kayaai.ir", "api.deepseek.com", "generativelanguage.googleapis.com", "github.com"];
+
+// github.com is the control: it is reachable from almost every network. If the
+// control passes and the providers fail, the problem is the destination (filtering
+// or an upstream block), not the server's internet connection.
+const CONTROL = "github.com";
+
+function verdict(hostname, steps) {
+  const byStep = Object.fromEntries(steps.map((s) => [s.name, s]));
+  if (!byStep.dns.ok) return "DNS does not resolve — the server's resolver is broken or blocking this name.";
+  if (!byStep.tcp.ok) {
+    return hostname === CONTROL
+      ? "No TCP route out at all: the server cannot reach the internet on 443."
+      : "TCP blocked or filtered: the server has no working route to this address (often outbound filtering on an Iranian host).";
+  }
+  if (!byStep.tls.ok) {
+    return "TCP works but the TLS handshake is reset — traffic to this host is being interfered with (typical of filtering) or a proxy/tunnel is intercepting it. No API key can succeed here.";
+  }
+  if (!byStep.http.ok) return "TLS works but the HTTP request fails — check for a transparent proxy or an upstream outage.";
+  return "Reachable; a failing request is then an API-key, quota or request-shape problem, not the network.";
+}
 
 function codeOf(error) {
   if (!error) return "unknown";
@@ -101,6 +121,7 @@ async function main() {
     const hostname = target.replace(/^https?:\/\//, "").split("/")[0];
     const path = target.startsWith("https://kayaai.ir") ? "/api/chat/completions" : "/";
     process.stdout.write(`== ${hostname}\n`);
+    const collected = [];
     for (const [step, run] of [
       ["dns ", () => dnsCheck(hostname)],
       ["tcp ", () => tcpCheck(hostname)],
@@ -108,9 +129,11 @@ async function main() {
       ["http", () => httpCheck(hostname, path)],
     ]) {
       const result = await run();
+      collected.push({ name: step.trim(), ...result });
       console.log(`  ${step} ${result.ok ? "OK  " : "FAIL"} ${result.detail}`);
       if (!result.ok && !firstFailure) firstFailure = `${hostname} ${step.trim()}: ${result.detail}`;
     }
+    console.log(`  ->  ${verdict(hostname, collected)}`);
     process.stdout.write("\n");
   }
 
