@@ -18,3 +18,8 @@ data/
 # Local validation runtime state (never commit host data)
 /nomreh-data/
 /local-validation/
+
+# Assembled Windows runtime and its transfer workspace (never commit: ~3.3 GB)
+/nomreh-vm/
+# Next build output copied into the public document root during plesk builds
+/public/_next/

@@ -143,11 +143,15 @@ async function main() {
     if (await hashFile(archive) !== part.sha256) throw new Error(`The staged Windows archive does not match its pinned hash: ${part.name}.`);
     validateArchivePaths(archive);
     unzip(["-tqq", archive]);
-    for (const chunk of part.chunks) fs.rmSync(path.resolve(DEPLOY_ROOT, chunk.path), { force: true });
     console.log(`NOMREH_WINDOWS_ASSEMBLY_VERIFIED part=${part.name} bytes=${part.bytes}`);
     unzip(["-q", "-o", archive, "-d", EXTRACT_ROOT]);
-    fs.rmSync(archive, { force: true });
+    // Record the verified part BEFORE releasing its chunks. If the process dies
+    // after this point the next run skips the part using the marker; deleting
+    // the chunks first would force a full re-download instead.
+    fs.mkdirSync(EXTRACT_ROOT, { recursive: true, mode: 0o700 });
     fs.writeFileSync(markerPath(part), `${part.sha256}\n`, { mode: 0o600 });
+    for (const chunk of part.chunks) fs.rmSync(path.resolve(DEPLOY_ROOT, chunk.path), { force: true });
+    fs.rmSync(archive, { force: true });
   }
   const staged = path.join(EXTRACT_ROOT, "nomreh-vm", "windows");
   if (!await verifyRuntime(staged)) throw new Error("The extracted Windows runtime did not pass its twelve-file hash manifest; it was not activated.");

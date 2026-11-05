@@ -14,7 +14,11 @@ const { spawnSync } = require("node:child_process");
 const EXPECTED_BYTES = 1_428_928_417;
 const EXPECTED_CHUNKS = 81;
 const TAG = "nomreh-windows-complete";
-const SOURCE = `https://codeload.github.com/rayavc099/animation/zip/refs/tags/${TAG}`;
+// Keep the default on the current owner (the repo moved from rayavc099) and
+// allow an override for forks. Codeload cannot follow repository redirects.
+const REPOSITORY = (process.env.NOMREH_WINDOWS_GITHUB_REPOSITORY || "animocomics/animation").replace(/^\/+|\/+$/g, "");
+if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(REPOSITORY)) throw new Error("NOMREH_WINDOWS_GITHUB_REPOSITORY must look like owner/name.");
+const SOURCE = `https://codeload.github.com/${REPOSITORY}/zip/refs/tags/${TAG}`;
 const MAX_REDIRECTS = 4;
 const REQUEST_TIMEOUT = 120000;
 const MAX_ATTEMPTS = 4;

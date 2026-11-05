@@ -51,12 +51,28 @@ function remoteUrl(repository, remoteName) {
   return result.error || result.status !== 0 ? "" : result.stdout.trim();
 }
 
+// The repository was transferred from rayavc099 to animocomics. Both owners are
+// accepted so an existing host clone keeps matching after the transfer, but the
+// current owner is tried first. Keep this list in sync with
+// NOMREH_REPOSITORIES in the deployment scripts.
+const NOMREH_OWNERS = ["animocomics", "rayavc099"];
+const NOMREH_PROJECT = "animation";
+
 function isNomrehUrl(remote) {
-  if (/^git@github\.com:rayavc099\/animation(?:\.git)?\/?$/.test(remote)) return true;
+  if (typeof remote !== "string" || !remote.trim()) return false;
+  const scp = remote.match(/^git@github\.com:([^/]+)\/(.+?)(?:\.git)?\/?$/);
+  if (scp) return NOMREH_OWNERS.includes(scp[1].toLowerCase()) && scp[2].replace(/\.git$/, "") === NOMREH_PROJECT;
   try {
     const parsed = new URL(remote);
-    const project = parsed.pathname.replace(/\/+$/, "").replace(/\.git$/, "");
-    return ["https:", "ssh:"].includes(parsed.protocol) && parsed.hostname === "github.com" && project === "/rayavc099/animation";
+    const project = parsed.pathname.replace(/\/+$/, "").replace(/\.git$/, "").replace(/^\/+/, "");
+    const [owner, name, ...rest] = project.split("/");
+    return (
+      ["https:", "ssh:"].includes(parsed.protocol) &&
+      parsed.hostname === "github.com" &&
+      rest.length === 0 &&
+      NOMREH_OWNERS.includes((owner || "").toLowerCase()) &&
+      name === NOMREH_PROJECT
+    );
   } catch {
     return false;
   }

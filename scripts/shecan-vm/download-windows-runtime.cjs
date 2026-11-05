@@ -19,6 +19,12 @@ const ARCHIVE = path.join(WORK_ROOT, "runtime.zip");
 const COMPLETE = `${ARCHIVE}.complete`;
 const EXTRACT_ROOT = path.join(WORK_ROOT, "payload");
 const TAG = process.env.NOMREH_WINDOWS_GITHUB_TAG || "nomreh-windows-complete";
+// The repository moved from rayavc099 to animocomics. Default to the current
+// owner so a host clone keeps working after the transfer, and allow an explicit
+// override for forks or mirrors. Codeload paths are case-sensitive and cannot
+// follow a repository redirect.
+const REPOSITORY = (process.env.NOMREH_WINDOWS_GITHUB_REPOSITORY || "animocomics/animation").replace(/^\/+|\/+$/g, "");
+if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(REPOSITORY)) throw new Error("NOMREH_WINDOWS_GITHUB_REPOSITORY must look like owner/name.");
 const TOKEN = (process.env.NOMREH_WINDOWS_GITHUB_TOKEN || "").trim();
 const MAX_ARCHIVE = 2_000_000_000;
 const REQUIRED_FREE = 1_337_349_552 + 3_343_228_444 + 512 * 1024 * 1024;
@@ -59,7 +65,7 @@ async function download() {
     if (existing) headers.Range = `bytes=${existing}-`;
     let response;
     try {
-      response = await get(`https://codeload.github.com/rayavc099/animation/zip/refs/tags/${TAG}`, headers);
+      response = await get(`https://codeload.github.com/${REPOSITORY}/zip/refs/tags/${TAG}`, headers);
       const status = response.statusCode || 0;
       if (![200, 206].includes(status)) {
         response.resume();

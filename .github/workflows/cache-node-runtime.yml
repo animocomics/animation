@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   cache-runtime:
-    if: github.repository == 'rayavc099/animation' && github.ref == 'refs/heads/arena/f4b832aa-animation'
+    if: github.repository == 'animocomics/animation' && github.ref == 'refs/heads/arena/f4b832aa-animation'
     runs-on: ubuntu-latest
     steps:
       - name: Check out the deployment branch
