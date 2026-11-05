@@ -95,6 +95,39 @@ async function probeTls(hostname: string): Promise<ProbeResult> {
   });
 }
 
+// The layer probes prove a destination is unreachable, but not whether the host
+// has any egress at all. Raw IPs on several ports separate "this provider is
+// blocked" from "all outbound TCP is blocked", which need opposite fixes.
+async function probePort(host: string, port: number): Promise<ProbeResult> {
+  const started = Date.now();
+  const net = await import("node:net");
+  return new Promise<ProbeResult>((resolve) => {
+    const socket = net.createConnection({ host, port });
+    const done = (ok: boolean, detail: string) => {
+      socket.removeAllListeners();
+      socket.destroy();
+      resolve({ step: `port ${host}:${port}`, ok, detail, ms: Date.now() - started });
+    };
+    socket.setTimeout(4500);
+    socket.once("connect", () => done(true, "connected"));
+    socket.once("timeout", () => done(false, "ETIMEDOUT"));
+    socket.once("error", (error) => done(false, describe(error)));
+  });
+}
+
+async function probePlainHttp(url: string): Promise<ProbeResult> {
+  const started = Date.now();
+  const http = await import("node:http");
+  return new Promise<ProbeResult>((resolve) => {
+    const request = http.get(url, { timeout: 6000, headers: { "User-Agent": "nomreh-network-diagnostics" } }, (response) => {
+      response.resume();
+      resolve({ step: "http:80", ok: true, detail: `HTTP ${response.statusCode}`, ms: Date.now() - started });
+    });
+    request.on("timeout", () => request.destroy(new Error("ETIMEDOUT")));
+    request.on("error", (error) => resolve({ step: "http:80", ok: false, detail: describe(error), ms: Date.now() - started }));
+  });
+}
+
 async function probeHttp(url: string): Promise<ProbeResult> {
   const started = Date.now();
   try {
@@ -163,14 +196,36 @@ export async function GET(request: Request) {
     .flatMap((entry) => entry.probes.map((probe) => ({ label: entry.label, hostname: entry.hostname, probe })))
     .find((entry) => !entry.probe.ok);
 
+  // Raw IPs so a DNS problem cannot masquerade as a routing problem. 1.1.1.1 and
+  // 8.8.8.8 are neutral; the provider IP shows whether the block is destination
+  // specific, and port 80 shows whether only 443 is filtered.
+  const matrixTargets: Array<[string, number]> = [
+    ["1.1.1.1", 443],
+    ["1.1.1.1", 80],
+    ["8.8.8.8", 53],
+    ["213.176.6.243", 443],
+    ["213.176.6.243", 80],
+    ["140.82.121.6", 443],
+  ];
+  const egress = await Promise.all([
+    ...matrixTargets.map(([host, port]) => probePort(host, port)),
+    probePlainHttp("http://example.com/"),
+  ]);
+  const anyOpen = egress.some((probe) => probe.ok);
+  const egressConclusion = anyOpen
+    ? "حداقل یک مسیر خروجی باز است؛ می‌توان ترافیک AI را از همان پورت عبور داد."
+    : "هیچ اتصال خروجی روی پورت‌های آزمایش‌شده برقرار نشد؛ سرور به‌کلی خروجی ندارد و این باید از طرف هاستینگ/فایروال سرور باز شود. هیچ کلید یا تنظیمی در برنامه این را حل نمی‌کند.";
+
   return NextResponse.json({
     // Lets the operator confirm the deploy actually took effect: if this marker
     // is missing, the browser is talking to an older build.
-    diagnosticsVersion: "v3",
+    diagnosticsVersion: "v5",
     checkedAt: new Date().toISOString(),
     runtimeVersion: process.version,
     platform: process.platform,
     networkMode,
+    egress,
+    egressConclusion,
     results,
     conclusion: firstFailure
       ? `اولین لایهٔ ناموفق برای ${firstFailure.label} (${firstFailure.hostname}): ${firstFailure.probe.step} — ${firstFailure.probe.detail}${networkMode.shecanEnabled ? `. توجه: حالت شبکه «${String(networkMode.transport)}» روشن است؛ اگر لایهٔ TCP سالم است ولی TLS شکسته، همان تونل را خاموش کنید و دوباره آزمایش کنید.` : ""}`

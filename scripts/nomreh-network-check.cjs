@@ -112,6 +112,29 @@ function httpCheck(hostname, path = "/") {
   });
 }
 
+// Raw-IP port matrix. The per-host probes show what fails; this shows whether any
+// outbound path exists, which decides the fix.
+const MATRIX = [
+  ["1.1.1.1", 443],
+  ["1.1.1.1", 80],
+  ["8.8.8.8", 53],
+  ["213.176.6.243", 443],
+  ["213.176.6.243", 80],
+  ["140.82.121.6", 443],
+];
+
+function plainHttpCheck(url) {
+  return new Promise((resolve) => {
+    const started = Date.now();
+    const request = require("node:http").get(url, { timeout: 6000, headers: { "User-Agent": "nomreh-network-check" } }, (response) => {
+      response.resume();
+      resolve({ ok: true, detail: `HTTP ${response.statusCode} (${Date.now() - started}ms)` });
+    });
+    request.on("timeout", () => request.destroy(new Error("ETIMEDOUT")));
+    request.on("error", (error) => resolve({ ok: false, detail: `${codeOf(error)} (${Date.now() - started}ms)` }));
+  });
+}
+
 async function main() {
   console.log(`Nomreh egress check — node ${process.version} on ${process.platform}`);
   console.log("No API key is used and no setting is changed.\n");
@@ -137,8 +160,26 @@ async function main() {
     process.stdout.write("\n");
   }
 
+  console.log("== raw-IP port matrix (no DNS involved)");
+  for (const [host, port] of MATRIX) {
+    const result = await tcpCheck(host, port);
+    console.log(`  ${host}:${port} ${result.ok ? "OK  " : "FAIL"} ${result.detail}`);
+  }
+  const probe80 = await plainHttpCheck("http://example.com/");
+  console.log(`  http://example.com/ ${probe80.ok ? "OK  " : "FAIL"} ${probe80.detail}`);
+
   if (firstFailure) {
     console.log(`NOMREH_NETWORK_CHECK_FAILED ${firstFailure}`);
+    console.log("");
+    console.log("How to read this:");
+    console.log("  every port times out, including :80 and a raw IP");
+    console.log("    -> the host has no outbound internet. Nothing in the app can fix it;");
+    console.log("       the provider/firewall (or the host's outbound ACL) must open egress.");
+    console.log("  GitHub passes but the AI hosts time out");
+    console.log("    -> egress works and the AI destinations are filtered; use a tunnel for");
+    console.log("       AI traffic only, or open those addresses at the host.");
+    console.log("  port 80 passes but every 443 times out");
+    console.log("    -> outbound 443 is blocked; ask the host to allow it.");
     console.log("Interpretation: DNS ok + TCP fails means the server has no route to that address");
     console.log("(often an Iranian host reaching a blocked destination). TCP ok + TLS fails means");
     console.log("something is resetting the handshake. Any failure here means no key can work.");

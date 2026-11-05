@@ -30,7 +30,13 @@ export function ApiConnection() {
   const [message, setMessage] = useState("");
   const [discoveryState, setDiscoveryState] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [discoveryMessage, setDiscoveryMessage] = useState("");
-  const [diagnostics, setDiagnostics] = useState<{ loading: boolean; conclusion: string; rows: Array<{ label: string; hostname: string; step: string; ok: boolean; detail: string; ms: number }> }>({ loading: false, conclusion: "", rows: [] });
+  const [diagnostics, setDiagnostics] = useState<{
+    loading: boolean;
+    conclusion: string;
+    egressConclusion: string;
+    egress: Array<{ step: string; ok: boolean; detail: string; ms: number }>;
+    rows: Array<{ label: string; hostname: string; step: string; ok: boolean; detail: string; ms: number }>;
+  }>({ loading: false, conclusion: "", egressConclusion: "", egress: [], rows: [] });
 
   if (user.role !== "admin") return null;
 
@@ -53,21 +59,29 @@ export function ApiConnection() {
   }
 
   async function runDiagnostics() {
-    setDiagnostics({ loading: true, conclusion: "", rows: [] });
+    setDiagnostics({ loading: true, conclusion: "", egressConclusion: "", egress: [], rows: [] });
     try {
       const response = await fetch("/api/admin/network-diagnostics", { cache: "no-store" });
       const payload = await readJsonResponse<{
         conclusion?: string;
         error?: string;
+        egressConclusion?: string;
+        egress?: Array<{ step: string; ok: boolean; detail: string; ms: number }>;
         results?: Array<{ label: string; hostname: string; probes: Array<{ step: string; ok: boolean; detail: string; ms: number }> }>;
       }>(response, "تشخیص شبکه");
       if (!response.ok) throw new Error(payload.error || "تشخیص شبکه انجام نشد.");
       const rows = (payload.results || []).flatMap((entry) =>
         entry.probes.map((probe) => ({ label: entry.label, hostname: entry.hostname, step: probe.step, ok: probe.ok, detail: probe.detail, ms: probe.ms })),
       );
-      setDiagnostics({ loading: false, conclusion: payload.conclusion || "", rows });
+      setDiagnostics({
+        loading: false,
+        conclusion: payload.conclusion || "",
+        egressConclusion: payload.egressConclusion || "",
+        egress: payload.egress || [],
+        rows,
+      });
     } catch (error) {
-      setDiagnostics({ loading: false, conclusion: error instanceof Error ? error.message : "تشخیص شبکه انجام نشد.", rows: [] });
+      setDiagnostics({ loading: false, conclusion: error instanceof Error ? error.message : "تشخیص شبکه انجام نشد.", egressConclusion: "", egress: [], rows: [] });
     }
   }
 
@@ -147,8 +161,14 @@ export function ApiConnection() {
           {provider === "gemini" && model.trim() === "gemini-3.7-flash" && <span className="form-hint model-alias-hint">Gemini 3.7 Flash منسوخ شده و Google آن را به ۳٫۸ هدایت می‌کند؛ برای تنظیم پایدار، ۳٫۸ پیشنهاد می‌شود.</span>}
           {discoveryMessage && <span className={`form-hint model-discovery-message ${discoveryState}`} aria-live="polite">{discoveryState === "success" ? <CheckCircle2 size={12} /> : discoveryState === "error" ? <TriangleAlert size={12} /> : null}{discoveryMessage}</span>}
 
-        {(diagnostics.conclusion || diagnostics.rows.length > 0) && (
+        {(diagnostics.conclusion || diagnostics.rows.length > 0 || diagnostics.egress.length > 0) && (
           <div className="notice notice-info network-diagnostics" dir="ltr" style={{ gridColumn: "1 / -1", fontFamily: "monospace", fontSize: 12 }}>
+            {diagnostics.egressConclusion && <p dir="rtl"><strong>{diagnostics.egressConclusion}</strong></p>}
+            {diagnostics.egress.map((probe) => (
+              <div key={`egress-${probe.step}`}>
+                {probe.ok ? "OK  " : "FAIL"} خروجی · {probe.step} · {probe.ms}ms · {probe.detail}
+              </div>
+            ))}
             {diagnostics.conclusion && <p dir="rtl">{diagnostics.conclusion}</p>}
             {diagnostics.rows.map((row) => (
               <div key={`${row.hostname}-${row.step}`}>
