@@ -4,6 +4,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+// Pin the official (QEMU) channel before the runtime module loads. An assembled
+// Windows runtime at nomreh-vm/windows would otherwise take precedence and these
+// official-runtime assertions would exercise the wrong transport.
+process.env.NOMREH_SHECAN_WINDOWS_RUNTIME_DIR = path.join(os.tmpdir(), "nomreh-no-windows-runtime");
 import { closeProviderNetwork, providerFetch, ProviderNetworkError } from "../lib/server/provider-network";
 import { getOfficialRuntimeStatus, startOfficialRuntime, stopOfficialRuntime, verifyOfficialRuntime } from "../lib/server/shecan-runtime";
 

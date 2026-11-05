@@ -4,6 +4,11 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+// Pin the official (QEMU) channel before the runtime module loads. When an
+// assembled Windows runtime exists at nomreh-vm/windows the module deliberately
+// prefers the Windows broker, and these official-channel assertions would then
+// exercise the wrong transport. A non-existent path keeps this test hermetic.
+process.env.NOMREH_SHECAN_WINDOWS_RUNTIME_DIR = path.join(os.tmpdir(), "nomreh-no-windows-runtime");
 import { sendOfficialGuestActivation } from "../lib/server/shecan-runtime";
 
 function listen(socketPath: string, handler: (line: string, socket: net.Socket) => void): Promise<net.Server> {
