@@ -99,7 +99,7 @@ async function main() {
   if (path.basename(appRoot) !== "nomreh.arounidea.com") {
     throw new Error("Run this only from Nomreh's own Node.js application console; no files were changed.");
   }
-  const transferRoot = path.resolve(appRoot, "..", "nomreh-data", "windows-transfer");
+  const transferRoot = appRoot;
   const archive = path.join(transferRoot, "nomreh-windows-complete.zip");
   const partial = `${archive}.partial`;
 
