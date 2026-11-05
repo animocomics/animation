@@ -11,7 +11,7 @@ export const runtime = "nodejs";
 export const maxDuration = 30;
 
 const schema = z.object({
-  provider: z.enum(["openai", "gemini", "deepseek", "zai", "minimax", "inkling", "mistral"]),
+  provider: z.enum(["openai", "gemini", "deepseek", "zai", "minimax", "inkling", "mistral", "kaya"]),
   apiKey: z.string().trim().max(500).optional(),
 });
 

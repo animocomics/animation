@@ -17,6 +17,7 @@ export const PROVIDER_LABELS: Record<ProviderId, string> = {
   minimax: "MiniMax",
   inkling: "Inkling / Tinker",
   mistral: "Mistral AI",
+  kaya: "Kaya AI",
 };
 
 export type ProviderTask = "grading" | "question-import" | "answer-key-import";
@@ -387,6 +388,133 @@ async function callMistral(input: ProviderCallInput): Promise<ProviderCallResult
   return { result: parseProviderResult(input, outputText), usage: standardChatUsage(payload) };
 }
 
+const KAYA_BASE_URL = "https://kayaai.ir/api";
+
+/**
+ * Ordered substitutes used only when the selected model is unavailable.
+ * Multi-owner order gives the best chance that one owner is not rate limited.
+ */
+const KAYA_FALLBACK_ORDER = [
+  "deepseek/deepseek-v4.1-flash",
+  "deepseek/deepseek-v4-flash",
+  "google/gemini-2.5-flash",
+  "openai/gpt-4o-mini",
+];
+
+/** HTTP statuses worth retrying on another catalogue model. */
+const KAYA_FAILOVER_STATUSES = new Set([400, 404, 429, 502, 503, 504]);
+
+/**
+ * Kaya AI is an OpenAI-compatible gateway served from inside Iran, so it needs
+ * no Shecan route and is deliberately absent from PROVIDER_HOSTNAMES.
+ *
+ * Because one Kaya key fronts hundreds of upstream models, a model that is
+ * temporarily unavailable can be replaced by another catalogue model instead of
+ * failing the grading run. Failover stays inside Kaya (one key, same protocol),
+ * never touches Nomreh's scoring rules, and is reported honestly in the reason
+ * so a grader can see that a different model answered.
+ */
+async function callKaya(input: ProviderCallInput): Promise<ProviderCallResult> {
+  if (input.files.some((file) => file.type === "application/pdf")) {
+    throw new ProviderError("PDF برای Kaya AI باید پیش از ارسال، داخل سامانه به تصویر صفحه تبدیل شود.", 400);
+  }
+  const candidates = [...new Set([input.model, ...KAYA_FALLBACK_ORDER].filter(Boolean))];
+  let lastError: unknown;
+  for (const [index, model] of candidates.entries()) {
+    try {
+      return await callKayaModel(input, model, index > 0);
+    } catch (error) {
+      if (!(error instanceof KayaRetryableError)) throw error;
+      lastError = error;
+    }
+  }
+  throw lastError instanceof Error ? lastError : new ProviderError("Kaya AI پاسخ معتبری برنگرداند.", 502);
+}
+
+class KayaRetryableError extends ProviderError {}
+
+async function callKayaModel(
+  input: ProviderCallInput,
+  model: string,
+  usedFallback: boolean,
+): Promise<ProviderCallResult> {
+  let response: Response;
+  try {
+    response = await fetchWithTimeout(`${KAYA_BASE_URL}/chat/completions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${input.apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: systemInstructionsWithSchema(input) },
+          { role: "user", content: chatContent(input, "object", "high") },
+        ],
+        response_format: { type: "json_object" },
+        max_tokens: 32768,
+        temperature: 0.2,
+        stream: false,
+      }),
+    }, input.network);
+  } catch (error) {
+    // Transport failures are reusable with another catalogue model.
+    throw new KayaRetryableError(`ارتباط با Kaya AI برای مدل ${model} برقرار نشد.`, 502);
+  }
+
+  if (!response.ok) {
+    const status = response.status;
+    let detail = "";
+    try {
+      const payload = JSON.parse(await response.text()) as { error?: { message?: string } | string };
+      detail = typeof payload.error === "string" ? payload.error : payload.error?.message || "";
+    } catch {
+      // Keep the status code; the body may be empty or non-JSON.
+    }
+    const safe = detail.replace(/sk-[A-Za-z0-9_\-]{6,}/g, "[کلید]").replace(/\s+/g, " ").slice(0, 180);
+    if (status === 401) {
+      throw new ProviderError("کلید Kaya AI پذیرفته نشد؛ کلید را در پنل کایا بررسی یا کلید تازه بسازید.", 400);
+    }
+    if (status === 402) {
+      throw new ProviderError("اعتبار حساب Kaya AI کافی نیست؛ از پنل کایا اعتبار ریالی شارژ کنید.", 402);
+    }
+    if (KAYA_FAILOVER_STATUSES.has(status)) {
+      throw new KayaRetryableError(
+        `مدل ${model} در Kaya AI پاسخ نداد (HTTP ${status})${safe ? `: ${safe}` : "."}`,
+        status >= 500 ? 502 : status,
+      );
+    }
+    throw new ProviderError(`Kaya AI درخواست را نپذیرفت (HTTP ${status})${safe ? `: ${safe}` : "."}`, status >= 500 ? 502 : status);
+  }
+
+  const payload = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+  if (!payload) throw new KayaRetryableError(`پاسخ مدل ${model} در Kaya AI قابل خواندن نبود.`, 502);
+
+  const choices = payload.choices as Array<{ message?: { content?: unknown }; finish_reason?: string }> | undefined;
+  let outputText = extractTextContent(choices?.[0]?.message?.content).trim();
+  if (!outputText) {
+    // Reasoning models can spend every token on reasoning when max_tokens is low.
+    const reason = choices?.[0]?.finish_reason;
+    throw new KayaRetryableError(
+      `مدل ${model} نتیجهٔ قابل استفاده برنگرداند${reason ? ` (${reason})` : ""}.`,
+      502,
+    );
+  }
+  const usage = payload.usage as { prompt_tokens?: number; completion_tokens?: number } | undefined;
+  const result = parseProviderResult(input, outputText);
+  // ModelResult has no free-text operational field, so a substitution is marked
+  // inside the summary with an explicit system prefix. It must never look like
+  // the model's own wording, and it must never alter a score or rubric.
+  if (usedFallback && result && typeof result === "object" && "summary" in result) {
+    const target = result as { summary?: unknown };
+    const note = `«یادداشت سامانه: مدل جایگزین ${model} پاسخ داد چون مدل انتخاب‌شده در دسترس نبود.»`;
+    const existing = typeof target.summary === "string" ? target.summary.trim() : "";
+    target.summary = existing ? `${note} ${existing}` : note;
+  }
+  return {
+    result,
+    usage: { inputTokens: usage?.prompt_tokens ?? 0, outputTokens: usage?.completion_tokens ?? 0 },
+  };
+}
+
 async function callInkling(input: ProviderCallInput): Promise<ProviderCallResult> {
   if (input.files.some((file) => file.type === "application/pdf")) {
     throw new ProviderError("PDF برای Inkling باید پیش از ارسال، داخل سامانه به تصویر صفحه تبدیل شود.", 400);
@@ -486,6 +614,7 @@ export function callProvider(input: ProviderCallInput): Promise<ProviderCallResu
   if (input.provider === "minimax") return callMiniMax(input);
   if (input.provider === "inkling") return callInkling(input);
   if (input.provider === "mistral") return callMistral(input);
+  if (input.provider === "kaya") return callKaya(input);
   return callOpenAI(input);
 }
 

@@ -11,7 +11,7 @@ export const runtime = "nodejs";
 export const maxDuration = 30;
 
 const schema = z.object({
-  provider: z.enum(["openai", "gemini", "deepseek", "zai", "minimax", "inkling", "mistral"]),
+  provider: z.enum(["openai", "gemini", "deepseek", "zai", "minimax", "inkling", "mistral", "kaya"]),
   model: z.string().min(2).max(120),
   apiKey: z.string().max(500).optional(),
 });
@@ -27,7 +27,7 @@ export async function POST(request: Request) {
       if (stored.provider !== input.provider) throw new ProviderError("برای آزمایش این سرویس، کلید همان سرویس را وارد کنید.", 400);
       apiKey = stored.apiKey;
     }
-    const isChat = ["zai", "minimax", "mistral"].includes(input.provider);
+    const isChat = ["zai", "minimax", "mistral", "kaya"].includes(input.provider);
     const isInkling = input.provider === "inkling";
     const url = isInkling
       ? "https://tinker.thinkingmachines.dev/services/tinker-prod/anthropic/api/v1/messages"
@@ -41,7 +41,9 @@ export async function POST(request: Request) {
               ? `https://api.openai.com/v1/models/${encodeURIComponent(input.model)}`
               : input.provider === "deepseek"
                 ? "https://api.deepseek.com/models"
-                : `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(input.model)}`;
+                : input.provider === "kaya"
+                  ? "https://kayaai.ir/api/chat/completions"
+                  : `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(input.model)}`;
     const testBody = isInkling
       ? {
           model: input.model,
@@ -74,7 +76,16 @@ export async function POST(request: Request) {
                 max_tokens: 8,
                 stream: false,
               }
-            : undefined;
+            : input.provider === "kaya"
+              ? {
+                  // Exercise the same Chat Completions path grading uses, so a
+                  // green test means the key and this exact model really work.
+                  model: input.model,
+                  messages: [{ role: "user", content: "فقط OK بنویس." }],
+                  max_tokens: 64,
+                  stream: false,
+                }
+              : undefined;
     const response = await providerFetch(url, {
       method: isChat || isInkling ? "POST" : "GET",
       headers: isInkling
@@ -91,6 +102,13 @@ export async function POST(request: Request) {
       const payload = await response.json() as { data?: Array<{ id?: string }> };
       if (!payload.data?.some((item) => item.id === input.model)) {
         return NextResponse.json({ error: "کلید معتبر است اما این مدل در فهرست مدل‌های حساب DeepSeek دیده نمی‌شود." }, { status: 400 });
+      }
+    } else if (input.provider === "kaya") {
+      const payload = await response.json() as { choices?: Array<{ message?: { content?: unknown } }> };
+      const content = payload.choices?.[0]?.message?.content;
+      const text = typeof content === "string" ? content : Array.isArray(content) ? content.map((part) => (part && typeof part === "object" && "text" in part ? String((part as { text?: unknown }).text ?? "") : "")).join("") : "";
+      if (!text.trim()) {
+        return NextResponse.json({ error: "Kaya AI پاسخ خالی برگرداند؛ ممکن است سهمیهٔ استدلال توکن را مصرف کرده باشد. دوباره تلاش کنید." }, { status: 502 });
       }
     } else if (input.provider === "minimax") {
       const payload = await response.json() as { base_resp?: { status_code?: number; status_msg?: string } };

@@ -30,7 +30,7 @@ const requestSchema = z.object({
 
 function providerByteLimit(provider: ProviderId): number {
   if (provider === "gemini") return 14 * 1024 * 1024;
-  if (["deepseek", "zai", "minimax", "inkling", "mistral"].includes(provider)) return 24 * 1024 * 1024;
+  if (["deepseek", "zai", "minimax", "inkling", "mistral", "kaya"].includes(provider)) return 24 * 1024 * 1024;
   return 40 * 1024 * 1024;
 }
 

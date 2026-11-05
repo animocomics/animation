@@ -4,7 +4,7 @@ import { AuthError, requireAdmin, requireUser } from "@/lib/server/auth";
 import { getProviderStatus, saveProviderConfig } from "@/lib/server/provider-config";
 
 const schema = z.object({
-  provider: z.enum(["openai", "gemini", "deepseek", "zai", "minimax", "inkling", "mistral"]),
+  provider: z.enum(["openai", "gemini", "deepseek", "zai", "minimax", "inkling", "mistral", "kaya"]),
   model: z.string().trim().min(2).max(120),
   apiKey: z.string().trim().max(500).optional(),
 });

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Check, CheckCircle2, Eye, EyeOff, KeyRound, LoaderCircle, LockKeyhole, RefreshCw, ShieldCheck, Sparkles, TriangleAlert, Zap, BrainCircuit, ScanText, Cpu, AudioLines, Layers } from "lucide-react";
+import { Check, CheckCircle2, Eye, EyeOff, KeyRound, LoaderCircle, LockKeyhole, RefreshCw, ShieldCheck, Sparkles, TriangleAlert, Zap, BrainCircuit, ScanText, Cpu, AudioLines, Layers, Globe } from "lucide-react";
 import { useApp } from "../lib/app-context";
 import { readJsonResponse } from "../lib/http-response";
 import { FALLBACK_MODEL_OPTIONS, mergeModelOptions, RECOMMENDED_MODELS, SUPPORTS_ACCOUNT_MODEL_DISCOVERY } from "../lib/provider-catalog";
@@ -16,6 +16,7 @@ const PROVIDERS = {
   minimax: { label: "MiniMax", hint: "M3.1 Flash / M3 · تصویر و PDF با تبدیل خودکار", icon: Cpu },
   inkling: { label: "Inkling", hint: "Tinker 256K · PNG/JPEG و PDF · سرویس بتا", icon: AudioLines },
   mistral: { label: "Mistral Large 4", hint: "Reasoning High · Public Preview · تصویر و PDF", icon: Layers },
+  kaya: { label: "Kaya AI (ایران · بدون تحریم)", hint: "سازگار با OpenAI · بدون نیاز به شکن · تصویر و PDF با تبدیل خودکار", icon: Globe },
 } as const;
 
 export function ApiConnection() {

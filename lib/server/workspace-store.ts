@@ -5,7 +5,7 @@ const workspaceSchema = z.object({
   exams: z.array(z.unknown()).max(5000),
   classes: z.array(z.unknown()).max(2000),
   settings: z.object({
-    provider: z.enum(["openai", "gemini", "deepseek", "zai", "minimax", "inkling", "mistral"]),
+    provider: z.enum(["openai", "gemini", "deepseek", "zai", "minimax", "inkling", "mistral", "kaya"]),
     model: z.string().max(120),
     gradingMode: z.enum(["fast", "balanced", "precise"]),
     reviewThreshold: z.number().min(0).max(1),

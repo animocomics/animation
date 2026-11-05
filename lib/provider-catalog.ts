@@ -28,6 +28,21 @@ export const FALLBACK_MODEL_OPTIONS: Record<ProviderId, string[]> = {
     "thinkingmachines/Inkling:peft:262144:sampling-nvfp4",
   ],
   mistral: ["mistral-large-4", "mistral-large-4-0"],
+  // Kaya AI serves an OpenAI-compatible catalogue; IDs are owner/model strings.
+  // Every entry below was read from the live GET /api/chat/completions list.
+  kaya: [
+    "deepseek/deepseek-v4.1-flash",
+    "deepseek/deepseek-v4-flash",
+    "deepseek/deepseek-v4-pro",
+    "google/gemini-2.5-flash",
+    "google/gemini-3.8-flash",
+    "openai/gpt-4o-mini",
+    "openai/gpt-5.5",
+    "z-ai/glm-5.3-flash",
+    "minimax/minimax-m3.1-flash",
+    "anthropic/claude-sonnet-5.5",
+    "anthropic/claude-opus-5.5",
+  ],
 };
 
 export const RECOMMENDED_MODELS: Record<ProviderId, string> = {
@@ -39,6 +54,8 @@ export const RECOMMENDED_MODELS: Record<ProviderId, string> = {
   minimax: "MiniMax-M3.1-Flash",
   inkling: "thinkingmachines/Inkling-Small:peft:262144:sampling-nvfp4",
   mistral: "mistral-large-4",
+  // Cheapest capable multimodal chat model on the Kaya catalogue.
+  kaya: "deepseek/deepseek-v4.1-flash",
 };
 
 export const SUPPORTS_ACCOUNT_MODEL_DISCOVERY: Record<ProviderId, boolean> = {
@@ -49,6 +66,8 @@ export const SUPPORTS_ACCOUNT_MODEL_DISCOVERY: Record<ProviderId, boolean> = {
   minimax: true,
   inkling: false,
   mistral: true,
+  // GET /api/chat/completions returns an OpenAI-style { object: "list" }.
+  kaya: true,
 };
 
 export function mergeModelOptions(provider: ProviderId, ...groups: string[][]): string[] {

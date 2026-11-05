@@ -56,7 +56,7 @@ export async function disconnectProviderConfig(): Promise<ProviderPublicStatus> 
 }
 
 export async function saveProviderConfig(input: { provider: ProviderId; model?: string; apiKey?: string }, userId: string): Promise<ProviderPublicStatus> {
-  if (!["openai", "gemini", "deepseek", "zai", "minimax", "inkling", "mistral"].includes(input.provider)) throw new Error("ارائه‌دهنده انتخاب‌شده معتبر نیست.");
+  if (!["openai", "gemini", "deepseek", "zai", "minimax", "inkling", "mistral", "kaya"].includes(input.provider)) throw new Error("ارائه‌دهنده انتخاب‌شده معتبر نیست.");
   const previous = await findProviderRow();
   const providerChanged = previous && previous.provider !== input.provider;
   const apiKey = input.apiKey?.trim() || (!providerChanged && previous ? await decryptSecret(previous.encrypted_api_key, PROVIDER_SECRET_PURPOSE) : "");

@@ -183,6 +183,46 @@ function read(relative) {
   }
 }
 
+// 4b. Kaya AI catalogue check (optional, network dependent).
+//     Kaya is served from inside Iran, so a host that cannot reach GitHub must
+//     still be able to reach it. This verifies the URL, the auth shape and that
+//     Nomreh's default model really exists in the live catalogue.
+async function kayaCatalogueCheck() {
+  if (process.env.NOMREH_PREFLIGHT_SKIP_KAYA === "1") {
+    notes.push("Kaya catalogue check skipped by NOMREH_PREFLIGHT_SKIP_KAYA.");
+    return;
+  }
+  const key = (process.env.NOMREH_KAYA_API_KEY || "").trim();
+  const headers = key ? { Authorization: `Bearer ${key}` } : {};
+  try {
+    const https = require("node:https");
+    const body = await new Promise((resolve, reject) => {
+      const request = https.get("https://kayaai.ir/api/chat/completions", { headers, timeout: 20000 }, (response) => {
+        const chunks = [];
+        response.on("data", (chunk) => chunks.push(chunk));
+        response.on("end", () => resolve({ status: response.statusCode || 0, text: Buffer.concat(chunks).toString("utf8") }));
+      });
+      request.on("timeout", () => request.destroy(new Error("Kaya catalogue request timed out.")));
+      request.on("error", reject);
+    });
+    if (body.status !== 200) {
+      notes.push(`Kaya catalogue returned HTTP ${body.status}; provider cannot be verified from here.`);
+      return;
+    }
+    const payload = JSON.parse(body.text);
+    const ids = new Set((payload.data || []).map((entry) => entry && entry.id).filter(Boolean));
+    const wanted = ["deepseek/deepseek-v4.1-flash", "deepseek/deepseek-v4-flash", "google/gemini-2.5-flash"];
+    const missing = wanted.filter((id) => !ids.has(id));
+    if (missing.length) {
+      fail(`Kaya catalogue is missing expected models: ${missing.join(", ")}`);
+    } else {
+      ok("kaya catalogue", `${ids.size} models, default model present${key ? ", key supplied" : ""}`);
+    }
+  } catch (error) {
+    notes.push(`Kaya catalogue unreachable from this network (${error.message}); no provider claim made.`);
+  }
+}
+
 // 5. Optional live smoke against a running server.
 //    Credentials are read from the environment and never printed.
 async function liveSmoke() {
@@ -241,7 +281,10 @@ async function liveSmoke() {
   }
 }
 
-liveSmoke().then(() => {
+kayaCatalogueCheck()
+  .catch(() => undefined)
+  .then(liveSmoke)
+  .then(() => {
   for (const note of notes) process.stdout.write(`note ${note}\n`);
   if (failures.length) {
     for (const failure of failures) process.stdout.write(`FAIL ${failure}\n`);

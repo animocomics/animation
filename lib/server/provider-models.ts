@@ -27,6 +27,8 @@ const DISCOVERY_URLS: Partial<Record<ProviderId, string>> = {
   deepseek: "https://api.deepseek.com/models",
   minimax: "https://api.minimax.io/v1/models",
   mistral: "https://api.mistral.ai/v1/models",
+  // Kaya returns an OpenAI-style list; the same URL also accepts POST.
+  kaya: "https://kayaai.ir/api/chat/completions",
 };
 
 function safeProviderDetail(rawMessage: string, apiKey: string): string {
@@ -90,6 +92,11 @@ function isGradingCandidate(provider: ProviderId, record: ProviderModelRecord): 
     if (record.input_modalities?.length && !record.input_modalities.includes("image")) return false;
     if (record.output_modalities?.length && !record.output_modalities.includes("text")) return false;
     return id.startsWith("deepseek-");
+  }
+  if (provider === "kaya") {
+    // Kaya catalogue ids are "<owner>/<model>" or a short Claude alias.
+    if (record.output_modalities?.length && !record.output_modalities.includes("text")) return false;
+    return /^[a-z0-9][a-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(id) || /^claude-/.test(id);
   }
   if (provider === "openai") {
     if (!/^(?:gpt-|o\d|chatgpt-)/i.test(id)) return false;
