@@ -213,3 +213,34 @@ test("active runtime manifest is read from the persistent data directory", { ski
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("Node 22 bootstrap never depends on GitHub, so a Node 17 host can still build", () => {
+  const launcher = fs.readFileSync(launcherPath, "utf8");
+
+  // The bypass must be reachable from a Node 17 host: server.js delegates when
+  // the host runtime is older than 22, and the launcher itself is plain CJS.
+  const server = fs.readFileSync(path.join(root, "server.js"), "utf8");
+  assert.match(server, /major >= 22/);
+  assert.match(server, /require\("\.\/scripts\/plesk-node22\.cjs"\)\.launchServer\(\)/);
+  assert.doesNotMatch(launcher, /^import /m, "the launcher must stay require()-only for old Node");
+
+  // Primary install path is the pinned npm package, which uses the npm
+  // registry, not github.com or codeload.github.com.
+  assert.match(launcher, /BOOTSTRAP_PACKAGE = path\.join\(__dirname, "plesk-runtime"\)/);
+  assert.match(launcher, /"ci", "--ignore-scripts=false"/);
+
+  // The glibc-2.17 fallback may use mirrors, but must carry a pinned SHA-256.
+  const legacy = launcher.slice(launcher.indexOf("const LEGACY_NODE"));
+  const legacyBlock = legacy.slice(0, legacy.indexOf("};"));
+  assert.match(legacyBlock, /sha256: "[a-f0-9]{64}"/);
+  const urls = legacyBlock.match(/https:\/\/[^`]+/g) || [];
+  assert.ok(urls.length >= 1, "the glibc-2.17 fallback needs at least one HTTPS source");
+  for (const url of urls) {
+    assert.doesNotMatch(url, /github\.com/, "the Node runtime must not be fetched from GitHub");
+    assert.doesNotMatch(url, /codeload\.github\.com/, "the Node runtime must not use codeload");
+  }
+
+  // A foreign build must never silently run under the host's old Node.
+  assert.match(launcher, /NOMREH_NODE22_DELEGATED/);
+  assert.match(server, /requires its Node 22 runtime/);
+});
