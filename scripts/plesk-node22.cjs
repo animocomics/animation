@@ -468,6 +468,18 @@ function compactProduction(runtime) {
   });
 }
 
+function assembleWindowsRuntime(runtime) {
+  const script = path.join(APP_ROOT, "scripts", "shecan-vm", "assemble-windows-runtime.cjs");
+  if (!fs.existsSync(path.join(APP_ROOT, "deploy", "windows-runtime", "manifest.json"))) return;
+  if (!fs.existsSync(script)) throw new Error("Nomreh's bounded Windows runtime assembler is missing.");
+  progress("Assembling and verifying the genuine Windows Shecan runtime");
+  execute(runtime.nodeBinary, [script], {
+    cwd: APP_ROOT,
+    env: { ...runtimeEnvironment(runtime), NOMREH_DATA_DIR: DATA_DIR, NOMREH_APP_ROOT: APP_ROOT },
+    timeout: 900000,
+  });
+}
+
 function deployOfficialShecan(runtime) {
   const tsxCli = path.join(APP_ROOT, "node_modules", "tsx", "dist", "cli.mjs");
   const script = path.join(APP_ROOT, "scripts", "shecan-official-deploy.ts");
@@ -530,6 +542,7 @@ async function build() {
     restorePublicStaticAfterBuild(staticStash, true);
     progress("Publishing Next.js static assets for nginx");
     syncPublicStatic();
+    assembleWindowsRuntime(runtime);
     deployOfficialShecan(runtime);
     progress("Removing development-only packages and regenerable build caches");
     compactProduction(runtime);
