@@ -120,6 +120,16 @@ async function discoveryJson(url: string, input: ProviderModelRequest): Promise<
     }, input.network);
   } catch (error) {
     if (error instanceof Error && error.name === "TimeoutError") throw new ProviderError("خواندن مدل‌ها بیش از حد طول کشید؛ دوباره تلاش کنید.", 504);
+    // A socket failure has no HTTP status; report the code instead of letting the
+    // route fall back to a generic "check the server connection" sentence.
+    const value = error as { code?: string; cause?: { code?: string }; message?: string } | undefined;
+    const code = value?.cause?.code || value?.code || "";
+    if (code) {
+      throw new ProviderError(
+        `اتصال به ${new URL(url).hostname} برقرار نشد (${code}). اگر ETIMEDOUT/ECONNRESET است، شبکهٔ خروجی سرور این مقصد را می‌بندد؛ از «تشخیص شبکه» لایهٔ ناموفق را ببینید.`,
+        502,
+      );
+    }
     throw error;
   }
   if (!response.ok) throw await providerResponseError(response, input.provider, input.apiKey);

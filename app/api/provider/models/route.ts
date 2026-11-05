@@ -37,7 +37,13 @@ export async function POST(request: Request) {
     if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.status });
     if (isJsonParserErrorMessage(error)) return NextResponse.json({ error: invalidProviderJsonMessage() }, { status: 502 });
     if (error instanceof ProviderError || error instanceof ProviderNetworkError) return NextResponse.json({ error: error.message }, { status: error instanceof ProviderError ? providerErrorHttpStatus(error.status) : 502 });
-    const message = error instanceof Error && !error.message.includes("fetch") ? error.message : "خواندن مدل‌های حساب ناموفق بود؛ اتصال سرور را بررسی کنید.";
+    const causeCode = (() => {
+      const value = error as { code?: string; cause?: { code?: string } } | undefined;
+      return value?.cause?.code || value?.code || "";
+    })();
+    const message = error instanceof Error && !error.message.includes("fetch")
+      ? `${error.message}${causeCode ? ` (${causeCode})` : ""}`
+      : `خواندن مدل‌های حساب ناموفق بود${causeCode ? ` (${causeCode})` : ""}؛ این خطا از سمت سرور است نه مرورگر شما.`;
     return NextResponse.json({ error: message }, { status: 502 });
   }
 }

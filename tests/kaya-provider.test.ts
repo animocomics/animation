@@ -104,3 +104,33 @@ test("the deploy bundle ships client assets in both places the stack needs", () 
   assert.doesNotMatch(builder, /"\/\.next\/static\/"/);
   assert.match(builder, /client asset\(s\) referenced by the build are missing/);
 });
+
+test("socket failures surface the real error code instead of a generic sentence", () => {
+  // The old heuristic tested whether the message contained "fetch". Node reports
+  // every network failure as literally "fetch failed", so the check always chose
+  // the generic text and the operator never learned the cause.
+  const files = [
+    "app/api/provider/test/route.ts",
+    "app/api/provider/models/route.ts",
+    "lib/server/provider-models.ts",
+    "lib/server/providers.ts",
+  ];
+  for (const file of files) {
+    const source = fs.readFileSync(path.join(root, file), "utf8");
+    if (file.endsWith("provider/route.ts")) continue;
+    const mentionsCode = /cause\?\.code|\.code\s*\|\||code\s*=\s*value/.test(source);
+    assert.ok(mentionsCode, `${file} must read the socket error code`);
+  }
+  const testRoute = fs.readFileSync(path.join(root, "app/api/provider/test/route.ts"), "utf8");
+  assert.ok(!/!error\.message\.includes\("fetch"\) \? error\.message : "ارتباط/.test(testRoute), "the generic fallback must include the code");
+});
+
+test("admin network diagnostics endpoint exists and is admin-gated", () => {
+  const source = fs.readFileSync(path.join(root, "app/api/admin/network-diagnostics/route.ts"), "utf8");
+  assert.match(source, /requireAdmin/);
+  assert.match(source, /probeDns|resolve4/);
+  assert.match(source, /probeTcp|createConnection/);
+  assert.match(source, /probeTls|tls\.connect/);
+  // Must never echo a stored key back to the caller.
+  assert.ok(!/apiKey\s*[,:]/.test(source), "diagnostics must not return an API key");
+});

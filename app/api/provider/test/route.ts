@@ -123,9 +123,17 @@ export async function POST(request: Request) {
     if (isJsonParserErrorMessage(error)) return NextResponse.json({ error: invalidProviderJsonMessage() }, { status: 502 });
     if (error instanceof ProviderError) return NextResponse.json({ error: error.message }, { status: providerErrorHttpStatus(error.status) });
     if (error instanceof ProviderNetworkError) return NextResponse.json({ error: error.message }, { status: 502 });
+    // Node reports every socket failure as "fetch failed"; the real cause is in
+    // cause.code. Keep the code so the operator can tell a blocked route from a
+    // bad key instead of reading a misleading "check your internet" sentence.
+    const causeCode = (() => {
+      const value = error as { code?: string; cause?: { code?: string } ; name?: string } | undefined;
+      return value?.cause?.code || value?.code || (value?.name === "TimeoutError" ? "ETIMEDOUT" : "");
+    })();
     const message = error instanceof Error && error.name === "TimeoutError"
       ? "بررسی اتصال بیش از حد طول کشید."
-      : error instanceof Error && !error.message.includes("fetch") ? error.message : "ارتباط با سرویس‌دهنده برقرار نشد؛ اتصال اینترنت سرور را بررسی کنید.";
+      : error instanceof Error && !error.message.includes("fetch") ? `${error.message}${causeCode ? ` (${causeCode})` : ""}`
+      : `ارتباط با سرویس‌دهنده برقرار نشد${causeCode ? ` (${causeCode})` : ""}؛ اگر ETIMEDOUT/ECONNRESET است شبکهٔ خروجی سرور این مقصد را می‌بندد، نه اینترنت شما. از «تشخیص شبکه» لایهٔ ناموفق را ببینید.`;
     return NextResponse.json({ error: message }, { status: 502 });
   }
 }

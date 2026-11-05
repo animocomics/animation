@@ -120,7 +120,19 @@ async function fetchWithTimeout(url: string, init: RequestInit, network?: Provid
     throw new ProviderError("پاسخ مدل بیش از حد طول کشید. فایل‌ها را به دسته‌های کوچک‌تر تقسیم کنید و دوباره تلاش کنید.", 504);
   }
   if (lastError instanceof ProviderNetworkError) throw new ProviderError(lastError.message, 502);
-  throw new ProviderError("ارتباط با سرویس‌دهنده برقرار نشد. اتصال اینترنت سرور را بررسی کنید.", 502);
+  // Surface the socket-level code: without it an unreachable host and a stalled
+  // TLS handshake look identical to the operator, and the generic text is
+  // actively misleading when the server's internet is fine.
+  const code = (() => {
+    const value = lastError as { code?: string; cause?: { code?: string } } | undefined;
+    return value?.cause?.code || value?.code || "";
+  })();
+  const name = lastError instanceof Error ? lastError.name : "";
+  const reason = [code, name].filter(Boolean).join(" / ");
+  throw new ProviderError(
+    `ارتباط با سرویس‌دهنده برقرار نشد${reason ? ` (${reason})` : ""}. اگر کد ETIMEDOUT یا ECONNRESET است، شبکهٔ خروجی سرور مقصد را بسته است؛ از «تشخیص شبکه» در همین صفحه لایهٔ ناموفق را ببینید.`,
+    502,
+  );
 }
 
 async function responseJson(response: Response, provider: string): Promise<Record<string, unknown>> {

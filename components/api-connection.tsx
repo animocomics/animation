@@ -30,6 +30,7 @@ export function ApiConnection() {
   const [message, setMessage] = useState("");
   const [discoveryState, setDiscoveryState] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [discoveryMessage, setDiscoveryMessage] = useState("");
+  const [diagnostics, setDiagnostics] = useState<{ loading: boolean; conclusion: string; rows: Array<{ label: string; hostname: string; step: string; ok: boolean; detail: string; ms: number }> }>({ loading: false, conclusion: "", rows: [] });
 
   if (user.role !== "admin") return null;
 
@@ -49,6 +50,25 @@ export function ApiConnection() {
     setDiscoveryState("idle");
     setDiscoveryMessage("");
     resetResult();
+  }
+
+  async function runDiagnostics() {
+    setDiagnostics({ loading: true, conclusion: "", rows: [] });
+    try {
+      const response = await fetch("/api/admin/network-diagnostics", { cache: "no-store" });
+      const payload = await readJsonResponse<{
+        conclusion?: string;
+        error?: string;
+        results?: Array<{ label: string; hostname: string; probes: Array<{ step: string; ok: boolean; detail: string; ms: number }> }>;
+      }>(response, "تشخیص شبکه");
+      if (!response.ok) throw new Error(payload.error || "تشخیص شبکه انجام نشد.");
+      const rows = (payload.results || []).flatMap((entry) =>
+        entry.probes.map((probe) => ({ label: entry.label, hostname: entry.hostname, step: probe.step, ok: probe.ok, detail: probe.detail, ms: probe.ms })),
+      );
+      setDiagnostics({ loading: false, conclusion: payload.conclusion || "", rows });
+    } catch (error) {
+      setDiagnostics({ loading: false, conclusion: error instanceof Error ? error.message : "تشخیص شبکه انجام نشد.", rows: [] });
+    }
   }
 
   async function discoverModels() {
@@ -126,10 +146,22 @@ export function ApiConnection() {
           <span className="form-hint">مدل‌های قبلی حفظ می‌شوند و فهرست حساب به آن‌ها اضافه می‌شود؛ نام هر مدل قدیمی یا تازه را هم می‌توانید دستی وارد کنید. برای تصحیح، ورودی تصویر و خروجی متن لازم است.</span>
           {provider === "gemini" && model.trim() === "gemini-3.7-flash" && <span className="form-hint model-alias-hint">Gemini 3.7 Flash منسوخ شده و Google آن را به ۳٫۸ هدایت می‌کند؛ برای تنظیم پایدار، ۳٫۸ پیشنهاد می‌شود.</span>}
           {discoveryMessage && <span className={`form-hint model-discovery-message ${discoveryState}`} aria-live="polite">{discoveryState === "success" ? <CheckCircle2 size={12} /> : discoveryState === "error" ? <TriangleAlert size={12} /> : null}{discoveryMessage}</span>}
+
+        {(diagnostics.conclusion || diagnostics.rows.length > 0) && (
+          <div className="notice notice-info network-diagnostics" dir="ltr" style={{ gridColumn: "1 / -1", fontFamily: "monospace", fontSize: 12 }}>
+            {diagnostics.conclusion && <p dir="rtl">{diagnostics.conclusion}</p>}
+            {diagnostics.rows.map((row) => (
+              <div key={`${row.hostname}-${row.step}`}>
+                {row.ok ? "OK  " : "FAIL"} {row.label} · {row.hostname} · {row.step} · {row.ms}ms · {row.detail}
+              </div>
+            ))}
+          </div>
+        )}
         </div>
         <div className="form-field"><label htmlFor="admin-api-key">API Key {providerStatus.keyHint && provider === providerStatus.provider ? <small className="key-hint" dir="ltr">{providerStatus.keyHint}</small> : null}</label><div className="input-with-icon input-with-action"><KeyRound size={17} /><input id="admin-api-key" dir="ltr" className="input api-key-input" type={showKey ? "text" : "password"} autoComplete="new-password" spellCheck={false} value={keyInput} onChange={(event) => { setKeyInput(event.target.value); resetResult(); setDiscoveryState("idle"); setDiscoveryMessage(""); }} placeholder={hasStoredProviderKey ? "برای حفظ کلید فعلی خالی بگذارید" : "کلید محرمانهٔ سرویس‌دهنده؛ کلید رایگان هم پذیرفته می‌شود"} /><button className="input-action" type="button" onClick={() => setShowKey((show) => !show)} aria-label={showKey ? "پنهان‌کردن کلید" : "نمایش کلید"}>{showKey ? <EyeOff size={17} /> : <Eye size={17} />}</button></div><span className="form-hint"><LockKeyhole size={11} /> کلید فقط روی سرور و با AES-256-GCM رمزنگاری می‌شود؛ هرگز به مرورگر معلم ارسال نمی‌شود.</span></div>
       </div>
       <div className="api-test-row">
+        <button className="btn btn-secondary" type="button" onClick={() => void runDiagnostics()} disabled={diagnostics.loading}>{diagnostics.loading ? <LoaderCircle className="spin-icon" size={16} /> : <ShieldCheck size={16} />}{diagnostics.loading ? "در حال تشخیص…" : "تشخیص شبکه"}</button>
         <button className="btn btn-secondary" onClick={() => testConnection(false)} disabled={["testing", "saving"].includes(testState)}>{testState === "testing" ? <LoaderCircle className="spin-icon" size={16} /> : <RefreshCw size={16} />}{testState === "testing" ? "در حال بررسی…" : "آزمایش اتصال"}</button>
         <button className="btn btn-primary" onClick={() => testConnection(true)} disabled={["testing", "saving"].includes(testState)}>{testState === "saving" ? <LoaderCircle className="spin-icon" size={16} /> : <ShieldCheck size={16} />}{testState === "saving" ? "در حال ذخیره…" : "آزمایش و ذخیرهٔ امن"}</button>
         {testState === "success" && <span className="api-test-message success"><CheckCircle2 size={15} />{message}</span>}
