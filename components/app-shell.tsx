@@ -97,7 +97,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <div className="topbar-user"><span className="user-avatar" title={user.displayName}>{user.displayName.trim().charAt(0) || "م"}</span><button className="icon-button logout-button" onClick={logout} aria-label="خروج از حساب" title="خروج از حساب"><LogOut size={18} /></button></div>
           </div>
         </header>
-        <main className="page-content">{storageReady ? children : <div className="workspace-loading"><span className="brand-mark"><CheckCheck size={25} /></span><strong>{isAdmin ? "مدیریت سامانه آماده می‌شود" : "فضای کاری امن شما آماده می‌شود"}</strong><LoaderCircle className="spin-icon" size={21} /><p>{isAdmin ? "در حال خواندن وضعیت سرویس و حساب‌ها…" : "در حال خواندن کلاس‌ها، آزمون‌ها و نتایج…"}</p></div>}</main>
+        <main className="page-content">{isAdmin || storageReady ? children : <div className="workspace-loading"><span className="brand-mark"><CheckCheck size={25} /></span><strong>{isAdmin ? "مدیریت سامانه آماده می‌شود" : "فضای کاری امن شما آماده می‌شود"}</strong><LoaderCircle className="spin-icon" size={21} /><p>{isAdmin ? "در حال خواندن وضعیت سرویس و حساب‌ها…" : "در حال خواندن کلاس‌ها، آزمون‌ها و نتایج…"}</p></div>}</main>
       </div>
 
       {!isAdmin && <Link href="/grading" className="floating-create" title="آزمون جدید"><Plus size={22} /><span>آزمون جدید</span></Link>}

@@ -87,3 +87,20 @@ test("deploy archive builder refuses secrets and local artifacts", () => {
   // A package without a completed build must not be produced.
   assert.match(builder, /\.next", "BUILD_ID"\)/);
 });
+
+test("the admin console is never gated on workspace storage, so it cannot hang on a spinner", () => {
+  const shell = fs.readFileSync(path.join(root, "components", "app-shell.tsx"), "utf8");
+  // Admin accounts have no workspace document; gating the admin console on it
+  // left the page on its loading shell forever when hydration failed or the
+  // gate was misread. The gate must short-circuit for admins.
+  assert.match(shell, /isAdmin \|\| storageReady \? children/);
+});
+
+test("the deploy bundle ships client assets in both places the stack needs", () => {
+  const builder = fs.readFileSync(path.join(root, "scripts", "build-deploy-zip.cjs"), "utf8");
+  // Next's server refuses to boot without .next/static...
+  assert.match(builder, /syncPublicStatic\(APP_ROOT\)/);
+  // ...and nginx serves the browser from public/_next, so neither copy may be dropped.
+  assert.doesNotMatch(builder, /"\/\.next\/static\/"/);
+  assert.match(builder, /client asset\(s\) referenced by the build are missing/);
+});

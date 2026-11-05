@@ -56,7 +56,15 @@ const EXCLUDE_FRAGMENTS = [
   "/.next/trace",
   "/.git/",
   "/data/",
+  // public/_next is REQUIRED (nginx serves it); only its staging/backup dirs are dropped.
+  // Both copies are required and must NOT be de-duplicated:
+  //   .next/static        -> Next's own server refuses to boot without it
+  //   public/_next/static -> nginx serves the browser assets from here
+  "/public/_next/.static-staging-",
+  "/public/_next/.static-backup-",
   "nomreh-deploy-b4847c0.zip",
+  // Never nest a previous deploy archive inside a new one.
+  "nomreh-deploy-2026-11-05.zip",
 ];
 
 // A file is refused if it looks like it carries credentials.
@@ -83,6 +91,7 @@ function walk(directory, relative, collected) {
     if (!entry.isFile()) continue;
     if (EXCLUDE_FRAGMENTS.some((fragment) => `/${rel}`.includes(fragment))) continue;
     if (entry.name.startsWith(".env")) continue;
+    if (!relative && /^nomreh-deploy-.*\.zip$/i.test(entry.name)) continue;
     // Local build artifacts must never ship.
     if (entry.name.endsWith(".tsbuildinfo")) continue;
     collected.push(rel);
@@ -115,6 +124,18 @@ function main() {
     throw new Error(".next/BUILD_ID is missing; run `npm run build` before packaging so the archive is runnable.");
   }
 
+  // Plesk's document root is <app>/public and nginx serves the built client
+  // assets from public/_next. A package without them makes the browser 404 every
+  // script, so the page renders its loading shell and never hydrates. Always
+  // mirror .next/static into public/_next before packaging.
+  const { syncPublicStatic } = require("./plesk-node22.cjs");
+  syncPublicStatic(APP_ROOT);
+
+  const publicNext = path.join(APP_ROOT, "public", "_next");
+  if (!fs.existsSync(publicNext) || !fs.readdirSync(publicNext).length) {
+    throw new Error("public/_next is missing after the static sync; refusing to package a bundle that cannot hydrate.");
+  }
+
   fs.rmSync(STAGE, { recursive: true, force: true });
   fs.mkdirSync(STAGE, { recursive: true });
 
@@ -134,6 +155,26 @@ function main() {
   if (refused.length) {
     throw new Error(`Refusing to package: these files look like they contain secrets: ${refused.join(", ")}`);
   }
+
+  // Cross-check that every asset the pages reference is present in public/.
+  const referenced = new Set();
+  const pageRoot = path.join(APP_ROOT, ".next", "server", "app");
+  const collectRefs = (directory) => {
+    if (!fs.existsSync(directory)) return;
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) { collectRefs(absolute); continue; }
+      if (!entry.name.endsWith(".html") && !entry.name.endsWith(".rsc")) continue;
+      const text = fs.readFileSync(absolute, "utf8");
+      for (const match of text.matchAll(/\/_next\/static\/[A-Za-z0-9._/-]+\.(?:js|css)/g)) referenced.add(match[0]);
+    }
+  };
+  collectRefs(pageRoot);
+  const missing = [...referenced].filter((asset) => !fs.existsSync(path.join(APP_ROOT, "public", asset)));
+  if (missing.length) {
+    throw new Error(`Refusing to package: ${missing.length} client asset(s) referenced by the build are missing from public/, so the app would not hydrate. First: ${missing[0]}`);
+  }
+  console.log(`client assets verified=${referenced.size}`);
 
   fs.rmSync(OUTPUT, { force: true });
   execFileSync("zip", ["-q", "-r", "-9", OUTPUT, "."], { cwd: STAGE, stdio: "inherit" });
