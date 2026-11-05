@@ -123,6 +123,64 @@ const MATRIX = [
   ["140.82.121.6", 443],
 ];
 
+// Resolve the same name with the host's own resolver and with public resolvers,
+// then connect to each address. A redirected resolver gives a wrong address that
+// times out while the real address still works, and the fix is DNS, not firewall.
+function publicResolve(hostname, server) {
+  return new Promise((resolve) => {
+    const resolver = new dns.Resolver({ timeout: 4000, tries: 1 });
+    resolver.setServers([server]);
+    resolver.resolve4(hostname, (error, addresses) => {
+      resolve({ server, addresses: error ? [] : addresses, error: error ? codeOf(error) : undefined });
+    });
+  });
+}
+
+function tcpTo(address, port = 443, timeout = 5000) {
+  return new Promise((resolve) => {
+    const started = Date.now();
+    const socket = net.createConnection({ host: address, port });
+    const finish = (ok, detail) => {
+      socket.removeAllListeners();
+      socket.destroy();
+      resolve({ ok, detail: `${detail} (${Date.now() - started}ms)` });
+    };
+    socket.setTimeout(timeout);
+    socket.once("connect", () => finish(true, "connected"));
+    socket.once("timeout", () => finish(false, `ETIMEDOUT ${timeout}ms`));
+    socket.once("error", (error) => finish(false, codeOf(error)));
+  });
+}
+
+async function addressComparison(hostname) {
+  const system = await new Promise((resolve) => {
+    dns.lookup(hostname, { all: true, verbatim: true }, (error, records) => resolve(error ? [] : records.map((r) => r.address)));
+  });
+  const [cf, google] = await Promise.all([publicResolve(hostname, "1.1.1.1"), publicResolve(hostname, "8.8.8.8")]);
+  const publicSet = [...new Set([...cf.addresses, ...google.addresses])];
+  console.log(`  system DNS  : ${system.length ? system.join(", ") : "no answer"}`);
+  console.log(`  public DNS  : ${publicSet.length ? publicSet.join(", ") : "no answer"}`);
+
+  const candidates = [];
+  for (const address of system.slice(0, 2)) candidates.push({ address, source: "system" });
+  const alt = publicSet.find((address) => !system.includes(address));
+  if (alt) candidates.push({ address: alt, source: "public" });
+
+  for (const candidate of candidates) {
+    const result = await tcpTo(candidate.address);
+    console.log(`  ${candidate.source} address ${candidate.address}:443 ${result.ok ? "OK  " : "FAIL"} ${result.detail}`);
+    candidate.ok = result.ok;
+  }
+
+  const systemEntry = candidates.find((c) => c.source === "system");
+  const publicEntry = candidates.find((c) => c.source === "public");
+  if (publicEntry && publicEntry.ok && systemEntry && !systemEntry.ok) {
+    return `DNS هاست آدرس اشتباه می‌دهد: ${systemEntry.address} جواب نمی‌دهد ولی ${publicEntry.address} وصل می‌شود. تنظیم DNS سرور عوض شده است.`;
+  }
+  if (!candidates.some((c) => c.ok)) return "هیچ آدرسی وصل نشد؛ خروجی سرور بسته است (نه DNS).";
+  return "آدرس‌ها سالم‌اند.";
+}
+
 function plainHttpCheck(url) {
   return new Promise((resolve) => {
     const started = Date.now();
@@ -157,6 +215,8 @@ async function main() {
       if (!result.ok && !firstFailure) firstFailure = `${hostname} ${step.trim()}: ${result.detail}`;
     }
     console.log(`  ->  ${verdict(hostname, collected)}`);
+    console.log("  -- address comparison (system DNS vs public DNS)");
+    console.log(`  ->  ${await addressComparison(hostname)}`);
     process.stdout.write("\n");
   }
 

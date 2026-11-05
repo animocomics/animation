@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { AuthError, requireAdmin } from "@/lib/server/auth";
 import { getApiNetworkStatus } from "@/lib/server/api-network";
+import { inspectAddresses, addressConclusion } from "@/lib/server/network-probe";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -216,14 +217,29 @@ export async function GET(request: Request) {
     ? "حداقل یک مسیر خروجی باز است؛ می‌توان ترافیک AI را از همان پورت عبور داد."
     : "هیچ اتصال خروجی روی پورت‌های آزمایش‌شده برقرار نشد؛ سرور به‌کلی خروجی ندارد و این باید از طرف هاستینگ/فایروال سرور باز شود. هیچ کلید یا تنظیمی در برنامه این را حل نمی‌کند.";
 
+  // Compare the host's own DNS answer with public resolvers and connect to each
+  // address directly. A redirected resolver produces exactly the "everything
+  // times out" symptom while the real cause is DNS, and the fix is opposite.
+  const addressChecks: Array<{ hostname: string; report: unknown; conclusion: string }> = [];
+  const addressHosts = [...new Set(results.map((entry) => entry.hostname))];
+  for (const hostname of addressHosts) {
+    try {
+      const report = await inspectAddresses(hostname);
+      addressChecks.push({ hostname, report, conclusion: addressConclusion(report) });
+    } catch (error) {
+      addressChecks.push({ hostname, report: { error: describe(error) }, conclusion: "بررسی آدرس‌ها انجام نشد." });
+    }
+  }
+
   return NextResponse.json({
     // Lets the operator confirm the deploy actually took effect: if this marker
     // is missing, the browser is talking to an older build.
-    diagnosticsVersion: "v5",
+    diagnosticsVersion: "v6",
     checkedAt: new Date().toISOString(),
     runtimeVersion: process.version,
     platform: process.platform,
     networkMode,
+    addressChecks,
     egress,
     egressConclusion,
     results,
