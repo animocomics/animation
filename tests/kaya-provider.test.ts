@@ -70,3 +70,20 @@ test("Kaya call path is OpenAI-compatible and fails over only within Kaya", () =
   assert.match(providers, /status === 401/);
   assert.match(providers, /status === 402/);
 });
+
+test("deploy archive builder refuses secrets and local artifacts", () => {
+  const builder = fs.readFileSync(path.join(root, "scripts", "build-deploy-zip.cjs"), "utf8");
+  // Secrets and anything environment-specific must be excluded by name.
+  assert.match(builder, /"\.env"/);
+  assert.match(builder, /startsWith\("\.env"\)/);
+  assert.match(builder, /node_modules/);
+  assert.match(builder, /nomreh-vm/);
+  assert.match(builder, /\.next\/cache\//);
+  assert.match(builder, /endsWith\("\.tsbuildinfo"\)/);
+  // And by content, so an accidentally committed key cannot ship.
+  assert.match(builder, /PRIVATE KEY/);
+  assert.match(builder, /sk-llm-/);
+  assert.match(builder, /gh\[pousr\]_/);
+  // A package without a completed build must not be produced.
+  assert.match(builder, /\.next", "BUILD_ID"\)/);
+});

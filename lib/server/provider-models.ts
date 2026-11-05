@@ -152,6 +152,21 @@ export async function discoverProviderModels(input: ProviderModelRequest): Promi
     if (Array.isArray(payload.data)) records.push(...payload.data as ProviderModelRecord[]);
   }
 
+  if (input.provider === "kaya") {
+    // The operator asked for the whole catalogue. Return every interactive chat
+    // model, keeping the raw gateway order and dropping only the entries that are
+    // not usable for interactive grading:
+    //   "~"    floating aliases that can change under the same name
+    //   ":batch" batch-only variants that are not served on the chat path
+    const catalogue = records
+      .map((record) => modelId(record, "kaya"))
+      .filter((id) => id && !id.startsWith("~") && !id.endsWith(":batch"));
+    const unique = [...new Set(catalogue)];
+    if (!unique.length) throw new ProviderError("Kaya AI فهرست مدل‌ها را برنگرداند؛ نام مدل را دستی وارد کنید.", 400);
+    const discovered = mergeModelOptions("kaya", unique);
+    const verified = FALLBACK_MODEL_OPTIONS.kaya.filter((id) => !discovered.includes(id));
+    return [...verified, ...discovered];
+  }
   const models = records.filter((record) => isGradingCandidate(input.provider, record)).map((record) => modelId(record, input.provider));
   if (!models.length) throw new ProviderError("سرویس‌دهنده مدل چندوجهی قابل‌استفاده‌ای برای این حساب برنگرداند. می‌توانید نام مدل را دستی وارد و آزمایش کنید.", 400);
   return mergeModelOptions(input.provider, models);
