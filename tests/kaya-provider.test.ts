@@ -134,3 +134,15 @@ test("admin network diagnostics endpoint exists and is admin-gated", () => {
   // Must never echo a stored key back to the caller.
   assert.ok(!/apiKey\s*[,:]/.test(source), "diagnostics must not return an API key");
 });
+
+test("network diagnostics cannot exceed the reverse proxy timeout", () => {
+  // A sequential probe run timed out behind Plesk and returned an HTML 504
+  // exactly when the operator needed the result. Every probe must be budgeted
+  // and the independent groups must run concurrently.
+  const source = fs.readFileSync(path.join(root, "app/api/admin/network-diagnostics/route.ts"), "utf8");
+  assert.match(source, /withBudget/, "probes must be time-boxed");
+  assert.match(source, /Promise\.all\(/, "probe groups must run concurrently");
+  assert.match(source, /BUDGET_MS/);
+  // A failed TCP connect must not trigger two more identical timeouts.
+  assert.match(source, /skipped: true/);
+});
