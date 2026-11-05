@@ -128,8 +128,9 @@ async function main() {
     }
   }
   const available = fs.statfsSync(APP_ROOT).bavail * fs.statfsSync(APP_ROOT).bsize;
-  const largestPart = Math.max(...manifest.parts.map((part) => part.bytes));
-  const requiredFree = manifest.extractedBytes + largestPart + 512 * 1024 * 1024;
+  // Chunks are removed after each verified part, so transient archives are
+  // covered by the 512 MiB safety margin.
+  const requiredFree = manifest.extractedBytes + 512 * 1024 * 1024;
   if (available < requiredFree) throw new Error(`Insufficient free space for bounded Windows assembly; ${requiredFree} bytes must be available before starting. Existing files were preserved.`);
   fs.mkdirSync(EXTRACT_ROOT, { recursive: true, mode: 0o700 });
   for (const part of manifest.parts) {
