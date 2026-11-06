@@ -7,6 +7,7 @@ on:
     paths:
       - .github/workflows/plesk-browser-diagnostics.yml
       - scripts/plesk-browser-diagnostics.cjs
+      - scripts/plesk-host-network-probe.cjs
   workflow_dispatch:
 
 permissions:
