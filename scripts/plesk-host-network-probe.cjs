@@ -25,10 +25,17 @@ function errorCode(error) {
 }
 
 async function dnsAttempt(operation) {
+  let timer;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(() => resolve({ values: [], error: "DNS_TIMEOUT_5000MS" }), 5000);
+  });
   try {
-    return { values: await operation(), error: "" };
-  } catch (error) {
-    return { values: [], error: errorCode(error) };
+    return await Promise.race([
+      Promise.resolve().then(operation).then((values) => ({ values, error: "" })).catch((error) => ({ values: [], error: errorCode(error) })),
+      timeout,
+    ]);
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -162,10 +169,14 @@ function reportGitRemote() {
   console.log("HOST_NETWORK_BEGIN");
   reportEnvironment();
   reportGitProxy();
+  console.log("HOST_NETWORK_STAGE GIT_LS_REMOTE_BEGIN");
+  reportGitRemote();
+  console.log("HOST_NETWORK_STAGE DNS_BEGIN");
   const records = await Promise.all(TARGETS.map(readDns));
   for (const record of records) {
     console.log(`HOST_NETWORK_DNS ${record.host} lookup=${record.lookup.values.join("/") || "NONE"} lookupError=${record.lookup.error || "NONE"} A=${record.ipv4.values.join("/") || "NONE"} AAAA=${record.ipv6.values.join("/") || "NONE"}`);
   }
+  console.log("HOST_NETWORK_STAGE HTTPS_BEGIN");
   const jobs = [];
   for (const record of records) {
     jobs.push(httpsProbe(record.host, ""));
@@ -175,7 +186,6 @@ function reportGitRemote() {
   for (const result of results) {
     console.log(`HOST_NETWORK_HTTPS ${result.host} target=${result.address} result=${result.result} tcp=${result.tcp ? 1 : 0} tls=${result.tls ? 1 : 0} remote=${result.remote} ms=${result.milliseconds}`);
   }
-  reportGitRemote();
   console.log("HOST_NETWORK_COMPLETE");
 })().catch((error) => {
   console.log(`HOST_NETWORK_FATAL ${errorCode(error)}`);

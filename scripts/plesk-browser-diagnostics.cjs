@@ -702,16 +702,23 @@ async function main() {
           await executeButton.click({ timeout: 8000 });
           const startedAt = Date.now();
           let probeLines = [];
+          let consoleOutput = "";
+          let executionFailure = "";
           while (Date.now() - startedAt < 120_000) {
             await page.waitForTimeout(1000);
-            const consoleOutput = await outputElement.innerText().catch(() => "");
-            const failure = consoleOutput.split(/\r?\n/).find((line) => /npm ERR!|Command failed|permission denied|node: not found|command not found/i.test(line));
-            if (failure) throw new Error(`The read-only host network probe could not run: ${sanitize(failure.slice(0, 250))}`);
+            consoleOutput = await outputElement.innerText().catch(() => "");
+            executionFailure = consoleOutput.split(/\r?\n/).find((line) => /npm ERR!|Command failed|permission denied|node: not found|command not found|another.*command.*running|already.*running/i.test(line)) || "";
+            if (executionFailure) break;
             probeLines = [...new Set(consoleOutput.split(/\r?\n/).map((line) => line.trim()).filter((line) => /^HOST_NETWORK_/.test(line)))];
             if (probeLines.some((line) => line.startsWith("HOST_NETWORK_COMPLETE"))) break;
           }
-          if (!probeLines.some((line) => line.startsWith("HOST_NETWORK_COMPLETE"))) throw new Error("The read-only host network probe did not complete within 120 seconds. No network or file setting was changed.");
           for (const line of probeLines.slice(0, 100)) lines.push(`- Host network: ${sanitize(line.slice(0, 500))}`);
+          if (executionFailure) throw new Error(`The read-only host network probe could not run: ${sanitize(executionFailure.slice(0, 250))}`);
+          if (!probeLines.some((line) => line.startsWith("HOST_NETWORK_COMPLETE"))) {
+            const consoleTail = consoleOutput.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && /npm|node|command|error|fail|timeout|busy|running|HOST_NETWORK/i.test(line) && !/secret|token|password|credential|authorization/i.test(line)).slice(-20);
+            for (const line of consoleTail) lines.push(`- Host console: ${sanitize(line.slice(0, 350))}`);
+            throw new Error("The read-only host network probe did not complete within 120 seconds. Partial output is reported above; no network or file setting was changed.");
+          }
           lines.push("- Host network diagnosis completed without a Pull, file write, DNS/route/proxy change, build, restart, or service change.", "");
           actionCompleted = true;
         }
