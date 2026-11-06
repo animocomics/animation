@@ -10,6 +10,16 @@ const cp = require("node:child_process");
 
 const TARGETS = ["example.com", "registry.npmjs.org", "github.com", "api.github.com", "codeload.github.com"];
 const SHECAN_DNS = new Set(["178.22.122.100", "185.51.200.2", "178.22.122.101", "185.51.200.1"]);
+let exiting = false;
+function finish(code) {
+  if (exiting) return;
+  exiting = true;
+  process.stdout.write("HOST_NETWORK_COMPLETE\n", () => process.exit(code));
+}
+const watchdog = setTimeout(() => {
+  console.log("HOST_NETWORK_FATAL GLOBAL_TIMEOUT_45000MS");
+  finish(1);
+}, 45000);
 
 function clean(value) {
   return String(value || "")
@@ -186,9 +196,10 @@ function reportGitRemote() {
   for (const result of results) {
     console.log(`HOST_NETWORK_HTTPS ${result.host} target=${result.address} result=${result.result} tcp=${result.tcp ? 1 : 0} tls=${result.tls ? 1 : 0} remote=${result.remote} ms=${result.milliseconds}`);
   }
-  console.log("HOST_NETWORK_COMPLETE");
+  clearTimeout(watchdog);
+  finish(0);
 })().catch((error) => {
   console.log(`HOST_NETWORK_FATAL ${errorCode(error)}`);
-  console.log("HOST_NETWORK_COMPLETE");
-  process.exitCode = 1;
+  clearTimeout(watchdog);
+  finish(1);
 });
