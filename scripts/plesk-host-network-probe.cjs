@@ -5,7 +5,7 @@
 // No files/settings are written, no proxy is used, and no credentials are sent.
 const dns = require("node:dns").promises;
 const fs = require("node:fs");
-const https = require("node:https");
+const tls = require("node:tls");
 
 const TARGETS = ["example.com", "registry.npmjs.org", "github.com", "api.github.com", "codeload.github.com"];
 const SHECAN_DNS = new Set(["178.22.122.100", "185.51.200.2", "178.22.122.101", "185.51.200.1"]);
@@ -63,44 +63,38 @@ async function readDns(host) {
   };
 }
 
-function httpsProbe(host, address) {
+function tlsProbe(host, address) {
   return new Promise((resolve) => {
     const started = Date.now();
     let tcp = false;
-    let tls = false;
+    let secure = false;
     let finished = false;
+    let socket;
+    let timer;
     const finish = (result) => {
       if (finished) return;
       finished = true;
-      resolve({ host, address: address || "AUTO", tcp, tls, milliseconds: Date.now() - started, ...result });
+      clearTimeout(timer);
+      resolve({ host, address, tcp, secure, milliseconds: Date.now() - started, ...result });
     };
-    const options = {
-      hostname: address || host,
-      servername: host,
-      port: 443,
-      path: "/",
-      method: "HEAD",
-      headers: { Host: host, "User-Agent": "Nomreh-ReadOnly-Network-Probe/1.0", Connection: "close" },
-      rejectUnauthorized: true,
-      agent: false,
-    };
-    if (address) options.family = address.includes(":") ? 6 : 4;
-    const request = https.request(options, (response) => {
-      tls = true;
-      response.resume();
-      finish({ result: `HTTP_${response.statusCode}`, remote: response.socket.remoteAddress || "NONE" });
+    try {
+      socket = tls.connect({ host: address, port: 443, servername: host, rejectUnauthorized: true });
+    } catch (error) {
+      finish({ result: errorCode(error), remote: "NONE" });
+      return;
+    }
+    timer = setTimeout(() => {
+      socket.destroy();
+      finish({ result: tcp ? "TLS_TIMEOUT_6000MS" : "TCP_TIMEOUT_6000MS", remote: socket.remoteAddress || "NONE" });
+    }, 6000);
+    socket.once("connect", () => { tcp = true; });
+    socket.once("secureConnect", () => {
+      tcp = true;
+      secure = true;
+      finish({ result: "TLS_OK", remote: socket.remoteAddress || "NONE" });
+      socket.end();
     });
-    request.on("socket", (socket) => {
-      socket.once("connect", () => { tcp = true; });
-      socket.once("secureConnect", () => { tls = true; });
-    });
-    request.setTimeout(7000, () => {
-      const error = new Error("PROBE_TIMEOUT_7000MS");
-      error.code = "ETIMEDOUT";
-      request.destroy(error);
-    });
-    request.on("error", (error) => finish({ result: errorCode(error), remote: "NONE" }));
-    request.end();
+    socket.on("error", (error) => finish({ result: errorCode(error), remote: socket.remoteAddress || "NONE" }));
   });
 }
 
@@ -136,15 +130,15 @@ function reportEnvironment() {
   for (const record of records) {
     console.log(`HOST_NETWORK_DNS ${record.host} lookup=${record.lookup.values.join("/") || "NONE"} lookupError=${record.lookup.error || "NONE"} A=${record.ipv4.values.join("/") || "NONE"} AAAA=${record.ipv6.values.join("/") || "NONE"}`);
   }
-  console.log("HOST_NETWORK_STAGE HTTPS_BEGIN");
+  console.log("HOST_NETWORK_STAGE TLS_BEGIN");
   const jobs = [];
   for (const record of records) {
-    if (!record.addresses.length) console.log(`HOST_NETWORK_HTTPS ${record.host} SKIPPED_NO_BOUNDED_DNS_ADDRESS`);
-    for (const address of record.addresses) jobs.push(httpsProbe(record.host, address));
+    if (!record.addresses.length) console.log(`HOST_NETWORK_TLS ${record.host} SKIPPED_NO_BOUNDED_DNS_ADDRESS`);
+    for (const address of record.addresses) jobs.push(tlsProbe(record.host, address));
   }
   const results = await Promise.all(jobs);
   for (const result of results) {
-    console.log(`HOST_NETWORK_HTTPS ${result.host} target=${result.address} result=${result.result} tcp=${result.tcp ? 1 : 0} tls=${result.tls ? 1 : 0} remote=${result.remote} ms=${result.milliseconds}`);
+    console.log(`HOST_NETWORK_TLS ${result.host} target=${result.address} result=${result.result} tcp=${result.tcp ? 1 : 0} tls=${result.secure ? 1 : 0} remote=${result.remote} ms=${result.milliseconds}`);
   }
   clearTimeout(watchdog);
   finish(0);

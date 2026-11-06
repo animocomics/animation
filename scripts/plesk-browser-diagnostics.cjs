@@ -723,6 +723,8 @@ async function main() {
             for (const line of consoleTail) lines.push(`- Host console: ${sanitize(line.slice(0, 350))}`);
             throw new Error("The read-only host network probe did not complete within 120 seconds. Partial output is reported above; no network or file setting was changed.");
           }
+          const fatalProbeLine = probeLines.find((line) => line.startsWith("HOST_NETWORK_FATAL"));
+          if (fatalProbeLine) throw new Error(`The host network probe reached its bounded failure path: ${sanitize(fatalProbeLine.slice(0, 250))}`);
           lines.push("- Host network diagnosis completed without a Pull, file write, DNS/route/proxy change, build, restart, or service change.", "");
           actionCompleted = true;
         }
@@ -929,7 +931,7 @@ async function main() {
           actionCompleted = true;
         }
       }
-      if (nomrehFilesPath && !["enable-runtime", "restart-runtime", "vm-probe", "cleanup-vm-probe"].includes(ACTION)) {
+      if (nomrehFilesPath && !["enable-runtime", "restart-runtime", "vm-probe", "cleanup-vm-probe", "host-network"].includes(ACTION)) {
         let filePath = nomrehFilesPath;
         for (let depth = 0; depth < 2; depth += 1) {
           let response = null;
