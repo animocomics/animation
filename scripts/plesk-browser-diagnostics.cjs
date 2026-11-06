@@ -693,10 +693,14 @@ async function main() {
           const executeButton = page.locator("button[title='Execute command'], button[aria-label='Execute command']").first();
           const outputElement = page.locator("pre.pul-console-output").first();
           if (!await commandInput.count() || !await executeButton.count() || !await outputElement.count()) throw new Error("The Nomreh command controls were not found. The read-only host network probe was not started.");
-          const probeSource = fs.readFileSync(path.join(__dirname, "plesk-host-network-probe.cjs"), "utf8");
+          const probeSource = fs.readFileSync(path.join(__dirname, "plesk-host-network-probe.cjs"), "utf8").replace(/^#![^\n]*\n/, "");
           if (!probeSource.includes("HOST_NETWORK_COMPLETE") || probeSource.length > 30000) throw new Error("The bounded host network probe source failed local validation. Nothing was executed.");
-          const command = `exec -- node -e ${JSON.stringify(probeSource)}`;
-          lines.push("## Controlled read-only host network diagnosis", "", "- Only DNS answers, route presence, proxy presence, TCP/TLS stage, HTTPS status/error, Git proxy keys, and one credential-free public Git ls-remote result are reported. Proxy values and credentials remain hidden. No Pull, file write, DNS/route/proxy change, build, restart, or service change is attempted.", "");
+          const zlib = require("node:zlib");
+          const compressedProbe = zlib.brotliCompressSync(probeSource, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 9 } }).toString("base64");
+          const probeLauncher = `eval(require("node:zlib").brotliDecompressSync(Buffer.from("${compressedProbe}","base64")).toString("utf8"))`;
+          const command = `exec -- node -e ${JSON.stringify(probeLauncher)}`;
+          if (command.length > 7000) throw new Error(`The compressed host network command remains too long for the Plesk console (${command.length} characters). Nothing was executed.`);
+          lines.push("## Controlled read-only host network diagnosis", "", `- Probe transport: Brotli-compressed inline Node source; ${command.length} command characters; SHA-256 ${crypto.createHash("sha256").update(probeSource).digest("hex")}.`, "- Only DNS answers, route presence, proxy presence, TCP/TLS stage, HTTPS status/error, Git proxy keys, and one credential-free public Git ls-remote result are reported. Proxy values and credentials remain hidden. No Pull, file write, DNS/route/proxy change, build, restart, or service change is attempted.", "");
           await commandInput.fill(command);
           if (await commandInput.inputValue() !== command) throw new Error("Plesk did not retain the exact read-only host network probe. Nothing was executed.");
           await executeButton.click({ timeout: 8000 });
