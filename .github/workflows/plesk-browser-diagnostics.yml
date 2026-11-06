@@ -1,4 +1,4 @@
-name: Plesk browser diagnostics
+name: Plesk host network diagnostics
 
 on:
   push:
@@ -48,14 +48,14 @@ jobs:
           npm install --ignore-scripts --no-audit --no-fund playwright@1.64.1
           npx playwright install --with-deps chromium
 
-      - name: Inspect official Shecan app isolation and remote-display capabilities without changes
+      - name: Diagnose host DNS, TCP, TLS, proxy and Git without changes
         id: diagnose
         if: steps.config.outputs.configured == 'true'
         env:
           PLESK_PANEL_URL: ${{ secrets.PLESK_PANEL_URL }}
           PLESK_API_USERNAME: ${{ secrets.PLESK_API_USERNAME }}
           PLESK_API_PASSWORD: ${{ secrets.PLESK_API_PASSWORD }}
-          PLESK_BROWSER_ACTION: account-network
+          PLESK_BROWSER_ACTION: host-network
           PLESK_DIAGNOSTICS_OUTPUT: ${{ runner.temp }}/nomreh-plesk-browser-diagnostics.md
           NODE_PATH: ${{ runner.temp }}/plesk-browser/node_modules
         run: node scripts/plesk-browser-diagnostics.cjs
@@ -80,7 +80,7 @@ jobs:
             fi
           fi
           gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" \
-            -f name="Plesk browser diagnostics" \
+            -f name="Plesk host network diagnostics" \
             -f head_sha="${GITHUB_SHA}" \
             -f status=completed \
             -f conclusion="$conclusion" \

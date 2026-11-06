@@ -95,9 +95,9 @@ function labelValues(text, labels) {
 }
 
 async function main() {
-  if (!["diagnose", "upload", "extract", "runtime-extract", "vm-probe", "cleanup-vm-probe", "build", "status", "disk", "os-info", "account-network", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime", "cancel-stale-build", "build-process", "storage-audit", "compact"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
+  if (!["diagnose", "upload", "extract", "runtime-extract", "vm-probe", "cleanup-vm-probe", "build", "status", "disk", "os-info", "account-network", "host-network", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime", "cancel-stale-build", "build-process", "storage-audit", "compact"].includes(ACTION)) throw new Error(`Unsupported Plesk browser action: ${ACTION}`);
   const panel = normalizePanelUrl(process.env.PLESK_PANEL_URL || "");
-  const readOnly = ACTION === "diagnose" || ACTION === "status" || ACTION === "account-network";
+  const readOnly = ACTION === "diagnose" || ACTION === "status" || ACTION === "account-network" || ACTION === "host-network";
   const actionDescription = ACTION === "upload"
     ? "Controlled action: upload one validated application archive to Nomreh only. No extraction, build, restart, or settings change is attempted."
     : ACTION === "extract"
@@ -472,7 +472,7 @@ async function main() {
         if (statusResult.error) lines.push(`- Status read error: ${sanitize(statusResult.error)}`);
         lines.push("- Read-only status request; no command, restart, or setting change was attempted.", "");
       }
-      if (["diagnose", "build", "status", "disk", "os-info", "account-network", "vm-probe", "cleanup-vm-probe", "cancel-stale-build", "build-process", "storage-audit", "compact"].includes(ACTION) && nomrehConsoleLink && await nomrehConsoleLink.count()) {
+      if (["diagnose", "build", "status", "disk", "os-info", "account-network", "host-network", "vm-probe", "cleanup-vm-probe", "cancel-stale-build", "build-process", "storage-audit", "compact"].includes(ACTION) && nomrehConsoleLink && await nomrehConsoleLink.count()) {
         const consoleResponsePromise = page.waitForResponse((item) => item.url().includes("/modules/nodejs/index.php/domain/console") && item.request().isNavigationRequest(), { timeout: 15000 }).catch(() => null);
         await nomrehConsoleLink.click({ timeout: 8000 }).catch(() => undefined);
         const consoleResponse = await consoleResponsePromise;
@@ -683,6 +683,36 @@ async function main() {
           if (!probeLines.some((line) => line.startsWith("SHECAN_ACCOUNT_NETWORK_COMPLETE"))) throw new Error("The credential-free Shecan account network probe did not complete within 100 seconds. No network or file setting was changed.");
           for (const line of probeLines.slice(0, 32)) lines.push(`- Account network: ${sanitize(line.slice(0, 350))}`);
           lines.push("- Account network and native-app capability probe completed; no DNS, file, application process, build, restart, OTP, login, persistent namespace, or settings change was attempted.", "");
+          actionCompleted = true;
+        }
+        if (ACTION === "host-network") {
+          if (!consoleBody.includes(`Node.js on ${DOMAIN}`) || !consoleBody.includes("/nomreh.arounidea.com")) {
+            throw new Error("The Node command console is not scoped to Nomreh. The read-only host network probe was not started.");
+          }
+          const commandInput = page.getByPlaceholder(/Pick a script or command/i).first();
+          const executeButton = page.locator("button[title='Execute command'], button[aria-label='Execute command']").first();
+          const outputElement = page.locator("pre.pul-console-output").first();
+          if (!await commandInput.count() || !await executeButton.count() || !await outputElement.count()) throw new Error("The Nomreh command controls were not found. The read-only host network probe was not started.");
+          const probeSource = fs.readFileSync(path.join(__dirname, "plesk-host-network-probe.cjs"), "utf8");
+          if (!probeSource.includes("HOST_NETWORK_COMPLETE") || probeSource.length > 30000) throw new Error("The bounded host network probe source failed local validation. Nothing was executed.");
+          const command = `exec -- node -e ${JSON.stringify(probeSource)}`;
+          lines.push("## Controlled read-only host network diagnosis", "", "- Only DNS answers, route presence, proxy presence, TCP/TLS stage, HTTPS status/error, Git proxy keys, and one credential-free public Git ls-remote result are reported. Proxy values and credentials remain hidden. No Pull, file write, DNS/route/proxy change, build, restart, or service change is attempted.", "");
+          await commandInput.fill(command);
+          if (await commandInput.inputValue() !== command) throw new Error("Plesk did not retain the exact read-only host network probe. Nothing was executed.");
+          await executeButton.click({ timeout: 8000 });
+          const startedAt = Date.now();
+          let probeLines = [];
+          while (Date.now() - startedAt < 120_000) {
+            await page.waitForTimeout(1000);
+            const consoleOutput = await outputElement.innerText().catch(() => "");
+            const failure = consoleOutput.split(/\r?\n/).find((line) => /npm ERR!|Command failed|permission denied|node: not found|command not found/i.test(line));
+            if (failure) throw new Error(`The read-only host network probe could not run: ${sanitize(failure.slice(0, 250))}`);
+            probeLines = [...new Set(consoleOutput.split(/\r?\n/).map((line) => line.trim()).filter((line) => /^HOST_NETWORK_/.test(line)))];
+            if (probeLines.some((line) => line.startsWith("HOST_NETWORK_COMPLETE"))) break;
+          }
+          if (!probeLines.some((line) => line.startsWith("HOST_NETWORK_COMPLETE"))) throw new Error("The read-only host network probe did not complete within 120 seconds. No network or file setting was changed.");
+          for (const line of probeLines.slice(0, 100)) lines.push(`- Host network: ${sanitize(line.slice(0, 500))}`);
+          lines.push("- Host network diagnosis completed without a Pull, file write, DNS/route/proxy change, build, restart, or service change.", "");
           actionCompleted = true;
         }
         if (ACTION === "vm-probe") {
@@ -1920,7 +1950,7 @@ async function main() {
         lines.push("## Read-only Nomreh domain logs", "", "- Nomreh's scoped Logs tool was not exposed on the domain card; no alternate domain or log path was accessed.", "");
       }
     }
-    if (["upload", "extract", "runtime-extract", "vm-probe", "cleanup-vm-probe", "build", "status", "disk", "os-info", "account-network", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime", "cancel-stale-build", "build-process", "storage-audit", "compact"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Review the reported host state before further action; no live-success claim was made.`);
+    if (["upload", "extract", "runtime-extract", "vm-probe", "cleanup-vm-probe", "build", "status", "disk", "os-info", "account-network", "host-network", "fix-node-version", "update-package", "update-tsconfig", "retire-obsolete", "cleanup-deploy-archives", "enable-runtime", "restart-runtime", "cancel-stale-build", "build-process", "storage-audit", "compact"].includes(ACTION) && !actionCompleted) throw new Error(`The controlled Nomreh ${ACTION} action did not complete. Review the reported host state before further action; no live-success claim was made.`);
     lines.push("## Result", "", ACTION === "upload"
       ? "The validated application archive was uploaded to Nomreh. Extraction, dependency installation, build, and Node.js enablement remain pending."
       : ACTION === "extract"
@@ -1945,7 +1975,9 @@ async function main() {
                 ? "The read-only operating-system identity was reported. No DNS, file, build, deletion, restart, or settings change was attempted."
                 : ACTION === "account-network"
                   ? "The credential-free Shecan account address and HTTPS probe completed. No DNS, file, OTP, login, build, restart, or settings change was attempted."
-                  : ACTION === "fix-node-version"
+                  : ACTION === "host-network"
+                    ? "The read-only host DNS, TCP, TLS, proxy and public Git diagnosis completed. No Pull, file, DNS/route/proxy, build, restart, or service change was attempted."
+                    : ACTION === "fix-node-version"
                 ? "Nomreh's Node override fix completed with the original contents preserved. No build or restart was attempted; read-only command verification remains pending."
                 : ACTION === "update-package"
                   ? "Nomreh's validated package.json npm launcher fix was uploaded and verified. No build or restart was attempted; disk verification remains pending."
