@@ -700,7 +700,7 @@ async function main() {
           const probeLauncher = `eval(require("node:zlib").brotliDecompressSync(Buffer.from("${compressedProbe}","base64")).toString("utf8"))`;
           const command = `exec -- node -e ${JSON.stringify(probeLauncher)}`;
           if (command.length > 7000) throw new Error(`The compressed host network command remains too long for the Plesk console (${command.length} characters). Nothing was executed.`);
-          lines.push("## Controlled read-only host network diagnosis", "", `- Probe transport: Brotli-compressed inline Node source; ${command.length} command characters; SHA-256 ${crypto.createHash("sha256").update(probeSource).digest("hex")}.`, "- Only DNS answers, route presence, proxy presence, TCP/TLS stage, HTTPS status/error, Git proxy keys, and one credential-free public Git ls-remote result are reported. Proxy values and credentials remain hidden. No Pull, file write, DNS/route/proxy change, build, restart, or service change is attempted.", "");
+          lines.push("## Controlled read-only host network diagnosis", "", `- Probe transport: Brotli-compressed inline Node source; ${command.length} command characters; SHA-256 ${crypto.createHash("sha256").update(probeSource).digest("hex")}.`, "- Only DNS answers, route presence, proxy presence, and direct-IP TCP/TLS stage/status are reported. Proxy values and credentials remain hidden. No Git command, child process, Pull, file write, DNS/route/proxy change, build, restart, or service change is attempted.", "");
           await commandInput.fill(command);
           if (await commandInput.inputValue() !== command) throw new Error("Plesk did not retain the exact read-only host network probe. Nothing was executed.");
           await executeButton.click({ timeout: 8000 });
@@ -1987,7 +1987,7 @@ async function main() {
                 : ACTION === "account-network"
                   ? "The credential-free Shecan account address and HTTPS probe completed. No DNS, file, OTP, login, build, restart, or settings change was attempted."
                   : ACTION === "host-network"
-                    ? "The read-only host DNS, TCP, TLS, proxy and public Git diagnosis completed. No Pull, file, DNS/route/proxy, build, restart, or service change was attempted."
+                    ? "The read-only host DNS, direct-IP TCP/TLS and proxy-presence diagnosis completed. No Git command, child process, Pull, file, DNS/route/proxy, build, restart, or service change was attempted."
                     : ACTION === "fix-node-version"
                 ? "Nomreh's Node override fix completed with the original contents preserved. No build or restart was attempted; read-only command verification remains pending."
                 : ACTION === "update-package"

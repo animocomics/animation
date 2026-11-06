@@ -6,7 +6,6 @@
 const dns = require("node:dns").promises;
 const fs = require("node:fs");
 const https = require("node:https");
-const cp = require("node:child_process");
 
 const TARGETS = ["example.com", "registry.npmjs.org", "github.com", "api.github.com", "codeload.github.com"];
 const SHECAN_DNS = new Set(["178.22.122.100", "185.51.200.2", "178.22.122.101", "185.51.200.1"]);
@@ -105,16 +104,6 @@ function httpsProbe(host, address) {
   });
 }
 
-function git(args, timeout) {
-  return cp.spawnSync("git", args, {
-    encoding: "utf8",
-    timeout,
-    killSignal: "SIGTERM",
-    maxBuffer: 256 * 1024,
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
-  });
-}
-
 function reportEnvironment() {
   const names = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "all_proxy", "no_proxy", "GIT_PROXY_COMMAND", "GIT_SSL_NO_VERIFY"];
   const present = names.filter((name) => Boolean(process.env[name]));
@@ -139,48 +128,9 @@ function reportEnvironment() {
   }
 }
 
-function reportGitProxy() {
-  const result = git(["config", "--show-origin", "--get-regexp", "proxy"], 5000);
-  if (result.error) {
-    console.log(`HOST_NETWORK_GIT_PROXY_CONFIG ERROR_${errorCode(result.error)}`);
-    return;
-  }
-  if (result.status === 1) {
-    console.log("HOST_NETWORK_GIT_PROXY_CONFIG NONE");
-    return;
-  }
-  if (result.status !== 0) {
-    console.log(`HOST_NETWORK_GIT_PROXY_CONFIG ERROR_STATUS_${result.status}`);
-    return;
-  }
-  const entries = String(result.stdout || "").split(/\r?\n/).map((line) => line.match(/^(\S+)\s+(\S+)(?:\s+(.*))?$/)).filter(Boolean).filter((match) => /^(?:http|https)\..*proxy$/i.test(match[2]));
-  if (!entries.length) {
-    console.log("HOST_NETWORK_GIT_PROXY_CONFIG NONE");
-    return;
-  }
-  for (const match of entries.slice(0, 12)) console.log(`HOST_NETWORK_GIT_PROXY_CONFIG origin=${clean(match[1])} key=${clean(match[2])} value=${match[3] ? "SET(hidden)" : "EMPTY"}`);
-}
-
-function reportGitRemote() {
-  const result = git(["-c", "credential.helper=", "ls-remote", "https://github.com/animocomics/animation.git", "HEAD"], 18000);
-  if (result.error) {
-    console.log(`HOST_NETWORK_GIT_LS_REMOTE ERROR_${errorCode(result.error)} status=${result.status} signal=${result.signal || "NONE"}`);
-    return;
-  }
-  if (result.status === 0) {
-    console.log("HOST_NETWORK_GIT_LS_REMOTE OK");
-    return;
-  }
-  const detail = String(result.stderr || "").split(/\r?\n/).map(clean).filter((line) => line && !/token|password|authorization|credential/i.test(line)).slice(-2).join(" | ");
-  console.log(`HOST_NETWORK_GIT_LS_REMOTE FAILED status=${result.status} signal=${result.signal || "NONE"} detail=${detail || "NONE"}`);
-}
-
 (async () => {
   console.log("HOST_NETWORK_BEGIN");
   reportEnvironment();
-  reportGitProxy();
-  console.log("HOST_NETWORK_STAGE GIT_LS_REMOTE_BEGIN");
-  reportGitRemote();
   console.log("HOST_NETWORK_STAGE DNS_BEGIN");
   const records = await Promise.all(TARGETS.map(readDns));
   for (const record of records) {
@@ -189,7 +139,7 @@ function reportGitRemote() {
   console.log("HOST_NETWORK_STAGE HTTPS_BEGIN");
   const jobs = [];
   for (const record of records) {
-    jobs.push(httpsProbe(record.host, ""));
+    if (!record.addresses.length) console.log(`HOST_NETWORK_HTTPS ${record.host} SKIPPED_NO_BOUNDED_DNS_ADDRESS`);
     for (const address of record.addresses) jobs.push(httpsProbe(record.host, address));
   }
   const results = await Promise.all(jobs);
