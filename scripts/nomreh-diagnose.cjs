@@ -171,6 +171,18 @@ async function main() {
   line(tun.length === 0, tun.length ? `tunnel device: ${tun.map((row) => row.trim().split(":")[1]).join(", ")}` : "no TUN device");
   if (tun.length) findings.push("tun-device");
 
+  // 2b. The addresses this machine owns. Only one of these can be bound as an
+  // egress source, so printing them ends the "which IP do I give the provider?"
+  // question without anyone needing a second command.
+  const os = require("node:os");
+  const localAddresses = [];
+  for (const [name, addresses] of Object.entries(os.networkInterfaces())) {
+    for (const address of addresses || []) {
+      if (address.family === "IPv4" && !address.internal) localAddresses.push(`${address.address} (${name})`);
+    }
+  }
+  line(localAddresses.length > 0, `local IPv4 addresses: ${localAddresses.join(", ") || "none"}`);
+
   // 3. firewall + services
   console.log("\n== 3. firewall and services");
   const iptables = await run("iptables", ["-S"]);

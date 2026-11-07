@@ -189,14 +189,14 @@ export async function inspectHost(): Promise<HostInspection> {
     suggestions.push("iptables-save > /root/iptables.bak", "iptables -S | grep -E 'REDIRECT|TPROXY|DNAT|REJECT|DROP'", "iptables -D <زنجیره> <شمارهٔ قاعده>");
   }
   if (!verdict) {
-    // Everything LOCAL is clean. When even 1.1.1.1 times out, no application
-    // setting can help: the relay/firewall in front of the VPS is dropping
-    // packets, and that is the hosting provider's layer.
+    // Everything LOCAL is clean. That is not the same as "the network is broken":
+    // on this host GitHub answers while Kaya times out, so the filter is per
+    // destination. Saying so stops the operator from chasing DNS or firewalls.
     verdict =
-      "روی خود سرور هیچ نشانه‌ای از DNS محلی، تونل، پروسهٔ VPN یا قاعدهٔ redirect نیست. اگر با این حال حتی 1.1.1.1 هم timeout می‌شود، بسته‌ها قبل از رسیدن به سرور دور ریخته می‌شوند؛ این لایهٔ سرویس‌دهنده/فایروال بالادست است و با هیچ تنظیمی داخل برنامه حل نمی‌شود.";
+      "روی خود سرور هیچ نشانه‌ای از DNS محلی، تونل، پروسهٔ VPN یا قاعدهٔ redirect نیست، پس تنظیمات سرور مقصر نیست. مقصدهای دیگر (GitHub) از همین ماشین جواب می‌دهند؛ فقط مقصد مشخصی بسته است و آن لایه، لایهٔ مسیر/مقصد است نه برنامه.";
     suggestions.push(
       "curl -sS -o /dev/null -w '%{http_code}\\n' --max-time 10 https://api.github.com",
-      "curl -sS --max-time 8 https://api.ipify.org   # آیا IP عمومی سرور عوض شده؟",
+      "curl -sS -o /dev/null -w '%{http_code}\\n' --max-time 10 https://kayaai.ir/   # اگر این هم timeout شد، مقصد بسته است",
     );
   }
 
@@ -212,6 +212,29 @@ export async function inspectHost(): Promise<HostInspection> {
     ok: publicIp ? true : null,
     hint: publicIp ? "این آدرسی است که ترافیک شما با آن به اینترنت می‌رود" : undefined,
   });
+
+  // The addresses this machine actually owns. The egress field can only bind to one
+  // of these, so the operator must see them instead of guessing which of the
+  // provider's IPs is really on the box.
+  try {
+    const { networkInterfaces } = await import("node:os");
+    const local: string[] = [];
+    for (const addresses of Object.values(networkInterfaces())) {
+      for (const address of addresses || []) {
+        if (address.family === "IPv4" && !address.internal) local.push(address.address);
+      }
+    }
+    lines.push({
+      label: "آدرس‌های روی این سرور",
+      value: local.length ? local.join(", ") : "هیچ آدرس غیرلوکالی نیست",
+      ok: local.length > 0,
+      hint: local.length
+        ? "فقط یکی از این‌ها را می‌توان به‌عنوان آدرس خروجی انتخاب کرد"
+        : "آدرس عمومی که هاستینگ می‌دهد روی ماشین نیست؛ باید روی کارت شبکه گذاشته شود",
+    });
+  } catch {
+    /* node:os is always present; nothing to report otherwise */
+  }
 
   return { resolvConf, listeners, processes, tunDevices, firewallRules, services, publicIp, lines, verdict, suggestions };
 }
