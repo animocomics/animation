@@ -61,7 +61,9 @@ test("Kaya call path is OpenAI-compatible and fails over only within Kaya", () =
   assert.match(providers, /https:\/\/kayaai\.ir\/api/);
   assert.match(providers, /input\.provider === "kaya"\) return callKaya\(input\)/);
   // Failover must never leave the gateway or touch scoring rules.
-  assert.match(providers, /KAYA_FALLBACK_ORDER/);
+  // The selected model must never be swapped silently.
+  assert.ok(!/KAYA_FALLBACK_ORDER/.test(providers), "no automatic model fallback list");
+  assert.ok(!/KayaRetryableError/.test(providers), "no failover retry path");
   assert.match(providers, /KAYA_FAILOVER_STATUSES/);
   assert.match(providers, /مدل جایگزین/, "a substituted model must be disclosed in the reason");
   // Authentication shape required by the provider.

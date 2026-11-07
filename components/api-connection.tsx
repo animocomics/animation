@@ -157,10 +157,23 @@ export function ApiConnection() {
           <label htmlFor="admin-model">مدل چندوجهی</label>
           <div className="model-input-row">
             <input id="admin-model" dir="ltr" className="input model-name-input" list="admin-model-options" autoComplete="off" spellCheck={false} value={model} onChange={(event) => { setModel(event.target.value); resetResult(); }} placeholder="نام دقیق مدل" />
+            {/* A datalist only suggests as you type, which reads as "there is no
+                list" especially in a right-to-left layout. The select exposes every
+                known model for this provider, newest first. */}
+            <select
+              aria-label="انتخاب مدل از فهرست"
+              className="input model-select"
+              dir="ltr"
+              value={modelOptions.includes(model) ? model : ""}
+              onChange={(event) => { if (event.target.value) { setModel(event.target.value); resetResult(); } }}
+            >
+              <option value="">— انتخاب از فهرست ({modelOptions.length} مدل) —</option>
+              {modelOptions.map((item) => <option key={`sel-${item}`} value={item}>{item}</option>)}
+            </select>
             {SUPPORTS_ACCOUNT_MODEL_DISCOVERY[provider] && <button type="button" className="btn btn-secondary model-discovery-button" onClick={() => void discoverModels()} disabled={discoveryState === "loading" || ["testing", "saving"].includes(testState)}>{discoveryState === "loading" ? <LoaderCircle className="spin-icon" size={15} /> : <RefreshCw size={15} />}{discoveryState === "loading" ? "در حال خواندن…" : "دریافت مدل‌های حساب"}</button>}
           </div>
           <datalist id="admin-model-options">{modelOptions.map((item) => <option key={item} value={item} />)}</datalist>
-          <span className="form-hint">مدل‌های قبلی حفظ می‌شوند و فهرست حساب به آن‌ها اضافه می‌شود؛ نام هر مدل قدیمی یا تازه را هم می‌توانید دستی وارد کنید. برای تصحیح، ورودی تصویر و خروجی متن لازم است.</span>
+          <span className="form-hint">فهرست بالا مدل‌های شناخته‌شده و مدل‌های خوانده‌شده از حساب شما را نشان می‌دهد ({faNumber(modelOptions.length)} مورد). برای دیدن همهٔ مدل‌های حساب، «دریافت مدل‌های حساب» را بزنید؛ هر نامی را هم می‌توانید دستی وارد کنید.</span>
           {provider === "gemini" && model.trim() === "gemini-3.7-flash" && <span className="form-hint model-alias-hint">Gemini 3.7 Flash منسوخ شده و Google آن را به ۳٫۸ هدایت می‌کند؛ برای تنظیم پایدار، ۳٫۸ پیشنهاد می‌شود.</span>}
           {discoveryMessage && <span className={`form-hint model-discovery-message ${discoveryState}`} aria-live="polite">{discoveryState === "success" ? <CheckCircle2 size={12} /> : discoveryState === "error" ? <TriangleAlert size={12} /> : null}{discoveryMessage}</span>}
 

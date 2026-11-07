@@ -264,7 +264,7 @@ export async function GET(request: Request) {
   return NextResponse.json({
     // Lets the operator confirm the deploy actually took effect: if this marker
     // is missing, the browser is talking to an older build.
-    diagnosticsVersion: "v10",
+    diagnosticsVersion: "v11",
     checkedAt: new Date().toISOString(),
     elapsedMs: Date.now() - startedAt,
     runtimeVersion: process.version,

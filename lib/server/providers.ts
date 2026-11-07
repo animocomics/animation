@@ -406,15 +406,12 @@ const KAYA_BASE_URL = "https://kayaai.ir/api";
  * Ordered substitutes used only when the selected model is unavailable.
  * Multi-owner order gives the best chance that one owner is not rate limited.
  */
-const KAYA_FALLBACK_ORDER = [
-  "deepseek/deepseek-v4.1-flash",
-  "deepseek/deepseek-v4-flash",
-  "google/gemini-2.5-flash",
-  "openai/gpt-4o-mini",
-];
-
 /** HTTP statuses worth retrying on another catalogue model. */
-const KAYA_FAILOVER_STATUSES = new Set([400, 404, 429, 502, 503, 504]);
+// 402 belongs here: on a Kaya key, per-model credit can be exhausted while other
+// catalogue models stay usable, because one key fronts hundreds of upstream
+// providers. Treating it as fatal ended the whole grading run with "credit is not
+// enough" even though switching model would have succeeded.
+const KAYA_FAILOVER_STATUSES = new Set([400, 402, 404, 429, 502, 503, 504]);
 
 /**
  * Kaya AI is an OpenAI-compatible gateway served from inside Iran, so it needs
@@ -430,20 +427,12 @@ async function callKaya(input: ProviderCallInput): Promise<ProviderCallResult> {
   if (input.files.some((file) => file.type === "application/pdf")) {
     throw new ProviderError("PDF برای Kaya AI باید پیش از ارسال، داخل سامانه به تصویر صفحه تبدیل شود.", 400);
   }
-  const candidates = [...new Set([input.model, ...KAYA_FALLBACK_ORDER].filter(Boolean))];
-  let lastError: unknown;
-  for (const [index, model] of candidates.entries()) {
-    try {
-      return await callKayaModel(input, model, index > 0);
-    } catch (error) {
-      if (!(error instanceof KayaRetryableError)) throw error;
-      lastError = error;
-    }
-  }
-  throw lastError instanceof Error ? lastError : new ProviderError("Kaya AI پاسخ معتبری برنگرداند.", 502);
+  // Exactly the model the admin selected. There is deliberately no silent
+  // fallback: a grader must always know which model produced a score, and an
+  // automatic substitution would make two similar sheets score differently for a
+  // reason nobody can see.
+  return callKayaModel(input, input.model, false);
 }
-
-class KayaRetryableError extends ProviderError {}
 
 async function callKayaModel(
   input: ProviderCallInput,
@@ -469,7 +458,7 @@ async function callKayaModel(
     }, input.network);
   } catch (error) {
     // Transport failures are reusable with another catalogue model.
-    throw new KayaRetryableError(`ارتباط با Kaya AI برای مدل ${model} برقرار نشد.`, 502);
+    throw new ProviderError(`ارتباط با Kaya AI برای مدل ${model} برقرار نشد.`, 502);
   }
 
   if (!response.ok) {
@@ -486,10 +475,14 @@ async function callKayaModel(
       throw new ProviderError("کلید Kaya AI پذیرفته نشد؛ کلید را در پنل کایا بررسی یا کلید تازه بسازید.", 400);
     }
     if (status === 402) {
-      throw new ProviderError("اعتبار حساب Kaya AI کافی نیست؛ از پنل کایا اعتبار ریالی شارژ کنید.", 402);
+      // Retryable: another catalogue model may be covered by the same balance.
+      throw new ProviderError(
+        `مدل «${model}» برای این حساب در Kaya AI اعتبار ندارد (HTTP 402). مدل دیگری به‌طور خودکار انتخاب نمی‌شود؛ در پنل ادمین مدل دیگری برگزینید یا از پنل کایا اعتبار بگیرید.`,
+        402,
+      );
     }
     if (KAYA_FAILOVER_STATUSES.has(status)) {
-      throw new KayaRetryableError(
+      throw new ProviderError(
         `مدل ${model} در Kaya AI پاسخ نداد (HTTP ${status})${safe ? `: ${safe}` : "."}`,
         status >= 500 ? 502 : status,
       );
@@ -498,14 +491,14 @@ async function callKayaModel(
   }
 
   const payload = (await response.json().catch(() => null)) as Record<string, unknown> | null;
-  if (!payload) throw new KayaRetryableError(`پاسخ مدل ${model} در Kaya AI قابل خواندن نبود.`, 502);
+  if (!payload) throw new ProviderError(`پاسخ مدل ${model} در Kaya AI قابل خواندن نبود.`, 502);
 
   const choices = payload.choices as Array<{ message?: { content?: unknown }; finish_reason?: string }> | undefined;
   let outputText = extractTextContent(choices?.[0]?.message?.content).trim();
   if (!outputText) {
     // Reasoning models can spend every token on reasoning when max_tokens is low.
     const reason = choices?.[0]?.finish_reason;
-    throw new KayaRetryableError(
+    throw new ProviderError(
       `مدل ${model} نتیجهٔ قابل استفاده برنگرداند${reason ? ` (${reason})` : ""}.`,
       502,
     );
