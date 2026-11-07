@@ -15,6 +15,7 @@ import {
 } from "@/lib/server/question-import-schema";
 import { loadWorkspace } from "@/lib/server/workspace-store";
 import { providerErrorHttpStatus } from "@/lib/error-message";
+import { isAdminRole, teacherSafeError } from "@/lib/server/teacher-safe-error";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -99,7 +100,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ questions: draft.questions, warnings: draft.warnings, usage: response.usage });
   } catch (error) {
     if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.status });
-    if (error instanceof ProviderError) return NextResponse.json({ error: error.message }, { status: providerErrorHttpStatus(error.status) });
+    if (error instanceof ProviderError) {
+      // Same rule as grading: the vendor and model names stay with the administrator.
+      const safe = teacherSafeError(error);
+      const admin = await requireWorkspaceUser().then((current) => isAdminRole(current.role)).catch(() => false);
+      return NextResponse.json(
+        admin ? { error: error.message, teacherMessage: safe.error, code: safe.code } : { error: safe.error, code: safe.code },
+        { status: providerErrorHttpStatus(error.status) },
+      );
+    }
     if (error instanceof QuestionImportValidationError) return NextResponse.json({ error: error.message, issues: error.issues }, { status: error.status });
     if (error instanceof z.ZodError) return NextResponse.json({ error: "شناسهٔ آزمون یا فایل‌های سؤال و کلید معتبر نیست." }, { status: 400 });
     const message = error instanceof Error ? error.message : "خواندن سؤال و کلید کامل نشد.";

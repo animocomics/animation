@@ -13,6 +13,7 @@ import { loadWorkspace } from "@/lib/server/workspace-store";
 import type { AuthUser, GradeApiRequest, GradingResult, ProviderId } from "@/lib/types";
 import type { ProviderNetworkConfig } from "@/lib/api-network";
 import { providerErrorHttpStatus } from "@/lib/error-message";
+import { isAdminRole, teacherSafeError } from "@/lib/server/teacher-safe-error";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -155,7 +156,21 @@ export async function POST(request: Request) {
     const message = error instanceof Error ? error.message : "تصحیح برگه کامل نشد.";
     if (user) gradingInFlight.delete(`${user.id}:${input?.submissionId || input?.examId || ""}`);
     await recordJob("failed", usage, message);
-    if (error instanceof ProviderError) return NextResponse.json({ error: error.message }, { status: providerErrorHttpStatus(error.status) });
-    return NextResponse.json({ error: "تصحیح این برگه کامل نشد. اطلاعات شما ذخیره شده است؛ لطفاً دوباره تلاش کنید." }, { status: 500 });
+    if (error instanceof ProviderError) {
+      // The raw message names the vendor, the model and socket codes. It is stored
+      // on the job row for the administrator and never sent to a teacher.
+      const safe = teacherSafeError(error);
+      const body = isAdminRole(user?.role)
+        ? { error: error.message, teacherMessage: safe.error, code: safe.code, retryable: safe.retryable }
+        : { error: safe.error, code: safe.code, retryable: safe.retryable };
+      return NextResponse.json(body, { status: providerErrorHttpStatus(error.status) });
+    }
+    const safe = teacherSafeError(error);
+    return NextResponse.json(
+      isAdminRole(user?.role)
+        ? { error: error instanceof Error ? error.message : safe.error, teacherMessage: safe.error, code: safe.code, retryable: safe.retryable }
+        : { error: safe.error, code: safe.code, retryable: safe.retryable },
+      { status: 500 },
+    );
   }
 }

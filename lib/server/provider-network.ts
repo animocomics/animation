@@ -9,6 +9,7 @@ import { resolveShecanDot } from "./shecan-dot";
 import { resolveShecanDns5353 } from "./shecan-dns5353";
 import { fixedShecanIpv4Lookup } from "./shecan-sni";
 import { withProviderBudget } from "./provider-rate-limit";
+import { noteProviderOutcome, recordProviderFailure } from "./provider-failure-log";
 
 const PROVIDER_HOSTNAMES = new Set([
   "api.openai.com",
@@ -204,7 +205,25 @@ export async function providerFetch(
   // Every outbound provider call passes through this gate. A retry loop once sent
   // thousands of requests to one address and the hosting provider blocked the
   // subscription's whole egress, which then looked like a broken API key.
-  return withProviderBudget(hostname, () => providerFetchDirect(url, init, network, dns5353Resolver));
+  try {
+    const response = await withProviderBudget(hostname, () => providerFetchDirect(url, init, network, dns5353Resolver));
+    noteProviderOutcome(hostname, true);
+    return response;
+  } catch (error) {
+    const value = error as { code?: string; cause?: { code?: string }; message?: string; status?: number };
+    const code = value?.cause?.code || value?.code || (value?.status ? `HTTP_${value.status}` : "unknown");
+    noteProviderOutcome(hostname, false);
+    // Recorded for the administrator only; teachers never see this.
+    recordProviderFailure({
+      hostname,
+      model: "",
+      provider: hostname,
+      code: String(code),
+      detail: value?.message || String(error),
+      attempt: 1,
+    });
+    throw error;
+  }
 }
 
 async function providerFetchDirect(

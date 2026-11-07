@@ -36,6 +36,8 @@ export function ApiConnection() {
     egressConclusion: string;
     egress: Array<{ step: string; ok: boolean; detail: string; ms: number }>;
     host?: { verdict: string; lines: Array<{ label: string; value: string; ok: boolean | null; hint?: string }>; suggestions: string[] };
+    outboundUsage?: Array<{ hostname: string; used: number; limit: number; remaining: number; windowMinutes: number; active: number; breakerOpen: boolean; breakerMinutesLeft: number; nextSlotInSeconds: number; percentUsed: number }>;
+    recentFailures?: Array<{ at: string; hostname: string; provider: string; code: string; detail: string; model: string }>;
     rows: Array<{ label: string; hostname: string; step: string; ok: boolean; detail: string; ms: number }>;
   }>({ loading: false, conclusion: "", egressConclusion: "", egress: [], rows: [] });
 
@@ -68,6 +70,8 @@ export function ApiConnection() {
         error?: string;
         egressConclusion?: string;
         egress?: Array<{ step: string; ok: boolean; detail: string; ms: number }>;
+        outboundUsage?: Array<{ hostname: string; used: number; limit: number; remaining: number; windowMinutes: number; active: number; breakerOpen: boolean; breakerMinutesLeft: number; nextSlotInSeconds: number; percentUsed: number }>;
+        recentFailures?: Array<{ at: string; hostname: string; provider: string; code: string; detail: string; model: string }>;
         host?: { verdict: string; lines: Array<{ label: string; value: string; ok: boolean | null; hint?: string }>; suggestions: string[] };
         results?: Array<{ label: string; hostname: string; probes: Array<{ step: string; ok: boolean; detail: string; ms: number }> }>;
       }>(response, "تشخیص شبکه");
@@ -81,6 +85,8 @@ export function ApiConnection() {
         egressConclusion: payload.egressConclusion || "",
         egress: payload.egress || [],
         host: (payload as { host?: { verdict: string; lines: Array<{ label: string; value: string; ok: boolean | null; hint?: string }>; suggestions: string[] } }).host,
+        outboundUsage: (payload as { outboundUsage?: Array<{ hostname: string; used: number; limit: number; remaining: number; windowMinutes: number; active: number; breakerOpen: boolean; breakerMinutesLeft: number; nextSlotInSeconds: number; percentUsed: number }> }).outboundUsage,
+        recentFailures: (payload as { recentFailures?: Array<{ at: string; hostname: string; provider: string; code: string; detail: string; model: string }> }).recentFailures,
         rows,
       });
     } catch (error) {
@@ -201,6 +207,38 @@ export function ApiConnection() {
                     ))}
                   </div>
                 ) : null}
+              </div>
+            )}
+            <div dir="rtl" style={{ marginBottom: 8 }}>
+              <strong>مصرف درخواست خروجی (پنجرهٔ {diagnostics.outboundUsage?.[0]?.windowMinutes ?? 20} دقیقه‌ای):</strong>
+              {diagnostics.outboundUsage && diagnostics.outboundUsage.length > 0 ? (
+                <div style={{ marginTop: 4 }}>
+                  {diagnostics.outboundUsage.map((row) => (
+                    <div key={`budget-${row.hostname}`}>
+                      <span dir="ltr">{row.hostname}</span>: {faNumber(row.used)} از {faNumber(row.limit)}
+                      {" "}({faNumber(row.percentUsed)}٪) — باقی‌مانده {faNumber(row.remaining)}
+                      {row.active > 0 ? ` — ${faNumber(row.active)} در حال ارسال` : ""}
+                      {row.breakerOpen ? ` — متوقف تا ${faNumber(row.breakerMinutesLeft)} دقیقه` : ""}
+                      <span style={{ display: "inline-block", width: 90, height: 6, background: "#e5e7eb", borderRadius: 3, marginInlineStart: 6, verticalAlign: "middle" }}>
+                        <span style={{ display: "block", width: `${Math.min(100, row.percentUsed)}%`, height: 6, borderRadius: 3, background: row.percentUsed > 80 ? "#dc2626" : row.percentUsed > 50 ? "#f59e0b" : "#16a34a" }} />
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div>هنوز هیچ درخواست خروجی در این اجرا ثبت نشده است.</div>
+              )}
+            </div>
+            {diagnostics.recentFailures && diagnostics.recentFailures.length > 0 && (
+              <div dir="rtl" style={{ marginBottom: 8 }}>
+                <strong>آخرین خطاهای سرویس‌دهنده (فقط برای مدیر):</strong>
+                <div style={{ marginTop: 4 }}>
+                  {diagnostics.recentFailures.map((row) => (
+                    <div key={`${row.at}-${row.code}`} dir="ltr">
+                      {new Date(row.at).toLocaleTimeString("fa-IR")} · {row.hostname} · {row.code} · {row.detail}
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
             {diagnostics.egressConclusion && <p dir="rtl"><strong>{diagnostics.egressConclusion}</strong></p>}

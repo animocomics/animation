@@ -56,9 +56,21 @@ export interface RateLimitSnapshot {
   hostname: string;
   used: number;
   limit: number;
+  remaining: number;
+  windowMinutes: number;
   active: number;
   breakerOpen: boolean;
+  breakerMinutesLeft: number;
   failures: number;
+  /** When the oldest request in the window ages out and frees a slot. */
+  nextSlotInSeconds: number;
+  /** Requests used per whole window, so the operator can see the burn rate. */
+  percentUsed: number;
+}
+
+/** Every host that has been called, for the admin counter. */
+export function providerBudgetAll(): RateLimitSnapshot[] {
+  return providerBudgetSnapshot([...hosts.keys()]);
 }
 
 function prune(state: HostState, now: number): void {
@@ -131,13 +143,19 @@ export function providerBudgetSnapshot(hostnames: string[]): RateLimitSnapshot[]
   return hostnames.map((hostname) => {
     const state = stateFor(hostname);
     prune(state, now);
+    const used = state.hits.length;
     return {
       hostname,
-      used: state.hits.length,
+      used,
       limit: MAX_PER_WINDOW,
+      remaining: Math.max(0, MAX_PER_WINDOW - used),
+      windowMinutes: WINDOW_MS / 60_000,
       active: state.active,
       breakerOpen: state.openUntil > now,
+      breakerMinutesLeft: state.openUntil > now ? Math.ceil((state.openUntil - now) / 60_000) : 0,
       failures: state.failures,
+      nextSlotInSeconds: used > 0 ? Math.max(0, Math.round((state.hits[0] + WINDOW_MS - now) / 1000)) : 0,
+      percentUsed: Math.round((used / MAX_PER_WINDOW) * 100),
     };
   });
 }

@@ -3,7 +3,8 @@ import { AuthError, requireAdmin } from "@/lib/server/auth";
 import { getApiNetworkStatus } from "@/lib/server/api-network";
 import { inspectAddresses, addressConclusion } from "@/lib/server/network-probe";
 import { inspectHost } from "@/lib/server/host-network-inspect";
-import { providerBudgetSnapshot } from "@/lib/server/provider-rate-limit";
+import { providerBudgetAll, providerBudgetSnapshot } from "@/lib/server/provider-rate-limit";
+import { providerStreaks, recentProviderFailures } from "@/lib/server/provider-failure-log";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -264,7 +265,7 @@ export async function GET(request: Request) {
   return NextResponse.json({
     // Lets the operator confirm the deploy actually took effect: if this marker
     // is missing, the browser is talking to an older build.
-    diagnosticsVersion: "v11",
+    diagnosticsVersion: "v12",
     checkedAt: new Date().toISOString(),
     elapsedMs: Date.now() - startedAt,
     runtimeVersion: process.version,
@@ -273,6 +274,12 @@ export async function GET(request: Request) {
     // Shows the operator how much of the outbound allowance is used, so a block
     // caused by request volume can be recognised before it happens.
     providerBudget: providerBudgetSnapshot([...new Set(selected.map((target) => new URL(target.url).hostname))]),
+    // Every host called since the process started, so the operator can see the
+    // burn rate against the 20-minute window the hosting provider enforces.
+    outboundUsage: providerBudgetAll(),
+    // "It broke again" needs an answer that is not a guess.
+    recentFailures: recentProviderFailures().slice(0, 15),
+    providerStreaks: providerStreaks(),
     host,
     egress,
     egressConclusion,
