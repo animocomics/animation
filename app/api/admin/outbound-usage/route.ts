@@ -36,7 +36,7 @@ export async function GET() {
   const usage = providerBudgetAll();
   return NextResponse.json(
     {
-      version: "v16",
+      version: "v17",
       windowMinutes: PROVIDER_BUDGET.windowMs / 60_000,
       maxPerWindow: PROVIDER_BUDGET.maxPerWindow,
       maxConcurrency: PROVIDER_BUDGET.maxConcurrency,
