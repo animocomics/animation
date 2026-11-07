@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { AuthError, requireAdmin } from "@/lib/server/auth";
 import { getKayaEgress, saveKayaEgress } from "@/lib/server/kaya-egress-store";
+import { assertKayaHostAllowed } from "@/lib/server/kaya-egress";
 import { networkInterfaces } from "node:os";
 
 export const runtime = "nodejs";
@@ -75,6 +76,9 @@ export async function POST(request: Request) {
   try {
     const user = await requireAdmin();
     const input = schema.parse(await request.json());
+    // Refuse a plain-HTTP host off this machine before it is stored: the setting
+    // exists for a source address, not for pointing the application at a relay.
+    assertKayaHostAllowed(input);
     const saved = await saveKayaEgress(input, user.id);
     return NextResponse.json(saved);
   } catch (error) {

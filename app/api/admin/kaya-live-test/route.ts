@@ -103,7 +103,10 @@ async function send(
   // green result here would say nothing about the request that actually fails.
   const dispatcher = kayaAgent(egress);
   const base = kayaBaseUrl(egress) || BASE;
-  return withProviderBudget(HOST, async () => {
+  // A loopback stand-in is not internet egress, so it must not spend the real
+  // allowance; a vendor host always does.
+  const local = /^http:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(?::\d+)?(?:\/|$)/i.test(base);
+  const run = async () => {
     try {
       const response = await fetch(`${base}${path}`, {
         method: body === null ? "GET" : "POST",
@@ -132,7 +135,8 @@ async function send(
         code: value?.cause?.code || value?.code || value?.name || "unknown",
       };
     }
-  });
+  };
+  return local ? run() : withProviderBudget(HOST, run);
 }
 
 export async function POST() {

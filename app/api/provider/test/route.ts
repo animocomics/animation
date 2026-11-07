@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { AuthError, requireAdmin } from "@/lib/server/auth";
 import { getProviderConfig } from "@/lib/server/provider-config";
+import { kayaBaseUrl } from "@/lib/server/kaya-egress";
 import { providerFetch, ProviderNetworkError } from "@/lib/server/provider-network";
 import { providerResponseError } from "@/lib/server/provider-models";
 import { ProviderError } from "@/lib/server/providers";
@@ -21,8 +22,10 @@ export async function POST(request: Request) {
     await requireAdmin();
     const input = schema.parse(await request.json());
     let apiKey = input.apiKey?.trim() || "";
+    // Read the stored config even when a key is typed: it carries the Kaya host,
+    // which decides where this test is actually sent.
+    const stored = await getProviderConfig();
     if (!apiKey) {
-      const stored = await getProviderConfig();
       if (stored.provider !== input.provider) throw new ProviderError("برای آزمایش این سرویس، کلید همان سرویس را وارد کنید.", 400);
       apiKey = stored.apiKey;
     }
@@ -41,7 +44,10 @@ export async function POST(request: Request) {
               : input.provider === "deepseek"
                 ? "https://api.deepseek.com/models"
                 : input.provider === "kaya"
-                  ? "https://kayaai.ir/api/chat/completions"
+                  // Honour the configured Kaya host: when the operator points the
+                  // app at a local stand-in for validation, the test must reach the
+                  // same place a real grading request would.
+                  ? `${kayaBaseUrl(stored.egress)}/chat/completions`
                   : `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(input.model)}`;
     const testBody = isInkling
       ? {

@@ -1,12 +1,15 @@
 import type { ProviderId } from "../types";
 import { FALLBACK_MODEL_OPTIONS, mergeModelOptions, SUPPORTS_ACCOUNT_MODEL_DISCOVERY } from "../provider-catalog";
 import { providerFetch } from "./provider-network";
+import { kayaBaseUrl, type KayaEgressConfig } from "./kaya-egress";
 import { ProviderError } from "./providers";
 import { isJsonParserErrorMessage } from "../error-message";
 
 interface ProviderModelRequest {
   provider: ProviderId;
   apiKey: string;
+  /** Only Kaya honours this: it is where the request is actually sent. */
+  egress?: KayaEgressConfig;
 }
 
 interface ProviderModelRecord {
@@ -141,7 +144,9 @@ async function discoveryJson(url: string, input: ProviderModelRequest): Promise<
 /** Read current model IDs from the provider account; no model or key is saved. */
 export async function discoverProviderModels(input: ProviderModelRequest): Promise<string[]> {
   if (!SUPPORTS_ACCOUNT_MODEL_DISCOVERY[input.provider]) return [...FALLBACK_MODEL_OPTIONS[input.provider]];
-  const initialUrl = DISCOVERY_URLS[input.provider];
+  const initialUrl = input.provider === "kaya"
+    ? `${kayaBaseUrl(input.egress)}/chat/completions`
+    : DISCOVERY_URLS[input.provider];
   if (!initialUrl) return [...FALLBACK_MODEL_OPTIONS[input.provider]];
 
   const records: ProviderModelRecord[] = [];

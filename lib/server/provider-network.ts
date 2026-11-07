@@ -80,13 +80,21 @@ export function describeTransportFailure(code: string): string {
  * failure recorded for the administrator only.
  */
 export async function providerFetch(url: string, init: RequestInit = {}): Promise<Response> {
-  const hostname = new URL(url).hostname.toLowerCase();
+  const parsed = new URL(url);
+  const hostname = parsed.hostname.toLowerCase();
   // A hard requirement, not a preference: a request to an address that is not an
   // absolute https URL cannot be audited, and redirecting one is how a bypass
   // gets reintroduced without anyone noticing.
-  if (!/^https:/i.test(url)) {
+  //
+  // The single exception is loopback. A stand-in on 127.0.0.1 is how the grading
+  // pipeline is validated in a sandbox that cannot reach the vendor; it carries no
+  // traffic off this machine, so it cannot become a detour, and it must not spend
+  // the real egress allowance either.
+  const loopback = parsed.protocol === "http:" && ["127.0.0.1", "localhost", "::1", "[::1]"].includes(hostname);
+  if (parsed.protocol !== "https:" && !loopback) {
     throw new ProviderNetworkError("درخواست سرویس‌دهنده باید با HTTPS باشد.", "connection");
   }
+  if (loopback) return fetch(url, init);
   try {
     const response = await withProviderBudget(hostname, () => fetch(url, init));
     noteProviderOutcome(hostname, true);

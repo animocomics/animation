@@ -25,7 +25,8 @@
     "kaya:test": "node scripts/nomreh-kaya-test.cjs",
     "kaya:measure": "node scripts/nomreh-kaya-measure.cjs",
     "kaya:selftest": "node scripts/nomreh-kaya-test-selftest.cjs",
-    "kaya:egress": "node scripts/nomreh-kaya-egress-check.cjs"
+    "kaya:egress": "node scripts/nomreh-kaya-egress-check.cjs",
+    "kaya:stub": "node scripts/nomreh-kaya-stub.cjs"
   },
   "engines": {
     "node": ">=22.0.0"

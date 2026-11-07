@@ -20,13 +20,13 @@ export async function POST(request: Request) {
     await requireAdmin();
     const input = schema.parse(await request.json());
     let apiKey = input.apiKey || "";
+    const stored = await getProviderConfig();
     if (!apiKey) {
-      const stored = await getProviderConfig();
       if (stored.provider !== input.provider) throw new ProviderError("برای خواندن مدل‌های این سرویس، کلید همان سرویس را وارد کنید.", 400);
       apiKey = stored.apiKey;
     }
     if (apiKey.length < 12) throw new ProviderError("کلید API کوتاه‌تر از حد انتظار است.", 400);
-    const models = await discoverProviderModels({ provider: input.provider, apiKey });
+    const models = await discoverProviderModels({ provider: input.provider, apiKey, egress: input.provider === "kaya" ? stored.egress : undefined });
     return NextResponse.json({ models }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     if (error instanceof z.ZodError) return NextResponse.json({ error: "سرویس‌دهنده و کلید را بررسی کنید." }, { status: 400 });

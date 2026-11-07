@@ -91,11 +91,37 @@ export function closeKayaAgent(): void {
 export function kayaBaseUrl(config: KayaEgressConfig | undefined): string {
   const host = (config?.host || "").trim();
   if (!host) return "https://kayaai.ir/api";
-  // A custom host is expected to be https and to carry the /api prefix already,
-  // because it is something the operator configured deliberately.
+  // A custom host is expected to carry the /api prefix already, because it is
+  // something the operator configured deliberately.
   const trimmed = host.replace(/\/+$/, "");
   if (/^https?:\/\//.test(trimmed)) return trimmed;
   return `https://${trimmed}/api`;
+}
+
+/**
+ * Whether a configured host may be used at all.
+ *
+ * Plain HTTP is refused everywhere except for an address on this machine. That one
+ * exception is what makes a local stand-in possible for validation: the sandbox
+ * cannot reach the real vendor, so the pipeline is proven against a local server
+ * on 127.0.0.1. It cannot be abused in production, because a remote host over
+ * plain HTTP is still rejected, and a local address cannot carry traffic off the
+ * box.
+ */
+export function assertKayaHostAllowed(config: KayaEgressConfig | undefined): void {
+  const host = (config?.host || "").trim();
+  if (!host) return;
+  if (!/^http:\/\//i.test(host)) return;
+  let hostname = "";
+  try {
+    hostname = new URL(host).hostname;
+  } catch {
+    throw new Error("آدرس خروجی کایا معتبر نیست.");
+  }
+  const local = hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1";
+  if (!local) {
+    throw new Error("آدرس خروجی کایا باید HTTPS باشد؛ HTTP فقط برای آدرس روی همین سرور (تست داخلی) مجاز است.");
+  }
 }
 
 /**

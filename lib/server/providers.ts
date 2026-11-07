@@ -4,7 +4,7 @@ import { QUESTION_IMPORT_SYSTEM_INSTRUCTIONS, questionImportJsonSchema, question
 import type { GradeApiRequest, ProviderId } from "../types";
 import { RECOMMENDED_MODELS } from "../provider-catalog";
 import { providerFetch, ProviderNetworkError } from "./provider-network";
-import { describeEgressFailure, kayaAgent, kayaBaseUrl, type KayaEgressConfig } from "./kaya-egress";
+import { assertKayaHostAllowed, describeEgressFailure, kayaAgent, kayaBaseUrl, type KayaEgressConfig } from "./kaya-egress";
 import { isJsonParserErrorMessage } from "../error-message";
 
 export const DEFAULT_MODELS: Record<ProviderId, string> = RECOMMENDED_MODELS;
@@ -98,11 +98,27 @@ function friendlyProviderError(status: number, provider: string, rawMessage?: st
   return new ProviderError(`سرویس ${provider} موقتاً پاسخ نداد. برگه ذخیره شده و می‌توانید دوباره تلاش کنید.`, 502);
 }
 
-async function fetchWithTimeout(url: string, init: RequestInit, timeout = 240_000): Promise<Response> {
+/** True when the configured Kaya host is on this machine (a validation stand-in). */
+function isLocalKayaHost(egress: KayaEgressConfig | undefined): boolean {
+  const host = (egress?.host || "").trim();
+  if (!/^http:\/\//i.test(host)) return false;
+  try {
+    const hostname = new URL(host).hostname;
+    return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1";
+  } catch {
+    return false;
+  }
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit, local = false, timeout = 240_000): Promise<Response> {
   let lastError: unknown;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      const response = await providerFetch(url, { ...init, signal: AbortSignal.timeout(timeout), cache: "no-store" });
+      // A loopback stand-in consumes no host egress, so it must not consume the
+      // 120-per-20-minute allowance that protects the real one either.
+      const response = local
+        ? await fetch(url, { ...init, signal: AbortSignal.timeout(timeout), cache: "no-store" })
+        : await providerFetch(url, { ...init, signal: AbortSignal.timeout(timeout), cache: "no-store" });
       if (attempt === 0 && [429, 500, 502, 503, 504].includes(response.status)) {
         await response.arrayBuffer();
         await new Promise((resolve) => setTimeout(resolve, 900));
@@ -443,6 +459,9 @@ async function callKayaModel(
   let response: Response;
   // The egress setting picks the source address Kaya sees, which is the only
   // lever we have when Kaya drops this server's default egress address.
+  // A custom host is checked first: a plain-HTTP address off this machine is
+  // refused outright, so a "local stub" setting cannot turn into a real detour.
+  assertKayaHostAllowed(input.egress);
   const baseUrl = kayaBaseUrl(input.egress) || KAYA_BASE_URL;
   const egressAgent = kayaAgent(input.egress);
   try {
@@ -461,7 +480,7 @@ async function callKayaModel(
         stream: false,
       }),
       ...(egressAgent ? { dispatcher: egressAgent } : {}),
-    } as RequestInit);
+    } as RequestInit, isLocalKayaHost(input.egress));
   } catch (error) {
     // A wrong source address is an operator mistake, and saying so is the
     // difference between a five-minute fix and another day of guessing.

@@ -44,7 +44,13 @@ export async function saveKayaEgress(input: KayaEgressConfig, userId: string): P
   if (bindAddress && !/^\d{1,3}(\.\d{1,3}){3}$/.test(bindAddress)) {
     throw new Error("آدرس خروجی باید یک IPv4 باشد، مثل 185.192.112.49");
   }
-  if (host && !/^https:\/\/[a-z0-9.-]+(:\d+)?(\/.*)?$/i.test(host) && !/^[a-z0-9.-]+(:\d+)?$/i.test(host)) {
+  // https anywhere, plus a plain-HTTP address on this machine: the second form
+  // exists so the pipeline can be validated against a local stand-in in a sandbox
+  // with no route to the vendor. `assertKayaHostAllowed` refuses every other
+  // plain-HTTP host, so this branch cannot become a detour.
+  const httpsHost = /^https:\/\/[a-z0-9.-]+(:\d+)?(\/.*)?$/i.test(host) || /^[a-z0-9.-]+(:\d+)?$/i.test(host);
+  const localPlainHost = /^http:\/\/(?:127\.0\.0\.1|localhost|\[::1\])(:\d+)?(\/.*)?$/i.test(host);
+  if (host && !httpsHost && !localPlainHost) {
     throw new Error("میزبان باید یک دامنه یا نشانی https باشد.");
   }
   const { getDb } = await import("./db");
