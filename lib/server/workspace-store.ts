@@ -1,11 +1,17 @@
 import { z } from "zod";
 import type { WorkspaceData } from "@/lib/types";
+import { PROVIDER_IDS } from "@/lib/provider-catalog";
 
 const workspaceSchema = z.object({
   exams: z.array(z.unknown()).max(5000),
   classes: z.array(z.unknown()).max(2000),
   settings: z.object({
-    provider: z.enum(["openai", "gemini", "deepseek", "zai", "minimax", "inkling", "mistral", "kaya"]),
+    // Must be the shared list, not a copy. This exact line was the last stale
+    // allow-list: the client attaches the *active* provider to every workspace save,
+    // so selecting a provider that this enum did not know made every save return
+    // 400 — the draft was never written, and the next step then reported the exam as
+    // missing. A symptom in one place, the cause in another.
+    provider: z.enum(PROVIDER_IDS),
     model: z.string().max(120),
     gradingMode: z.enum(["fast", "balanced", "precise"]),
     reviewThreshold: z.number().min(0).max(1),

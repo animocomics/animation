@@ -237,7 +237,14 @@ export function GradingWizard() {
     const nextExams = exams.some((exam) => exam.id === nextExam.id) ? exams.map((exam) => exam.id === nextExam.id ? nextExam : exam) : [nextExam, ...exams];
     saveExam(nextExam);
     setDirty(false);
-    await syncWorkspace({ exams: nextExams, classes, settings: { ...workspaceSettings, provider: providerStatus.provider, model: providerStatus.model } });
+    const saved = await syncWorkspace({ exams: nextExams, classes, settings: { ...workspaceSettings, provider: providerStatus.provider, model: providerStatus.model } });
+    if (!saved.ok) {
+      // Stop here rather than sending the import. The server checks that the exam is
+      // in the saved workspace, so continuing would fail with "this exam was not
+      // found" — which blames the exam for a write that never happened. Throw the
+      // real reason so the importer's own message says what actually broke.
+      throw new Error(saved.error || "پیش‌نویس روی سرور ذخیره نشد؛ بدون ذخیره، خواندن سؤال و کلید انجام نمی‌شود.");
+    }
   };
 
   const eligibleSubmissions = useMemo(() => draft.submissions.filter((submission) => submission.files.length > 0 && submission.status !== "approved"), [draft.submissions]);
@@ -250,7 +257,13 @@ export function GradingWizard() {
       notify({ title: "سرویس تصحیح فعال نیست", description: user.role === "admin" ? "از بخش مدیریت سامانه، اتصال مدل را پیکربندی کنید." : "برای فعال‌کردن اتصال مدل با مدیر سامانه هماهنگ کنید.", variant: "error" });
       return;
     }
-    await syncWorkspace();
+    // The grade endpoint refuses an exam it cannot find in the saved workspace, so a
+    // failed save here would fail every sheet in the run with a misleading 403.
+    const saved = await syncWorkspace();
+    if (!saved.ok) {
+      notify({ title: "ذخیرهٔ آزمون انجام نشد", description: saved.error || "پیش از تصحیح، آزمون باید روی سرور ذخیره شود.", variant: "error" });
+      return;
+    }
     if (!selectedSubmissions.length) {
       notify({ title: "برگه‌ای برای تصحیح انتخاب نشده", variant: "error" });
       return;

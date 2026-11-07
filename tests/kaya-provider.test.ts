@@ -55,6 +55,27 @@ test("every provider in the table is accepted by every admin surface", () => {
     assert.doesNotMatch(body, /z\.enum\(\[/, `${file} must not carry its own copy of the provider list`);
   }
 
+  // No file anywhere may carry its own provider list. The three routes above were
+  // the ones I knew about; a fourth copy in workspace-store was not, and it rejected
+  // every workspace save once a provider outside its list was selected. This scans
+  // the whole source tree so the next copy is caught without anyone remembering it.
+  const offenders: string[] = [];
+  const walk = (directory: string) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
+      const absolute = path.join(directory, entry.name);
+      if (entry.isDirectory()) { walk(absolute); continue; }
+      if (!/\.(ts|tsx)$/.test(entry.name)) continue;
+      const body = fs.readFileSync(absolute, "utf8");
+      // A literal array of provider ids is the fingerprint of a stale copy.
+      if (/\[\s*"openai"\s*,\s*"gemini"/.test(body)) offenders.push(path.relative(root, absolute));
+    }
+  };
+  walk(path.join(root, "lib"));
+  walk(path.join(root, "app"));
+  walk(path.join(root, "components"));
+  assert.deepEqual(offenders, [], `these files carry their own provider list instead of using PROVIDER_IDS: ${offenders.join(", ")}`);
+
   // provider-config validates the same table, not a hand-written allow-list.
   const config = fs.readFileSync(path.join(root, "lib", "server", "provider-config.ts"), "utf8");
   assert.match(config, /Object\.keys\(PROVIDER_TRAITS\)/, "provider-config must derive its allow-list from the trait table");

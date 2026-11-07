@@ -26,7 +26,7 @@ interface AppContextValue {
   deleteClass: (classId: string) => void;
   updateSubmission: (examId: string, submissionId: string, update: Partial<Submission>) => void;
   saveSettings: (settings: WorkspaceSettings) => void;
-  syncWorkspace: (data?: WorkspaceData) => Promise<void>;
+  syncWorkspace: (data?: WorkspaceData) => Promise<{ ok: boolean; error?: string }>;
   refreshProviderStatus: () => Promise<void>;
   notify: (toast: Omit<ToastMessage, "id">) => void;
   dismissToast: (id: string) => void;
@@ -87,8 +87,18 @@ export function AppProvider({ children, initialUser, initialProvider }: { childr
     window.setTimeout(() => setToasts((current) => current.filter((item) => item.id !== id)), 5000);
   }, []);
 
-  const persist = useCallback((data: WorkspaceData, expectedRevision?: number) => {
-    if (initialUser.role === "admin") return saveChain.current;
+  /**
+   * Saves the workspace and reports whether it actually saved.
+   *
+   * It used to swallow every failure and still resolve, so a caller that needed the
+   * save to succeed — the question importer, which must persist a draft before the
+   * server will accept the exam — carried on after a failed write. The next request
+   * then failed with "this exam was not found in your workspace", which described
+   * the symptom and hid the cause.
+   */
+  const persist = useCallback((data: WorkspaceData, expectedRevision?: number): Promise<{ ok: boolean; error?: string }> => {
+    if (initialUser.role === "admin") return Promise.resolve({ ok: true });
+    let outcome: { ok: boolean; error?: string } = { ok: false, error: "ذخیرهٔ فضای کاری انجام نشد." };
     saveChain.current = saveChain.current.then(async () => {
       setSaveState("saving");
       try {
@@ -104,15 +114,18 @@ export function AppProvider({ children, initialUser, initialProvider }: { childr
         }
         revision.current = payload.revision ?? revision.current;
         setSaveState("saved");
+        outcome = { ok: true };
       } catch (error) {
         setSaveState("error");
+        outcome = { ok: false, error: error instanceof Error ? error.message : "ذخیرهٔ فضای کاری ناموفق بود." };
         if (!conflictNotified.current) {
           conflictNotified.current = true;
-          notify({ title: "ذخیرهٔ خودکار نیازمند توجه است", description: error instanceof Error ? error.message : "اتصال را بررسی کنید.", variant: "error" });
+          notify({ title: "ذخیرهٔ خودکار نیازمند توجه است", description: outcome.error, variant: "error" });
         }
       }
     });
-    return saveChain.current;
+    // Resolve with this call's own result, after the chain entry that produced it.
+    return saveChain.current.then(() => outcome);
   }, [initialUser.role, notify]);
 
   useEffect(() => {
@@ -188,9 +201,10 @@ export function AppProvider({ children, initialUser, initialProvider }: { childr
     }));
   }, []);
   const saveSettings = useCallback((nextSettings: WorkspaceSettings) => setSettings({ ...nextSettings, provider: providerStatus.provider, model: providerStatus.model }), [providerStatus.model, providerStatus.provider]);
-  const syncWorkspace = useCallback(async (data?: WorkspaceData) => {
+  const syncWorkspace = useCallback(async (data?: WorkspaceData): Promise<{ ok: boolean; error?: string }> => {
     const payload = data ?? latestData.current;
-    if (payload) await persist(payload);
+    if (!payload) return { ok: true };
+    return persist(payload);
   }, [persist]);
   const refreshProviderStatus = useCallback(async () => {
     const response = await fetch("/api/provider", { cache: "no-store" });
