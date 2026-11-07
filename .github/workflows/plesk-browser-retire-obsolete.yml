@@ -3,7 +3,7 @@ name: Plesk Nomreh obsolete artifact retirement
 on:
   push:
     branches:
-      - arena/f4b832aa-animation
+      - main
     paths:
       - .github/workflows/plesk-browser-retire-obsolete.yml
   workflow_dispatch:

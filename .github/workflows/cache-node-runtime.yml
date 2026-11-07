@@ -3,7 +3,7 @@ name: Cache verified legacy Node runtime
 on:
   push:
     branches:
-      - arena/f4b832aa-animation
+      - main
     paths:
       - .github/workflows/cache-node-runtime.yml
   workflow_dispatch:
@@ -13,13 +13,13 @@ permissions:
 
 jobs:
   cache-runtime:
-    if: github.repository == 'animocomics/animation' && github.ref == 'refs/heads/arena/f4b832aa-animation'
+    if: github.repository == 'animocomics/animation' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - name: Check out the deployment branch
         uses: actions/checkout@v4
         with:
-          ref: arena/f4b832aa-animation
+          ref: main
 
       - name: Download and verify the Node.js community glibc-2.17 build
         env:
@@ -48,4 +48,4 @@ jobs:
             exit 0
           fi
           git commit -m 'Cache verified legacy Node runtime'
-          git push origin HEAD:arena/f4b832aa-animation
+          git push origin HEAD:main

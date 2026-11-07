@@ -7,7 +7,7 @@ name: Plesk Nomreh safe deployment-archive cleanup
 on:
   push:
     branches:
-      - arena/f4b832aa-animation
+      - main
     paths:
       - .github/workflows/plesk-browser-cleanup-deploy-archives.yml
   workflow_dispatch:

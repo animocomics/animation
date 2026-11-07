@@ -7,7 +7,7 @@ name: Plesk Nomreh archive extraction
 on:
   push:
     branches:
-      - arena/f4b832aa-animation
+      - main
     paths:
       - .github/workflows/plesk-browser-extract.yml
   workflow_dispatch:

@@ -3,7 +3,7 @@ name: Deploy to Plesk
 on:
   push:
     branches:
-      - arena/f4b832aa-animation
+      - main
   workflow_dispatch:
 
 permissions:

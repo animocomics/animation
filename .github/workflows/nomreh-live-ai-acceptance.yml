@@ -4,7 +4,7 @@ name: Nomreh live AI acceptance
 
 on:
   push:
-    branches: [arena/f4b832aa-animation]
+    branches: [main]
     paths:
       - scripts/nomreh-live-ai-acceptance.cjs
       - scripts/fixtures/persian-handwriting-test.png

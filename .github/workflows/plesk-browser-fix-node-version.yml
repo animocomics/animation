@@ -3,7 +3,7 @@ name: Plesk Nomreh Node override fix
 on:
   push:
     branches:
-      - arena/f4b832aa-animation
+      - main
     paths:
       - .github/workflows/plesk-browser-fix-node-version.yml
   workflow_dispatch:

@@ -3,7 +3,7 @@ name: Plesk Nomreh production build
 on:
   push:
     branches:
-      - arena/f4b832aa-animation
+      - main
     paths:
       - .github/workflows/plesk-browser-build.yml
   workflow_dispatch:

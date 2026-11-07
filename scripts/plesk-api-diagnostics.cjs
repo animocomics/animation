@@ -7,7 +7,7 @@ const path = require("node:path");
 const https = require("node:https");
 const dns = require("node:dns").promises;
 
-const DOMAIN = "nomreh.arounidea.com";
+const DOMAIN = process.env.NOMREH_DOMAIN || "";
 const OUTPUT = process.env.PLESK_DIAGNOSTICS_OUTPUT || path.join(os.tmpdir(), "nomreh-plesk-diagnostics.md");
 const MAX_RESPONSE = 1024 * 1024;
 

@@ -5,7 +5,7 @@ const fs = require("node:fs");
 const dns = require("node:dns").promises;
 const https = require("node:https");
 
-const ORIGIN = "https://nomreh.arounidea.com";
+const ORIGIN = (process.env.NOMREH_ORIGIN || "https://example.com").replace(/\/$/, "");
 const OUTPUT = process.env.NOMREH_LIVE_OUTPUT || "";
 const lines = ["# Nomreh independent live HTTPS validation", "", "No Plesk session, application credentials, or certificate bypass is used.", ""];
 const failures = [];
@@ -87,7 +87,7 @@ function validateLogin(result, label) {
 async function main() {
   lines.push("## Public application responses", "");
   try {
-    const addresses = await dns.lookup("nomreh.arounidea.com", { all: true, verbatim: true });
+    const addresses = await dns.lookup(new URL(ORIGIN).hostname, { all: true, verbatim: true });
     lines.push(`- Public DNS addresses: ${addresses.map((entry) => `IPv${entry.family} ${entry.address}`).join(", ")}`);
     lines.push("- HTTPS validation uses the public IPv4 route with normal certificate verification.");
   } catch (error) {

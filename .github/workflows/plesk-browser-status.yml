@@ -3,7 +3,7 @@ name: Plesk Nomreh read-only status
 on:
   push:
     branches:
-      - arena/f4b832aa-animation
+      - main
     paths:
       - .github/workflows/plesk-browser-status.yml
       - scripts/plesk-browser-diagnostics.cjs

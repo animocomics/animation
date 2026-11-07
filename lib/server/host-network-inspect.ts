@@ -93,7 +93,7 @@ export async function inspectHost(): Promise<HostInspection> {
   // Match the command name only. Matching the whole command line flagged our own
   // application, whose paths contain "official", and produced a false "VPN is
   // running" verdict for a host with no VPN at all.
-  const OWN_PATHS = /(nomreh-vm|nomreh-data|nomreh\.arounidea\.com|next-server)/;
+  const OWN_PATHS = /(nomreh-vm|nomreh-data|next-server|server\.js)/;
   const processes = psOut.ok
     ? psOut.stdout
         .split("\n")

@@ -3,7 +3,7 @@ name: Verify legacy Plesk build
 on:
   push:
     branches:
-      - arena/f4b832aa-animation
+      - main
     paths:
       - .github/workflows/legacy-build.yml
       - next.config.mjs

@@ -3,7 +3,7 @@ name: Plesk read-only diagnostics
 on:
   push:
     branches:
-      - arena/f4b832aa-animation
+      - main
     paths:
       - .github/workflows/plesk-diagnostics.yml
       - scripts/plesk-api-diagnostics.cjs

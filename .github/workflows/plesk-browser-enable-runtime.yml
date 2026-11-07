@@ -3,7 +3,7 @@ name: Plesk Nomreh Passenger enablement
 on:
   push:
     branches:
-      - arena/f4b832aa-animation
+      - main
     paths:
       - .github/workflows/plesk-browser-enable-runtime.yml
   workflow_dispatch:

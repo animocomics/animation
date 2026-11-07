@@ -56,7 +56,7 @@ test("Plesk bootstrap pins Node 22 and delegates both build and production start
   assert.match(cacheWorkflow, new RegExp(`NODE_VERSION: ${version}`));
   assert.match(cacheWorkflow, new RegExp(`EXPECTED_SHA256: ${sha256}`));
   assert.match(cacheWorkflow, new RegExp(`EXPECTED_SIZE: ${archiveSize}`));
-  assert.match(cacheWorkflow, /git push origin HEAD:arena\/f4b832aa-animation/);
+  assert.match(cacheWorkflow, /git push origin HEAD:main/);
   assert.match(launcher, /Using the verified Node runtime archive bundled in the GitHub deployment/);
   assert.match(launcher, /cdn\.npmmirror\.com/);
   assert.match(launcher, /unofficial-builds\.nodejs\.org/);

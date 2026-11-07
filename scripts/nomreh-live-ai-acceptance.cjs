@@ -5,7 +5,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { request } = require("playwright");
 
-const ORIGIN = "https://nomreh.arounidea.com";
+const ORIGIN = (process.env.NOMREH_ORIGIN || "https://example.com").replace(/\/$/, "");
 const OUTPUT = process.env.NOMREH_AI_ACCEPTANCE_OUTPUT || "";
 const RUN_HANDWRITING = process.env.NOMREH_RUN_HANDWRITING === "1";
 const SKIP_PROVIDER_TEST = process.env.NOMREH_SKIP_PROVIDER_TEST === "1";

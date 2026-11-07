@@ -129,7 +129,8 @@ function healthCheck() {
       hostname: HOST,
       port: PORT,
       path: "/login",
-      headers: { Host: "nomreh.arounidea.com" },
+      // Any Host is accepted by Next; the old subdomain is not assumed.
+      headers: { Host: process.env.NOMREH_HOST_HEADER || "localhost" },
       timeout: 2500,
     }, (response) => {
       response.resume();

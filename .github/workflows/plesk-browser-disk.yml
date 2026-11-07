@@ -8,7 +8,7 @@ name: Plesk Nomreh read-only disk report
 on:
   push:
     branches:
-      - arena/f4b832aa-animation
+      - main
     paths:
       - .github/workflows/plesk-browser-disk.yml
       - scripts/plesk-space.cjs

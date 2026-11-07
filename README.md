@@ -148,28 +148,31 @@ data/
 
 اگر سرویس‌دهنده این سرور را نپذیرد، کد نمی‌تواند آن را باز کند: «تشخیص شبکه» نشان می‌دهد مقصد پاسخ نمی‌دهد و این را باید هاستینگ یا خود سرویس‌دهنده حل کند. متن آمادهٔ نامه در `docs/kaya-block-diagnosis-fa.md` است.
 
-## استقرار روی Plesk
+## استقرار روی Plesk (ساب‌دامین جدید)
 
-این نسخه برای اجرا روی ساب‌دامین `nomreh.arounidea.com` و از مخزن خصوصی GitHub آماده است. Plesk با **Remote repository** و HTTPS/Fine-grained Token فقط از شاخهٔ `arena/f4b832aa-animation` Pull می‌کند و Webhook همان مخزن، Pull و Deployment خودکار را انجام می‌دهد. Workflow قدیمی GitHub Actions برای این مسیر لازم نیست و باید غیرفعال بماند تا دو Deploy هم‌زمان انجام نشود.
+هیچ نام دامنه‌ای در کد ثابت نیست. مسیر پیشنهادی برای این نسخه:
 
-تنظیم اپ Node.js همان ساب‌دامین:
-
-- **Application Root:** همان Deployment directory، یعنی `/nomreh.arounidea.com`؛
-- **Document Root:** `/nomreh.arounidea.com/public`؛
-- **Application Startup File:** `server.js`؛
-- **Application Mode:** `production` و Package Manager برابر `npm`؛
-- **NOMREH_DATA_DIR:** مقدار پیشنهادی `../nomreh-data`، بیرون از Document Root و Deployment directory؛
-- رمزهای امنیتی فقط در Environment همان اپ و بدون ارسال به Git نگهداری شوند.
-
-پس از Pull، یک بار `npm run build:plesk` را از **Run Node.js commands / Run script** اجرا کنید و بعد از موفقیت، **Enable Node.js / Restart App** را بزنید. NPM Install جداگانه لازم نیست. برای Build و Restart خودکار در Deploymentهای بعدی، Post-deployment actions را فقط با این دستورها تنظیم کنید:
+1. در Plesk ساب‌دامین جدید بسازید (مثلاً `app.example.com`) و برایش **Node.js** را فعال کنید.
+2. در **Application Root** فایل‌های همین مخزن (یا محتوای `nomreh-direct-v25.zip`) را بگذارید.
+3. تنظیمات اپ:
+   - **Application Root:** پوشهٔ همان ساب‌دامین
+   - **Document Root:** `<Application Root>/public`
+   - **Application Startup File:** `server.js`
+   - **Application Mode:** `production` — Package Manager: `npm`
+   - **NOMREH_DATA_DIR:** `../nomreh-data` (بیرون از Document Root)
+4. از **Run Node.js commands** این سه دستور، به همین ترتیب:
 
 ```sh
+npm run setup:plesk
 npm run build:plesk
-mkdir -p tmp
-touch tmp/restart.txt
+npm run restart:plesk
 ```
 
-فهرست داده و راز رمزنگاری را در Backup هاست نگه دارید. `runtime/` داخل فهرست داده قابل بازسازی است و Build هیچ دیتابیس، Upload یا Workspaceای را پاک نمی‌کند. هیچ سرویس ابری یا پیکربندی جداگانه‌ای لازم نیست.
+5. کلیدها و رمزها فقط در Environment همان اپ یا فایل `data/.provider-secret` روی هاست می‌مانند؛ نه در Git و نه در بستهٔ نصبی.
+
+برای دیباگ، `NOMREH_ORIGIN` و `NOMREH_DOMAIN` را در Environment بگذارید تا اسکریپت‌های تشخیصی به همان ساب‌دامین اشاره کنند (پیش‌فرض: `NOMREH_ORIGIN=https://example.com`).
+
+اگر فقط فایل‌های `.next` عوض شده‌اند، `npm run restart:plesk` کافی است. `npm run build` ساده روی هاست ممکن است به‌خاطر Node 17 شکست بخورد — روی هاست همیشه `build:plesk`.
 
 ## مسیر استفادهٔ واقعی
 

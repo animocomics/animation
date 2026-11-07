@@ -3,7 +3,7 @@ name: Plesk Nomreh package launcher update
 on:
   push:
     branches:
-      - arena/f4b832aa-animation
+      - main
     paths:
       - .github/workflows/plesk-browser-update-package.yml
   workflow_dispatch:

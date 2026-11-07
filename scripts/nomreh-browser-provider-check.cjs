@@ -3,7 +3,7 @@
 
 const fs = require("node:fs");
 const { chromium } = require("playwright");
-const ORIGIN = "https://nomreh.arounidea.com";
+const ORIGIN = (process.env.NOMREH_ORIGIN || "https://example.com").replace(/\/$/, "");
 const OUTPUT = process.env.NOMREH_BROWSER_PROVIDER_OUTPUT || "";
 const lines = ["# Nomreh real-browser provider check", "", "Read-only provider diagnostics from a real Chromium page. No API key, cookie, account secret, or provider response body is printed.", ""];
 let browser;

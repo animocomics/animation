@@ -3,7 +3,7 @@ name: Plesk Nomreh TypeScript config update
 on:
   push:
     branches:
-      - arena/f4b832aa-animation
+      - main
     paths:
       - .github/workflows/plesk-browser-update-tsconfig.yml
   workflow_dispatch:

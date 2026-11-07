@@ -3,7 +3,7 @@ name: Plesk Nomreh Passenger restart
 on:
   push:
     branches:
-      - arena/f4b832aa-animation
+      - main
     paths:
       - .github/workflows/plesk-browser-restart-runtime.yml
   workflow_dispatch:
