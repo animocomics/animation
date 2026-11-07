@@ -5,6 +5,7 @@ import type { GradeApiRequest, ProviderId } from "../types";
 import type { ProviderNetworkConfig } from "../api-network";
 import { RECOMMENDED_MODELS } from "../provider-catalog";
 import { providerFetch, ProviderNetworkError } from "./provider-network";
+import { describeEgressFailure, kayaAgent, kayaBaseUrl, type KayaEgressConfig } from "./kaya-egress";
 import { isJsonParserErrorMessage } from "../error-message";
 
 export const DEFAULT_MODELS: Record<ProviderId, string> = RECOMMENDED_MODELS;
@@ -30,6 +31,8 @@ interface ProviderCallInput {
   files: GradeApiRequest["files"];
   task?: ProviderTask;
   network?: ProviderNetworkConfig;
+  /** Source address and host override for the Kaya request only. */
+  egress?: KayaEgressConfig;
 }
 
 interface ProviderCallResult<T = ModelResult | QuestionImportResult | AnswerKeyImportResult> {
@@ -440,8 +443,12 @@ async function callKayaModel(
   usedFallback: boolean,
 ): Promise<ProviderCallResult> {
   let response: Response;
+  // The egress setting picks the source address Kaya sees, which is the only
+  // lever we have when Kaya drops this server's default egress address.
+  const baseUrl = kayaBaseUrl(input.egress) || KAYA_BASE_URL;
+  const egressAgent = kayaAgent(input.egress);
   try {
-    response = await fetchWithTimeout(`${KAYA_BASE_URL}/chat/completions`, {
+    response = await fetchWithTimeout(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: { Authorization: `Bearer ${input.apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -455,10 +462,15 @@ async function callKayaModel(
         temperature: 0.2,
         stream: false,
       }),
-    }, input.network);
+      ...(egressAgent ? { dispatcher: egressAgent } : {}),
+    } as RequestInit, input.network);
   } catch (error) {
-    // Transport failures are reusable with another catalogue model.
-    throw new ProviderError(`ارتباط با Kaya AI برای مدل ${model} برقرار نشد.`, 502);
+    // A wrong source address is an operator mistake, and saying so is the
+    // difference between a five-minute fix and another day of guessing.
+    const code = (error as { cause?: { code?: string }; code?: string })?.cause?.code || (error as { code?: string })?.code || "";
+    const explained = describeEgressFailure(String(code), input.egress);
+    if (explained) throw new ProviderError(explained, 400);
+    throw new ProviderError(`ارتباط با Kaya AI برای مدل ${model} برقرار نشد${code ? ` (${code})` : ""}.`, 502);
   }
 
   if (!response.ok) {

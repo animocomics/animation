@@ -58,6 +58,65 @@ export function ApiConnection() {
    * closed? It is deliberately manual and one press at a time, because every step
    * spends a slot of the 20-minute outbound budget.
    */
+  /**
+   * The source address Kaya sees. Kaya's firewall drops this server's default
+   * egress, so choosing another local address is the only in-app way to make it
+   * work directly. The panel asks the server which addresses actually exist here,
+   * because a made-up one fails every request.
+   */
+  const [egress, setEgress] = useState<{
+    bindAddress: string;
+    host: string;
+    localAddresses: string[];
+    addressMissing: boolean;
+    loading: boolean;
+    saving: boolean;
+    message: string;
+    error: string;
+  }>({ bindAddress: "", host: "", localAddresses: [], addressMissing: false, loading: true, saving: false, message: "", error: "" });
+
+  async function loadEgress() {
+    try {
+      const response = await fetch("/api/admin/kaya-egress", { cache: "no-store" });
+      if (!response.ok) return;
+      const payload = (await response.json()) as {
+        bindAddress?: string;
+        host?: string;
+        localAddresses?: string[];
+        addressMissing?: boolean;
+      };
+      setEgress((current) => ({
+        ...current,
+        bindAddress: payload.bindAddress || "",
+        host: payload.host || "",
+        localAddresses: payload.localAddresses || [],
+        addressMissing: Boolean(payload.addressMissing),
+        loading: false,
+      }));
+    } catch {
+      setEgress((current) => ({ ...current, loading: false }));
+    }
+  }
+
+  async function saveEgress() {
+    setEgress((current) => ({ ...current, saving: true, message: "", error: "" }));
+    try {
+      const response = await fetch("/api/admin/kaya-egress", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ bindAddress: egress.bindAddress.trim(), host: egress.host.trim() }),
+      });
+      const payload = (await response.json()) as { error?: string; addressMissing?: boolean };
+      if (!response.ok) throw new Error(payload.error || "ذخیره ناموفق بود.");
+      setEgress((current) => ({ ...current, saving: false, message: "ذخیره شد. حالا «آزمون واقعی کایا» را بزنید.", addressMissing: Boolean(payload.addressMissing) }));
+      // Re-test with the new path immediately: the point is to learn whether Kaya
+      // now accepts us, not to leave the operator guessing.
+      void runDeepTest();
+    } catch (error) {
+      setEgress((current) => ({ ...current, saving: false, error: error instanceof Error ? error.message : "ذخیره ناموفق بود." }));
+    }
+  }
+
   const [deepTest, setDeepTest] = useState<{
     running: boolean;
     conclusion: string;
@@ -137,6 +196,7 @@ export function ApiConnection() {
       }
     };
     void load();
+    void loadEgress();
     const timer = setInterval(() => { void load(); }, 20_000);
     return () => { cancelled = true; clearInterval(timer); };
   }, []);
@@ -402,6 +462,37 @@ export function ApiConnection() {
             ))}
           </div>
         )}
+        </div>
+        <div className="form-field">
+          <label htmlFor="admin-kaya-egress">آدرس خروجی برای کایا <small className="key-hint">اختیاری</small></label>
+          <div className="input-with-action">
+            <Globe size={17} />
+            <input
+              id="admin-kaya-egress"
+              dir="ltr"
+              className="input"
+              value={egress.bindAddress}
+              onChange={(event) => setEgress((current) => ({ ...current, bindAddress: event.target.value, message: "", error: "" }))}
+              placeholder="185.192.112.49"
+              spellCheck={false}
+            />
+            <button className="input-action" type="button" onClick={() => void saveEgress()} disabled={egress.saving} aria-label="ذخیرهٔ آدرس خروجی">
+              {egress.saving ? <LoaderCircle className="spin-icon" size={17} /> : <Check size={17} />}
+            </button>
+          </div>
+          <span className="form-hint">
+            <Globe size={11} /> اگر کایا آدرس فعلی سرور را نمی‌پذیرد، همان IP ایرانی خودتان را اینجا بگذارید تا درخواست‌ها با آن آدرس خارج شوند. خالی بگذارید تا سرور خودش انتخاب کند.
+          </span>
+          {egress.localAddresses.length > 0 && (
+            <span className="form-hint" dir="ltr">
+              local: {egress.localAddresses.join(" · ")}
+            </span>
+          )}
+          {egress.addressMissing && (
+            <span className="api-test-message error"><TriangleAlert size={15} />این آدرس روی سرور وجود ندارد؛ درخواست‌ها با خطای EADDRNOTAVAIL رد می‌شوند.</span>
+          )}
+          {egress.message && <span className="api-test-message success"><CheckCircle2 size={15} />{egress.message}</span>}
+          {egress.error && <span className="api-test-message error"><TriangleAlert size={15} />{egress.error}</span>}
         </div>
         <div className="form-field"><label htmlFor="admin-api-key">API Key {providerStatus.keyHint && provider === providerStatus.provider ? <small className="key-hint" dir="ltr">{providerStatus.keyHint}</small> : null}</label><div className="input-with-icon input-with-action"><KeyRound size={17} /><input id="admin-api-key" dir="ltr" className="input api-key-input" type={showKey ? "text" : "password"} autoComplete="new-password" spellCheck={false} value={keyInput} onChange={(event) => { setKeyInput(event.target.value); resetResult(); setDiscoveryState("idle"); setDiscoveryMessage(""); }} placeholder={hasStoredProviderKey ? "برای حفظ کلید فعلی خالی بگذارید" : "کلید محرمانهٔ سرویس‌دهنده؛ کلید رایگان هم پذیرفته می‌شود"} /><button className="input-action" type="button" onClick={() => setShowKey((show) => !show)} aria-label={showKey ? "پنهان‌کردن کلید" : "نمایش کلید"}>{showKey ? <EyeOff size={17} /> : <Eye size={17} />}</button></div><span className="form-hint"><LockKeyhole size={11} /> کلید فقط روی سرور و با AES-256-GCM رمزنگاری می‌شود؛ هرگز به مرورگر معلم ارسال نمی‌شود.</span></div>
       </div>

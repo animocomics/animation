@@ -133,6 +133,17 @@ function createDatabase(): DatabaseConnection {
   for (const [name, definition] of networkMigrations) {
     if (!networkColumnNames.has(name)) database.exec(`ALTER TABLE api_network_settings ADD COLUMN ${name} ${definition}`);
   }
+  // Kaya egress: the source address Kaya is allowed to see, and an optional host
+  // override. One row, off by default, because a wrong source address on a shared
+  // host would break every provider request.
+  database.exec(`CREATE TABLE IF NOT EXISTS kaya_egress (
+    id INTEGER PRIMARY KEY CHECK(id = 1),
+    bind_address TEXT NOT NULL DEFAULT '',
+    host TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL,
+    updated_by TEXT REFERENCES users(id)
+  )`);
+
   const v2rayColumns = database.prepare("PRAGMA table_info(v2ray_configs)").all() as Array<{ name: string }>;
   if (!v2rayColumns.some((column) => column.name === "last_error_code")) database.exec("ALTER TABLE v2ray_configs ADD COLUMN last_error_code TEXT");
   const workspaceColumns = database.prepare("PRAGMA table_info(workspaces)").all() as Array<{ name: string }>;

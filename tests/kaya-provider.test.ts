@@ -370,3 +370,22 @@ test("no probe in the console script can hang", () => {
   // And the block path must return, not fall through to the requests.
   assert.ok(script.indexOf('reportBlocked("tcp"') > 0, "the connect failure must be handled at one place");
 });
+
+test("the panel can set the egress address, and grading uses it", () => {
+  const route = fs.readFileSync(path.join(root, "app/api/admin/kaya-egress/route.ts"), "utf8");
+  assert.match(route, /requireAdmin/, "the setting must be admin-only");
+  // Guessing an address must be impossible: the API reports what exists here.
+  assert.match(route, /localAddresses/, "the panel must be told which addresses exist");
+
+  const store = fs.readFileSync(path.join(root, "lib/server/kaya-egress-store.ts"), "utf8");
+  assert.match(store, /addressMissing/, "a saved address that is not local must be flagged");
+
+  // The setting is worthless unless the real grading request uses it.
+  const providers = fs.readFileSync(path.join(root, "lib/server/providers.ts"), "utf8");
+  assert.match(providers, /kayaAgent\(input\.egress\)/, "the Kaya call must use the configured source address");
+  assert.match(providers, /kayaBaseUrl\(input\.egress\)/, "the Kaya call must use the configured host");
+  assert.match(providers, /describeEgressFailure/, "a wrong address must be explained, not reported as an outage");
+
+  const panel = fs.readFileSync(path.join(root, "components/api-connection.tsx"), "utf8");
+  assert.match(panel, /آدرس خروجی برای کایا/, "the operator needs a field, not a console command");
+});

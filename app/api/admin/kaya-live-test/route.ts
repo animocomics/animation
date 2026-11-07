@@ -4,6 +4,7 @@ import { getProviderConfig } from "@/lib/server/provider-config";
 import { providerBudgetSnapshot, withProviderBudget } from "@/lib/server/provider-rate-limit";
 import { recordProviderFailure } from "@/lib/server/provider-failure-log";
 import { conclusionFor, readingFor, upstreamMessage, type KayaProbeStep } from "@/lib/server/kaya-probe-readings";
+import { kayaAgent, kayaBaseUrl, type KayaEgressConfig } from "@/lib/server/kaya-egress";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -94,12 +95,17 @@ async function send(
   body: Record<string, unknown> | null,
   apiKey: string,
   timeoutMs: number,
+  egress?: KayaEgressConfig,
 ): Promise<{ status: number; text: string; sentBytes: number; ms: number; code: string }> {
   const payload = body === null ? undefined : JSON.stringify(body);
   const started = Date.now();
+  // The test must use the same source address and host as grading, otherwise a
+  // green result here would say nothing about the request that actually fails.
+  const dispatcher = kayaAgent(egress);
+  const base = kayaBaseUrl(egress) || BASE;
   return withProviderBudget(HOST, async () => {
     try {
-      const response = await fetch(`${BASE}${path}`, {
+      const response = await fetch(`${base}${path}`, {
         method: body === null ? "GET" : "POST",
         headers:
           body === null
@@ -112,7 +118,8 @@ async function send(
         body: payload,
         cache: "no-store",
         signal: AbortSignal.timeout(timeoutMs),
-      });
+        ...(dispatcher ? { dispatcher } : {}),
+      } as RequestInit);
       const text = (await response.text()).slice(0, 4000);
       return { status: response.status, text, sentBytes: payload ? Buffer.byteLength(payload) : 0, ms: Date.now() - started, code: "" };
     } catch (error) {
@@ -172,7 +179,7 @@ export async function POST() {
     };
 
     // 1. Catalogue: needs no key, and a 200 proves the URL and our client IP.
-    const catalogue = record("catalogue", await send("/chat/completions", null, config.apiKey, 15_000));
+    const catalogue = record("catalogue", await send("/chat/completions", null, config.apiKey, 15_000, config.egress));
 
     // 2. The smallest possible write.
     let textStep: StepResult | null = null;
@@ -184,6 +191,7 @@ export async function POST() {
           { model, messages: [{ role: "user", content: "فقط بنویس: سالم" }], max_tokens: 16, stream: false },
           config.apiKey,
           45_000,
+          config.egress,
         ),
       );
     }
@@ -212,6 +220,7 @@ export async function POST() {
           },
           config.apiKey,
           60_000,
+          config.egress,
         ),
       );
     }

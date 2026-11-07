@@ -2,6 +2,7 @@ import type { ProviderId, ProviderPublicStatus } from "@/lib/types";
 import { ApiNetworkError, ensureApiNetworkActivated, getApiNetworkConfig, type ProviderNetworkConfig } from "./api-network";
 import { DEFAULT_MODELS, PROVIDER_LABELS, ProviderError } from "./providers";
 import { decryptSecret, encryptSecret } from "./secret-crypto";
+import type { KayaEgressConfig } from "./kaya-egress";
 
 const PROVIDER_SECRET_PURPOSE = "nomreh-provider-v1";
 
@@ -44,10 +45,22 @@ export async function getProviderNetworkConfig(): Promise<ProviderNetworkConfig>
   }
 }
 
-export async function getProviderConfig(): Promise<{ provider: ProviderId; model: string; apiKey: string; network: ProviderNetworkConfig }> {
+export async function getProviderConfig(): Promise<{
+  provider: ProviderId;
+  model: string;
+  apiKey: string;
+  network: ProviderNetworkConfig;
+  /** Source address and host override for Kaya, empty when unset. */
+  egress: KayaEgressConfig;
+}> {
   const [row, network] = await Promise.all([findProviderRow(), getProviderNetworkConfig()]);
   if (!row?.encrypted_api_key) throw new Error("اتصال هوش مصنوعی هنوز توسط مدیر سامانه پیکربندی نشده است.");
-  return { provider: row.provider, model: row.model, apiKey: await decryptSecret(row.encrypted_api_key, PROVIDER_SECRET_PURPOSE), network };
+  // Read the egress setting on every call: it changes only when the operator
+  // saves it, and a stale source address is exactly the failure it exists to fix.
+  const { getKayaEgress } = await import("./kaya-egress-store");
+  const egressStatus = await getKayaEgress();
+  const egress: KayaEgressConfig = { bindAddress: egressStatus.bindAddress, host: egressStatus.host };
+  return { provider: row.provider, model: row.model, apiKey: await decryptSecret(row.encrypted_api_key, PROVIDER_SECRET_PURPOSE), network, egress };
 }
 
 export async function disconnectProviderConfig(): Promise<ProviderPublicStatus> {
