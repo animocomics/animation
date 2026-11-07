@@ -260,3 +260,18 @@ test("the Shecan guest can be switched off without editing scripts", () => {
     assert.ok(!usedAsPath.test(script), `it must never write ${forbidden}`);
   }
 });
+
+test("a marker file disables the Shecan guest with no panel access", () => {
+  // A Plesk subscription panel does not always expose custom environment variables,
+  // and .env.local is read by Next's runtime, not by the launcher. The operator
+  // needs a switch that works from the file system alone.
+  const launcher = fs.readFileSync(path.join(root, "scripts", "next-server.cjs"), "utf8");
+  assert.match(launcher, /operatorDisabledShecan/, "the launcher must consult the marker");
+  assert.match(launcher, /shecan-disabled-by-operator/, "the marker file name must match the one shecan:off writes");
+  assert.match(launcher, /NOMREH_DISABLE_SHECAN_SUPERVISOR/, "the environment variable must still work");
+  // Both supervisor branches must be reachable only through the same guard.
+  const guards = launcher.match(/if \(operatorDisabledShecan\(\)\) return;/g) || [];
+  assert.ok(guards.length >= 1);
+  const marker = fs.readFileSync(path.join(root, "scripts", "nomreh-disable-shecan.cjs"), "utf8");
+  assert.match(marker, /shecan-disabled-by-operator/, "shecan:off and the launcher must agree on the file name");
+});

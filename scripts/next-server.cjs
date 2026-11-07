@@ -12,8 +12,31 @@ const hostname = process.env.NOMREH_HOST || "0.0.0.0";
 const app = next({ dev: false, hostname, port });
 const handle = app.getRequestHandler();
 
+// The opt-out can be expressed two ways:
+//   1. NOMREH_DISABLE_SHECAN_SUPERVISOR=1 in the Node.js environment, or
+//   2. a marker file in the data directory.
+// The marker matters because a Plesk subscription panel does not always expose
+// custom environment variables, and an `.env.local` file is only read by Next's
+// own runtime, not by this launcher. A file needs no panel access at all.
+function operatorDisabledShecan() {
+  if (process.env.NOMREH_DISABLE_SHECAN_SUPERVISOR === "1") return true;
+  const dataDirectory = process.env.NOMREH_DATA_DIR || path.join(process.cwd(), "data");
+  const candidates = [
+    path.join(dataDirectory, "shecan-disabled-by-operator"),
+    path.join(process.cwd(), "..", "nomreh-data", "shecan-disabled-by-operator"),
+  ];
+  for (const candidate of candidates) {
+    try {
+      if (fs.lstatSync(candidate).isFile()) return true;
+    } catch {
+      /* not present */
+    }
+  }
+  return false;
+}
+
 function ensureOfficialShecanSupervisor() {
-  if (process.env.NOMREH_DISABLE_SHECAN_SUPERVISOR === "1") return;
+  if (operatorDisabledShecan()) return;
   const windowsRuntimeDirectory = process.env.NOMREH_SHECAN_WINDOWS_RUNTIME_DIR || path.join(process.cwd(), "nomreh-vm", "windows");
   const windowsSupervisor = path.join(process.cwd(), "scripts", "shecan-vm", "windows-supervisor.mjs");
   if (fs.existsSync(path.join(windowsRuntimeDirectory, "runtime-manifest.json")) && fs.existsSync(windowsSupervisor)) {
