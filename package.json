@@ -17,7 +17,8 @@
     "stop:plesk": "\"$npm_node_execpath\" scripts/plesk-standalone.cjs stop",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/**/*.test.ts",
-    "diagnose": "node scripts/nomreh-diagnose.cjs"
+    "diagnose": "node scripts/nomreh-diagnose.cjs",
+    "delta": "node scripts/nomreh-delta-update.cjs"
   },
   "engines": {
     "node": ">=22.0.0"

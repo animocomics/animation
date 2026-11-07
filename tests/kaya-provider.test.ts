@@ -215,3 +215,29 @@ test("the same submission cannot be graded twice at once", () => {
   assert.match(grade, /gradingInFlight/, "an in-flight guard must exist");
   assert.match(grade, /status: 429/, "a duplicate run must be rejected, not queued");
 });
+
+test("the outbound counter is visible without pressing a button", () => {
+  // The operator asked where the limit was; it existed but only rendered after
+  // running the full diagnostics. It must now load on mount and refresh itself.
+  const panel = fs.readFileSync(path.join(root, "components/api-connection.tsx"), "utf8");
+  assert.match(panel, /\/api\/admin\/outbound-usage/, "the cheap counter endpoint must be polled");
+  assert.match(panel, /setInterval/, "the counter must refresh itself");
+  assert.match(panel, /outbound-usage-card/, "the counter must be rendered in the panel");
+
+  const route = fs.readFileSync(path.join(root, "app/api/admin/outbound-usage/route.ts"), "utf8");
+  assert.match(route, /requireAdmin/, "the counter is admin-only");
+  assert.ok(!/fetch\(/.test(route), "the counter must not perform network probes");
+});
+
+test("the delta updater is bounded and never touches user data", () => {
+  const script = fs.readFileSync(path.join(root, "scripts/nomreh-delta-update.cjs"), "utf8");
+  assert.match(script, /MAX_FILES/);
+  assert.match(script, /MAX_BYTES/);
+  assert.match(script, /PROTECTED/);
+  assert.match(script, /nomreh\\\.db/, "the database must be protected");
+  assert.match(script, /provider-secret/, "the provider secret must be protected");
+  // No git, no tarball: only the contents API, one request per changed file.
+  assert.ok(!/git clone|git fetch|codeload|\/tarball/.test(script), "never pull a tarball or use git");
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as { scripts: Record<string, string> };
+  assert.ok(pkg.scripts.delta, "npm run delta must exist");
+});

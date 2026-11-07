@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Check, CheckCircle2, Eye, EyeOff, KeyRound, LoaderCircle, LockKeyhole, RefreshCw, ShieldCheck, Sparkles, TriangleAlert, Zap, BrainCircuit, ScanText, Cpu, AudioLines, Layers, Globe } from "lucide-react";
 import { useApp } from "../lib/app-context";
 import { readJsonResponse } from "../lib/http-response";
@@ -30,6 +30,16 @@ export function ApiConnection() {
   const [message, setMessage] = useState("");
   const [discoveryState, setDiscoveryState] = useState<"idle" | "loading" | "success" | "error">("idle");
   const [discoveryMessage, setDiscoveryMessage] = useState("");
+  const [usage, setUsage] = useState<{
+    windowMinutes: number;
+    maxPerWindow: number;
+    maxConcurrency: number;
+    usage: Array<{ hostname: string; used: number; limit: number; remaining: number; percentUsed: number; active: number; breakerOpen: boolean; breakerMinutesLeft: number }>;
+    totalUsed: number;
+    anyBreakerOpen: boolean;
+    recentFailures: Array<{ at: string; hostname: string; code: string; detail: string }>;
+    loaded: boolean;
+  }>({ windowMinutes: 20, maxPerWindow: 120, maxConcurrency: 2, usage: [], totalUsed: 0, anyBreakerOpen: false, recentFailures: [], loaded: false });
   const [diagnostics, setDiagnostics] = useState<{
     loading: boolean;
     conclusion: string;
@@ -60,6 +70,35 @@ export function ApiConnection() {
     setDiscoveryMessage("");
     resetResult();
   }
+
+  // Poll the cheap counter every 20s so the operator can always see the outbound
+  // budget without pressing a button. This endpoint reads in-process counters only.
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const response = await fetch("/api/admin/outbound-usage", { cache: "no-store" });
+        if (!response.ok) return;
+        const payload = await response.json();
+        if (cancelled) return;
+        setUsage({
+          windowMinutes: payload.windowMinutes ?? 20,
+          maxPerWindow: payload.maxPerWindow ?? 120,
+          maxConcurrency: payload.maxConcurrency ?? 2,
+          usage: payload.usage ?? [],
+          totalUsed: payload.totalUsed ?? 0,
+          anyBreakerOpen: Boolean(payload.anyBreakerOpen),
+          recentFailures: payload.recentFailures ?? [],
+          loaded: true,
+        });
+      } catch {
+        /* the counter is cosmetic; never break the panel over it */
+      }
+    };
+    void load();
+    const timer = setInterval(() => { void load(); }, 20_000);
+    return () => { cancelled = true; clearInterval(timer); };
+  }, []);
 
   async function runDiagnostics() {
     setDiagnostics({ loading: true, conclusion: "", egressConclusion: "", egress: [], rows: [] });
@@ -157,6 +196,41 @@ export function ApiConnection() {
           const item = PROVIDERS[id]; const Icon = item.icon;
           return <button key={id} role="radio" aria-checked={provider === id} className={`provider-option ${provider === id ? "selected" : ""}`} onClick={() => selectProvider(id)}><span className={`provider-logo ${id}`}><Icon size={20} /></span><span><strong>{item.label}</strong><small>{item.hint}</small></span><i>{provider === id && <Check size={12} />}</i></button>;
         })}
+      </div>
+      <div className="notice notice-info outbound-usage-card" dir="rtl" style={{ marginBottom: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+          <strong>محدودیت درخواست خروجی — پنجرهٔ {faNumber(usage.windowMinutes)} دقیقه‌ای</strong>
+          <span className="form-hint">
+            سقف {faNumber(usage.maxPerWindow)} درخواست · هم‌زمانی {faNumber(usage.maxConcurrency)} · برای جلوگیری از مسدودشدن سرور توسط میزبان
+          </span>
+        </div>
+        {usage.usage.length === 0 ? (
+          <div className="form-hint" style={{ marginTop: 6 }}>{usage.loaded ? "هنوز در این اجرا درخواستی به سرویس‌دهنده ارسال نشده است." : "در حال خواندن…"}</div>
+        ) : (
+          <div style={{ marginTop: 6 }}>
+            {usage.usage.map((row) => (
+              <div key={`usage-${row.hostname}`} style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4, flexWrap: "wrap" }}>
+                <span dir="ltr" style={{ minWidth: 180 }}>{row.hostname}</span>
+                <span style={{ display: "inline-block", width: 150, height: 8, background: "#e5e7eb", borderRadius: 4 }}>
+                  <span style={{ display: "block", width: `${Math.min(100, row.percentUsed)}%`, height: 8, borderRadius: 4, background: row.percentUsed > 80 ? "#dc2626" : row.percentUsed > 50 ? "#f59e0b" : "#16a34a" }} />
+                </span>
+                <span>{faNumber(row.used)} از {faNumber(row.limit)} ({faNumber(row.percentUsed)}٪) · باقی‌مانده {faNumber(row.remaining)}</span>
+                {row.active > 0 ? <span className="form-hint">{faNumber(row.active)} در حال ارسال</span> : null}
+                {row.breakerOpen ? <span style={{ color: "#dc2626" }}>متوقف تا {faNumber(row.breakerMinutesLeft)} دقیقه</span> : null}
+              </div>
+            ))}
+          </div>
+        )}
+        {usage.anyBreakerOpen ? (
+          <div className="form-hint" style={{ marginTop: 6, color: "#dc2626" }}>
+            ارسال به یکی از سرویس‌دهنده‌ها موقتاً متوقف شده است؛ دلیلش را در «آخرین خطاها» پایین همین صفحه ببینید.
+          </div>
+        ) : null}
+        {usage.recentFailures.length > 0 ? (
+          <div className="form-hint" style={{ marginTop: 6 }}>
+            آخرین خطا: <span dir="ltr">{usage.recentFailures[0].code} · {usage.recentFailures[0].hostname}</span> — {new Date(usage.recentFailures[0].at).toLocaleTimeString("fa-IR")}
+          </div>
+        ) : null}
       </div>
       <div className="api-fields">
         <div className="form-field">
