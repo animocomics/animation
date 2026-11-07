@@ -97,7 +97,17 @@ export function AdminPanel() {
       <button className="admin-refresh" onClick={() => void load()} aria-label="به‌روزرسانی"><RefreshCw size={16} /></button>
     </div>
 
-    {tab === "connection" && <section className="card settings-card admin-connection-card"><div className="settings-card-heading"><span className="settings-heading-icon teal"><KeyRound size={20} /></span><div><h3>پیکربندی سراسری مدل</h3><p>تنها مدیر می‌تواند این مقادیر را ببیند یا تغییر دهد.</p></div></div><div className="settings-card-body"><ApiConnection /><div className="admin-network-divider"><span className="settings-heading-icon violet"><Zap size={19} /></span><div><h3>برنامهٔ رسمی شکن و مسیر اختصاصی AI</h3><p>اجرای واقعی برنامه، ورود در رابط خود شکن و اتصال فقط Providerها؛ بدون تغییر DNS کل هاست.</p></div></div><OfficialShecanConsole /><div className="admin-network-divider"><span className="settings-heading-icon teal"><Network size={19} /></span><div><h3>V2Ray جایگزین برای همان مسیر AI</h3><p>بدون تغییر DNS یا فعال‌کردن پروکسی عمومی؛ کانفیگ‌ها را ذخیره و تست خودکار را اجرا کنید.</p></div></div><V2RayConnection /><div className="admin-security-note"><ShieldCheck size={18} /><div><strong>مرز امنیتی نقش‌ها</strong><p>معلم فقط وضعیت «متصل / غیرفعال» را می‌بیند. نام مدل برای اجرای لازم است، اما کلید، آزمایش اتصال و صفحهٔ مدیریت هرگز در دسترس او نیست.</p></div></div></div></section>}
+    {tab === "connection" && <section className="card settings-card admin-connection-card"><div className="settings-card-heading"><span className="settings-heading-icon teal"><KeyRound size={20} /></span><div><h3>پیکربندی سراسری مدل</h3><p>تنها مدیر می‌تواند این مقادیر را ببیند یا تغییر دهد.</p></div></div><div className="settings-card-body"><ApiConnection /><div className="admin-network-divider"><span className="settings-heading-icon violet"><Zap size={19} /></span><div><h3>برنامهٔ رسمی شکن و مسیر اختصاصی AI</h3><p>اجرای واقعی برنامه، ورود در رابط خود شکن و اتصال فقط Providerها؛ بدون تغییر DNS کل هاست.</p></div></div><div className="notice notice-info" dir="rtl" style={{ marginBottom: 10 }}>
+              <strong>شکن برای Kaya لازم نیست.</strong>{" "}
+              <span className="form-hint">
+                کایا از داخل ایران مستقیم در دسترس است و عمداً از مسیر شکن بیرون نگه داشته شده. اگر شکن خاموش باشد،
+                برای اتصال به کایا هیچ تفاوتی ایجاد نمی‌کند؛ فقط یک جزء متحرک کمتر دارید. برای خاموش‌کردن دائمی، در
+                کنسول Node دستور <code dir="ltr">npm run shecan:off</code> را اجرا کنید و متغیر
+                <code dir="ltr"> NOMREH_DISABLE_SHECAN_SUPERVISOR=1 </code>
+                را در Plesk اضافه کنید. اگر بخش زیر اصلاً نمایش داده نمی‌شود، یعنی همین متغیر از قبل تنظیم شده است.
+              </span>
+            </div>
+            <OfficialShecanConsole /><div className="admin-network-divider"><span className="settings-heading-icon teal"><Network size={19} /></span><div><h3>V2Ray جایگزین برای همان مسیر AI</h3><p>بدون تغییر DNS یا فعال‌کردن پروکسی عمومی؛ کانفیگ‌ها را ذخیره و تست خودکار را اجرا کنید.</p></div></div><V2RayConnection /><div className="admin-security-note"><ShieldCheck size={18} /><div><strong>مرز امنیتی نقش‌ها</strong><p>معلم فقط وضعیت «متصل / غیرفعال» را می‌بیند. نام مدل برای اجرای لازم است، اما کلید، آزمایش اتصال و صفحهٔ مدیریت هرگز در دسترس او نیست.</p></div></div></div></section>}
 
     {tab === "users" && <section className="card admin-users-card">
       <div className="admin-section-heading"><div><h3>حساب‌های معلم و بازبین</h3><p>هر کاربر فقط به کلاس‌ها و آزمون‌های فضای کاری خودش دسترسی دارد.</p></div><button className="btn btn-primary" onClick={openCreateUser}><UserPlus size={16} /> ساخت حساب معلم</button></div>

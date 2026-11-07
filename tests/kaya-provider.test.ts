@@ -241,3 +241,22 @@ test("the delta updater is bounded and never touches user data", () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as { scripts: Record<string, string> };
   assert.ok(pkg.scripts.delta, "npm run delta must exist");
 });
+
+test("the Shecan guest can be switched off without editing scripts", () => {
+  // A restart is treated as "always on", so the panel Stop button comes back after
+  // every Restart App. The operator needs a switch, and editing server.js by hand is
+  // exactly what broke this deployment before.
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as { scripts: Record<string, string> };
+  assert.ok(pkg.scripts["shecan:off"], "npm run shecan:off must exist");
+  assert.ok(pkg.scripts["shecan:on"], "the switch must be reversible");
+  const script = fs.readFileSync(path.join(root, "scripts/nomreh-disable-shecan.cjs"), "utf8");
+  assert.match(script, /stop-requested/, "it must write the marker the runtime honours");
+  assert.match(script, /NOMREH_DISABLE_SHECAN_SUPERVISOR/, "it must name the permanent opt-out");
+  // The script documents what it avoids, so check the write targets, not the prose.
+  const writes = script.match(/writeAtomic\(\s*[A-Z_]+,/g) || [];
+  assert.ok(writes.length <= 2, `it must write only its own markers, found ${writes.length}`);
+  for (const forbidden of ["nomreh.db", "provider-secret", ".env"]) {
+    const usedAsPath = new RegExp(`(writeAtomic|writeFileSync|unlinkSync)\\([^)]*${forbidden.replace(".", "\\.")}`);
+    assert.ok(!usedAsPath.test(script), `it must never write ${forbidden}`);
+  }
+});

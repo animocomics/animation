@@ -18,7 +18,9 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/**/*.test.ts",
     "diagnose": "node scripts/nomreh-diagnose.cjs",
-    "delta": "node scripts/nomreh-delta-update.cjs"
+    "delta": "node scripts/nomreh-delta-update.cjs",
+    "shecan:off": "node scripts/nomreh-disable-shecan.cjs",
+    "shecan:on": "node scripts/nomreh-disable-shecan.cjs --on"
   },
   "engines": {
     "node": ">=22.0.0"
