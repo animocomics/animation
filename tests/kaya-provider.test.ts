@@ -275,3 +275,18 @@ test("a marker file disables the Shecan guest with no panel access", () => {
   const marker = fs.readFileSync(path.join(root, "scripts", "nomreh-disable-shecan.cjs"), "utf8");
   assert.match(marker, /shecan-disabled-by-operator/, "shecan:off and the launcher must agree on the file name");
 });
+
+test("the Kaya watcher is rate-safe and needs no key", () => {
+  // The path opens on someone else's schedule, so a human retrying by hand burns the
+  // host's 200-per-20-min budget. The watcher must be slow, key-free and stoppable.
+  const script = fs.readFileSync(path.join(root, "scripts", "kaya-reachability-watch.cjs"), "utf8");
+  assert.match(script, /INTERVAL_MS = 10 \* 60 \* 1000/, "one probe per 10 minutes at most");
+  assert.ok(!/apiKey|Authorization|Bearer/.test(script), "the probe must send no credential");
+  assert.match(script, /kaya-watch-disabled/, "it must be stoppable without the panel");
+  assert.match(script, /kaya-status\.json/, "it must record its result for the panel");
+  // 10-minute spacing means at most 2 probes inside any 20-minute window.
+  const perWindow = (20 * 60 * 1000) / (10 * 60 * 1000);
+  assert.ok(perWindow <= 2, "well inside the hosting egress budget");
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as { scripts: Record<string, string> };
+  assert.ok(pkg.scripts["kaya:watch"] && pkg.scripts["kaya:check"]);
+});

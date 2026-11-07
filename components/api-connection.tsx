@@ -38,8 +38,9 @@ export function ApiConnection() {
     totalUsed: number;
     anyBreakerOpen: boolean;
     recentFailures: Array<{ at: string; hostname: string; code: string; detail: string }>;
+    kaya: { at: string; reachable: boolean; address: string; blockedSince: string | null; tcp: { detail: string }; http: { status: number; code?: string } } | null;
     loaded: boolean;
-  }>({ windowMinutes: 20, maxPerWindow: 120, maxConcurrency: 2, usage: [], totalUsed: 0, anyBreakerOpen: false, recentFailures: [], loaded: false });
+  }>({ windowMinutes: 20, maxPerWindow: 120, maxConcurrency: 2, usage: [], totalUsed: 0, anyBreakerOpen: false, recentFailures: [], kaya: null, loaded: false });
   const [diagnostics, setDiagnostics] = useState<{
     loading: boolean;
     conclusion: string;
@@ -89,6 +90,7 @@ export function ApiConnection() {
           totalUsed: payload.totalUsed ?? 0,
           anyBreakerOpen: Boolean(payload.anyBreakerOpen),
           recentFailures: payload.recentFailures ?? [],
+          kaya: payload.kaya ?? null,
           loaded: true,
         });
       } catch {
@@ -219,6 +221,38 @@ export function ApiConnection() {
                 {row.breakerOpen ? <span style={{ color: "#dc2626" }}>متوقف تا {faNumber(row.breakerMinutesLeft)} دقیقه</span> : null}
               </div>
             ))}
+          </div>
+        )}
+        {usage.kaya ? (
+          <div style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid #e5e7eb" }}>
+            <strong>وضعیت مسیر Kaya: </strong>
+            {usage.kaya.reachable ? (
+              <span style={{ color: "#16a34a", fontWeight: 600 }}>
+                باز است — الان می‌توانید «آزمایش اتصال» را بزنید
+              </span>
+            ) : (
+              <span style={{ color: "#dc2626" }}>
+                بسته است ({usage.kaya.tcp?.detail || "بدون پاسخ"}) — مقصد{" "}
+                <span dir="ltr">{usage.kaya.address}</span> از این سرور در دسترس نیست
+              </span>
+            )}
+            <span className="form-hint">
+              {" "}· آخرین بررسی: {new Date(usage.kaya.at).toLocaleTimeString("fa-IR")}
+              {!usage.kaya.reachable && usage.kaya.blockedSince
+                ? ` · از ${new Date(usage.kaya.blockedSince).toLocaleTimeString("fa-IR")} قطع است`
+                : ""}
+              {" "}· هر ۱۰ دقیقه خودکار بررسی می‌شود
+            </span>
+            {!usage.kaya.reachable ? (
+              <div className="form-hint" style={{ marginTop: 4 }}>
+                نیازی به تست دستی نیست: به‌محض باز شدن مسیر، همین خط سبز می‌شود. تا آن زمان هر تلاش فقط سهمیهٔ درخواست خروجی را مصرف می‌کند.
+                {" "}برای فعال‌کردن نگهبان: <code dir="ltr">npm run kaya:watch</code>
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <div className="form-hint" style={{ marginTop: 8, paddingTop: 8, borderTop: "1px solid #e5e7eb" }}>
+            وضعیت مسیر Kaya هنوز ثبت نشده است. برای فعال‌کردن بررسی خودکار: <code dir="ltr">npm run kaya:watch</code>
           </div>
         )}
         {usage.anyBreakerOpen ? (
