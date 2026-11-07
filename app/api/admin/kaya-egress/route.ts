@@ -17,6 +17,25 @@ export const dynamic = "force-dynamic";
  * reports the machine's real addresses and whether the saved one exists.
  */
 
+/**
+ * The address the kernel picks when nothing is bound, read from a real socket
+ * rather than guessed. This is the one Kaya is currently being refused on, and
+ * the operator needs to see it next to the alternatives.
+ */
+async function defaultEgressAddress(): Promise<string> {
+  const { connect } = await import("node:net");
+  return new Promise((resolve) => {
+    const socket = connect({ host: "registry.npmjs.org", port: 443 });
+    const finish = (value: string) => {
+      socket.destroy();
+      resolve(value);
+    };
+    socket.setTimeout(4000, () => finish(""));
+    socket.once("connect", () => finish(String(socket.localAddress || "")));
+    socket.once("error", () => finish(""));
+  });
+}
+
 function localAddresses(): string[] {
   const found: string[] = [];
   for (const addresses of Object.values(networkInterfaces())) {
@@ -31,7 +50,16 @@ export async function GET() {
   try {
     await requireAdmin();
     const status = await getKayaEgress();
-    return NextResponse.json({ ...status, localAddresses: localAddresses() });
+    const addresses = localAddresses();
+    const defaultAddress = await defaultEgressAddress();
+    return NextResponse.json({
+      ...status,
+      localAddresses: addresses,
+      // The address Kaya currently refuses, so the field can show what is wrong
+      // instead of describing it.
+      defaultAddress,
+      usingDefault: !status.bindAddress,
+    });
   } catch (error) {
     if (error instanceof AuthError) return NextResponse.json({ error: "دسترسی مدیر لازم است." }, { status: 401 });
     return NextResponse.json({ error: error instanceof Error ? error.message : "خواندن تنظیمات ناموفق بود." }, { status: 500 });

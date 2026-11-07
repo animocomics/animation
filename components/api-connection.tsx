@@ -74,6 +74,7 @@ export function ApiConnection() {
     message: string;
     error: string;
   }>({ bindAddress: "", host: "", localAddresses: [], addressMissing: false, loading: true, saving: false, message: "", error: "" });
+  const [defaultEgress, setDefaultEgress] = useState("");
 
   async function loadEgress() {
     try {
@@ -84,7 +85,9 @@ export function ApiConnection() {
         host?: string;
         localAddresses?: string[];
         addressMissing?: boolean;
+        defaultAddress?: string;
       };
+      setDefaultEgress(payload.defaultAddress || "");
       setEgress((current) => ({
         ...current,
         bindAddress: payload.bindAddress || "",
@@ -483,9 +486,25 @@ export function ApiConnection() {
           <span className="form-hint">
             <Globe size={11} /> اگر کایا آدرس فعلی سرور را نمی‌پذیرد، همان IP ایرانی خودتان را اینجا بگذارید تا درخواست‌ها با آن آدرس خارج شوند. خالی بگذارید تا سرور خودش انتخاب کند.
           </span>
+          <span className="form-hint">
+            <Globe size={11} /> این آدرس کدام است؟ آدرسی که سرور با آن به اینترنت می‌رود و کایا آن را رد می‌کند
+            {defaultEgress ? <b dir="ltr"> {defaultEgress}</b> : null}
+            {" — "}اگر آدرس ایرانی دیگری دارید که روی همین کارت شبکه است، همان را بگذارید؛ اگر ندارید، از هاستینگ بخواهید آدرس ایرانی را روی کارت شبکهٔ سرور بگذارد.
+          </span>
           {egress.localAddresses.length > 0 && (
-            <span className="form-hint" dir="ltr">
-              local: {egress.localAddresses.join(" · ")}
+            <span className="form-hint">
+              آدرس‌های موجود روی این سرور (برای انتخاب کلیک کنید):
+              {egress.localAddresses.map((address) => (
+                <button
+                  key={address}
+                  type="button"
+                  className="chip-button"
+                  dir="ltr"
+                  onClick={() => setEgress((current) => ({ ...current, bindAddress: address, message: "", error: "" }))}
+                >
+                  {address}
+                </button>
+              ))}
             </span>
           )}
           {egress.addressMissing && (

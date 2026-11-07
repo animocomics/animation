@@ -796,6 +796,22 @@ input[type="number"] { font-variant-numeric: tabular-nums; }
 .diagnostics-block { display: grid; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); }
 .diagnostics-conclusion { font-size: 8px; color: var(--muted); line-height: 1.9; }
 .diagnostics-detail { opacity: 0.75; font-size: 7px; }
+
+/* An address the operator can pick instead of typing and guessing. */
+.chip-button {
+  display: inline-flex;
+  align-items: center;
+  margin-inline-start: 6px;
+  padding: 1px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 7px;
+  cursor: pointer;
+}
+.chip-button:hover { border-color: var(--brand); color: var(--brand); }
 .api-connection.compact .provider-options { grid-template-columns: 1fr; gap: 7px; }
 .api-connection.compact .provider-option { padding: 9px; }
 .api-connection.compact .provider-logo { width: 30px; height: 30px; }

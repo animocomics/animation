@@ -389,3 +389,23 @@ test("the panel can set the egress address, and grading uses it", () => {
   const panel = fs.readFileSync(path.join(root, "components/api-connection.tsx"), "utf8");
   assert.match(panel, /آدرس خروجی برای کایا/, "the operator needs a field, not a console command");
 });
+
+test("the operator is told which address to use, without a console", () => {
+  // "Where do I get an Iranian address?" has one correct answer: the ones this
+  // server owns. Anything else cannot be bound to, so the API must report both the
+  // addresses that exist and the default one Kaya is refusing.
+  const route = fs.readFileSync(path.join(root, "app/api/admin/kaya-egress/route.ts"), "utf8");
+  assert.match(route, /defaultAddress/, "the panel needs to show the address Kaya refuses");
+  assert.match(route, /localAddresses/, "the panel needs the addresses that can actually be used");
+
+  const panel = fs.readFileSync(path.join(root, "components/api-connection.tsx"), "utf8");
+  assert.match(panel, /chip-button/, "a choice must be one click, not a guess typed by hand");
+  assert.match(panel, /آدرس‌های موجود روی این سرور/, "the list must be labelled for the operator");
+
+  // And the same answer is available as a command, for a host without the panel.
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as { scripts: Record<string, string> };
+  assert.match(pkg.scripts["kaya:egress"] || "", /nomreh-kaya-egress-check\.cjs/);
+  const script = fs.readFileSync(path.join(root, "scripts/nomreh-kaya-egress-check.cjs"), "utf8");
+  assert.match(script, /EGRESS_OK|EGRESS_BLOCKED/, "the command must reach a verdict");
+  assert.ok(!/apiKey|sk-/.test(script), "listing addresses must not touch credentials");
+});
