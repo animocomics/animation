@@ -169,6 +169,49 @@ function gradingResult(promptText) {
   };
 }
 
+/**
+ * Answers the question-import task.
+ *
+ * Shaped on purpose the way a real model drifts: `rubric` omitted, a score sent as a
+ * string, and a trailing extra field. That is exactly the payload that used to be
+ * rejected wholesale after the tokens had been spent, so the stub is the regression
+ * fixture for the tolerant parser. `NOMREH_STUB_BAD_IMPORT=1` makes it drop one
+ * unreadable question as well, to exercise the salvage path.
+ */
+function questionImportResult() {
+  // Deliberately sloppier than the schema: question 1 omits rubric / complete /
+  // issues / acceptedAnswers entirely and sends maxScore as a string plus an
+  // unknown field, which is exactly what real gateways do. The importer must
+  // still keep it instead of discarding the whole (already billed) answer.
+  const base = [
+    {
+      number: 1,
+      type: "short_answer",
+      prompt: "۱+۱ چند است؟",
+      maxScore: "2",
+      answer: "۲",
+      options: [],
+      note: "فیلد ناشناخته که مدل خودش اضافه کرده",
+    },
+    {
+      number: 2,
+      type: "multiple_choice",
+      prompt: "پایتخت فرانسه کدام است؟",
+      maxScore: 2,
+      answer: "پاریس",
+      options: ["لندن", "پاریس", "رم"],
+      acceptedAnswers: [],
+      rubric: [{ label: "پاسخ درست", description: "انتخاب پاریس", points: 2 }],
+      complete: true,
+      issues: [],
+    },
+  ];
+  if (process.env.NOMREH_STUB_BAD_IMPORT === "1") {
+    base.push({ number: 3, type: "not-a-real-type", prompt: "سؤال سه", maxScore: 1, answer: "", options: [], acceptedAnswers: [], rubric: [], complete: true, issues: [] });
+  }
+  return { questions: base, warnings: [] };
+}
+
 const server = http.createServer(async (request, response) => {
   const url = new URL(request.url || "/", `http://${request.headers.host || "127.0.0.1"}`);
   const route = url.pathname.replace(/\/+$/, "");
@@ -205,6 +248,23 @@ const server = http.createServer(async (request, response) => {
       return send(response, 400, { error: { message: "Body is not valid JSON." } });
     }
 
+    // Some real gateways reject a single optional field with a 400 and burn the
+    // input anyway. `NOMREH_STUB_REJECT_PARAMS=1` reproduces that so the plain-body
+    // retry is exercised end to end instead of only in a unit test.
+    if (process.env.NOMREH_STUB_REJECT_PARAMS === "1") {
+      const offending = ["response_format", "temperature", "stream"]
+        .find((field) => field in body && field !== "stream");
+      if (offending) {
+        log(`POST rejected: unsupported parameter ${offending}`);
+        return send(response, 400, { error: { message: `Unsupported parameter: '${offending}' is not supported for this model.` } });
+      }
+      const hasDetail = JSON.stringify(body).includes('"detail"');
+      if (hasDetail) {
+        log("POST rejected: unsupported image detail");
+        return send(response, 400, { error: { message: "Invalid value: 'detail' is not supported for this model." } });
+      }
+    }
+
     const messages = Array.isArray(body.messages) ? body.messages : [];
     const text = messages
       .map((message) => (typeof message.content === "string"
@@ -218,9 +278,12 @@ const server = http.createServer(async (request, response) => {
       : 0), 0);
 
     const model = typeof body.model === "string" ? body.model : MODELS[0];
-    const result = gradingResult(text);
+    // The importer and the grader share this endpoint, so the task is read from the
+    // system instructions the application itself sent — not guessed.
+    const isImport = /خوانندهٔ سؤال و کلید/.test(text);
+    const result = isImport ? questionImportResult() : gradingResult(text);
     const content = JSON.stringify(result);
-    log(`POST ok model=${model} images=${imageParts} keyFingerprint=${key.length}chars`);
+    log(`POST ok model=${model} task=${isImport ? "question-import" : "grading"} images=${imageParts} keyFingerprint=${key.length}chars`);
 
     return send(response, 200, {
       id: `stub-${Date.now()}`,

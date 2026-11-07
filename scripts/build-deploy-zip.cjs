@@ -63,9 +63,9 @@ const EXCLUDE_FRAGMENTS = [
   "nomreh-deploy-b4847c0.zip",
   // Never nest a previous deploy archive inside a new one.
   "nomreh-deploy-2026-11-05.zip",
-  // The archive shipped at the repository root is a release artifact, not source;
-  // nesting it made a new archive almost twice the size for no benefit.
-  "nomreh-direct-v25.zip",
+  // Release archives kept at the repository root are artifacts, not source.
+  // Nesting the previous one made v29 twice its real size (83 MB instead of 41 MB),
+  // so the rule below matches every version rather than one hardcoded name.
 ];
 
 // A file is refused if it looks like it carries credentials.
@@ -95,7 +95,7 @@ function walk(directory, relative, collected) {
     // template with no secrets in it, and a fresh account has nothing to copy
     // without it. Blanket-skipping ".env*" shipped an archive with no template.
     if (entry.name.startsWith(".env") && entry.name !== ".env.example") continue;
-    if (!relative && /^nomreh-deploy-.*\.zip$/i.test(entry.name)) continue;
+    if (!relative && /^nomreh-(deploy|direct-v\d+).*\.zip$/i.test(entry.name)) continue;
     // Local build artifacts must never ship.
     if (entry.name.endsWith(".tsbuildinfo")) continue;
     collected.push(rel);

@@ -11,6 +11,7 @@ import { providerByteLimit } from "@/lib/server/provider-traits";
 import { callProvider, ProviderError } from "@/lib/server/providers";
 import {
   buildQuestionImportPrompt,
+  importNotesOf,
   normalizeImportedQuestions,
   QuestionImportValidationError,
 } from "@/lib/server/question-import-schema";
@@ -92,7 +93,18 @@ export async function POST(request: Request) {
     const prompt = buildQuestionImportPrompt(JSON.stringify(manifest));
     const response = await callProvider({ ...config, task: "question-import", prompt, files: providerFiles });
     const draft = normalizeImportedQuestions(response.result);
-    return NextResponse.json({ questions: draft.questions, warnings: draft.warnings, usage: response.usage });
+    // A question that was read but needs a human eye carries its own note. It is shown
+    // as a warning beside that question, and stripped from the payload so the saved
+    // exam keeps exactly the shape the rest of the app validates.
+    const questionNotes = draft.questions.flatMap((question) =>
+      importNotesOf(question).map((note) => `سؤال ${question.number}: ${note}`),
+    );
+    const questions = draft.questions.map((question) => {
+      if (!importNotesOf(question).length) return question;
+      const { importNotes: _notes, ...rest } = question as typeof question & { importNotes?: string[] };
+      return rest;
+    });
+    return NextResponse.json({ questions, warnings: [...draft.warnings, ...questionNotes].slice(0, 40), usage: response.usage });
   } catch (error) {
     if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.status });
     if (error instanceof ProviderError) {

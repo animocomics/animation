@@ -1,6 +1,6 @@
 import { gradingJsonSchema, modelResultSchema, type ModelResult } from "./grading-schema";
 import { ANSWER_KEY_IMPORT_SYSTEM_INSTRUCTIONS, answerKeyImportJsonSchema, answerKeyImportResultSchema, type AnswerKeyImportResult } from "./answer-key-import-schema";
-import { QUESTION_IMPORT_SYSTEM_INSTRUCTIONS, questionImportJsonSchema, questionImportResultSchema, type QuestionImportResult } from "./question-import-schema";
+import { QUESTION_IMPORT_SYSTEM_INSTRUCTIONS, questionImportJsonSchema, questionImportResultSchema, salvageQuestionImport, type QuestionImportResult } from "./question-import-schema";
 import type { GradeApiRequest, ProviderId } from "../types";
 import { RECOMMENDED_MODELS } from "../provider-catalog";
 import { providerFetch, ProviderNetworkError } from "./provider-network";
@@ -178,15 +178,31 @@ function cleanJsonText(value: string): string {
 }
 
 function parseProviderResult(input: ProviderCallInput, value: string): ModelResult | QuestionImportResult | AnswerKeyImportResult {
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(cleanJsonText(value));
-    if (input.task === "question-import") return questionImportResultSchema.parse(parsed);
+    parsed = JSON.parse(cleanJsonText(value));
+  } catch {
+    throw new ProviderError(isImportTask(input.task) ? "خروجی مدل JSON معتبر نبود؛ پیش‌نویس سؤال یا کلید ساخته نشد." : "خروجی مدل JSON معتبر نبود؛ لطفاً تصحیح این برگه را دوباره اجرا کنید.", 502);
+  }
+
+  if (input.task === "question-import") {
+    // Keep every question that is sound instead of discarding the whole answer over
+    // one bad row. The tokens are already spent; throwing the good questions away
+    // means the operator pays again to read the same sheet.
+    const salvaged = salvageQuestionImport(parsed);
+    if (!salvaged.result) {
+      throw new ProviderError(
+        "مدل هیچ سؤال کاملی از این برگه برنگرداند. یک‌بار دیگر نفرستید؛ فایل واضح‌تر (یا تصویر به‌جای PDF اسکن‌شده) بفرستید و همان برگه را دوباره بخوانید.",
+        422,
+      );
+    }
+    return salvaged.result;
+  }
+
+  try {
     if (input.task === "answer-key-import") return answerKeyImportResultSchema.parse(parsed);
     return modelResultSchema.parse(parsed);
-  } catch (error) {
-    if (error instanceof SyntaxError) {
-      throw new ProviderError(isImportTask(input.task) ? "خروجی مدل JSON معتبر نبود؛ پیش‌نویس سؤال یا کلید ساخته نشد." : "خروجی مدل JSON معتبر نبود؛ لطفاً تصحیح این برگه را دوباره اجرا کنید.", 502);
-    }
+  } catch {
     throw new ProviderError(isImportTask(input.task) ? "ساختار پیش‌نویس مدل کامل نیست؛ هیچ سؤال یا کلیدی ذخیره نشد. فایل واضح‌تر یا مدل دیگری امتحان کنید." : "ساختار نتیجهٔ مدل کامل نیست. نتیجه ذخیره نشد تا نمرهٔ اشتباه ثبت نشود؛ دوباره تلاش کنید.", 502);
   }
 }
@@ -478,6 +494,62 @@ async function callGapGpt(input: ProviderCallInput): Promise<ProviderCallResult>
   return callKayaModel(input, input.model, false);
 }
 
+/**
+ * Builds the Chat Completions body for the two providers that use that contract.
+ *
+ * `max_tokens` is the one number that matters here. It used to be a fixed 32768:
+ * a gateway that caps completion tokens lower rejects the request before producing
+ * anything, while the input side — the page images — may already be counted, so the
+ * operator pays and gets no answer. NOMREH_MAX_OUTPUT_TOKENS lets the host match
+ * whatever the gateway actually allows, and the default stays generous.
+ */
+function maxOutputTokens(): number {
+  const configured = Number(process.env.NOMREH_MAX_OUTPUT_TOKENS || "");
+  return Number.isFinite(configured) && configured >= 1024 ? Math.min(configured, 65536) : 32768;
+}
+
+function chatCompletionBody(input: ProviderCallInput, model: string) {
+  return {
+    model,
+    messages: [
+      { role: "system", content: systemInstructionsWithSchema(input) },
+      { role: "user", content: chatContent(input, "object", "high") },
+    ],
+    response_format: { type: "json_object" },
+    max_tokens: maxOutputTokens(),
+    temperature: 0.2,
+    stream: false,
+  };
+}
+
+/**
+ * The same body with every optional knob removed.
+ *
+ * Some gateways answer 400 to `response_format`, a large `max_tokens`, `temperature`
+ * or per-image `detail` — the request is refused before inference, so the operator
+ * gets nothing back and has no way to tell which field the gateway disliked. One
+ * bounded retry with the plainest possible body turns that dead end into an answer.
+ * It is deliberately limited to 400-with-a-parameter-name: a 401/402/429/5xx is a
+ * different problem, and re-sending page images on those would only cost money.
+ */
+function plainChatCompletionBody(input: ProviderCallInput, model: string) {
+  return {
+    model,
+    messages: [
+      { role: "system", content: systemInstructionsWithSchema(input) },
+      { role: "user", content: chatContent(input) },
+    ],
+    max_tokens: Math.min(maxOutputTokens(), 8192),
+    stream: false,
+  };
+}
+
+/** Does this 400 look like "I do not accept one of the fields you sent"? */
+export function isParameterRejection(status: number, detail: string): boolean {
+  if (status !== 400 && status !== 422) return false;
+  return /response_format|json_object|json schema|max_tokens|max_completion_tokens|temperature|detail|unsupported|not supported|unknown (field|parameter)|invalid (field|parameter|request)/i.test(detail);
+}
+
 async function callKayaModel(
   input: ProviderCallInput,
   model: string,
@@ -499,17 +571,7 @@ async function callKayaModel(
     response = await fetchWithTimeout(`${baseUrl}/chat/completions`, {
       method: "POST",
       headers: { Authorization: `Bearer ${input.apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: "system", content: systemInstructionsWithSchema(input) },
-          { role: "user", content: chatContent(input, "object", "high") },
-        ],
-        response_format: { type: "json_object" },
-        max_tokens: 32768,
-        temperature: 0.2,
-        stream: false,
-      }),
+      body: JSON.stringify(chatCompletionBody(input, model)),
       ...(egressAgent ? { dispatcher: egressAgent } : {}),
     } as RequestInit, isLocalKayaHost(input.egress));
   } catch (error) {
@@ -519,6 +581,29 @@ async function callKayaModel(
     const explained = describeEgressFailure(String(code), input.egress);
     if (explained) throw new ProviderError(explained, 400);
     throw new ProviderError(`ارتباط با ${serviceName} برای مدل ${model} برقرار نشد${code ? ` (${code})` : ""}.`, 502);
+  }
+
+  if (!response.ok) {
+    const status = response.status;
+    let detail = "";
+    try {
+      const payload = JSON.parse(await response.text()) as { error?: { message?: string } | string };
+      detail = typeof payload.error === "string" ? payload.error : payload.error?.message || "";
+    } catch {
+      // Keep the status code; the body may be empty or non-JSON.
+    }
+    // The gateway refused a field, not the work. Re-send once with the plainest body:
+    // the page images are already uploaded, and a second call that finally succeeds is
+    // cheaper than the operator retrying the whole sheet blind.
+    if (isParameterRejection(status, detail)) {
+      const retried = await fetchWithTimeout(`${baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${input.apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify(plainChatCompletionBody(input, model)),
+        ...(egressAgent ? { dispatcher: egressAgent } : {}),
+      } as RequestInit, isLocalKayaHost(input.egress)).catch(() => null);
+      if (retried) response = retried;
+    }
   }
 
   if (!response.ok) {

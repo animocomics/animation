@@ -15,7 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { useApp } from "../../lib/app-context";
-import { ACCEPTED_FILE_TYPES, MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_LABEL } from "../../lib/file-constraints";
+import { ACCEPTED_FILE_EXTENSIONS, ACCEPTED_FILE_LABEL, ACCEPTED_FILE_TYPES, MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_LABEL } from "../../lib/file-constraints";
 import { deleteStoredFile, getStoredFile, storeFile } from "../../lib/file-store";
 import type { FileMeta, Submission } from "../../lib/types";
 import { faNumber, formatBytes, uid } from "../../lib/utils";
@@ -71,7 +71,7 @@ export function SubmissionUploader({ submissions, onChange }: {
     for (const file of files) {
       const type = fileType(file);
       if (!ACCEPTED_TYPES.includes(type)) {
-        notify({ title: `فرمت ${file.name} پشتیبانی نمی‌شود`, description: "فقط JPG، PNG، WebP و PDF وارد کنید.", variant: "error" });
+        notify({ title: `فرمت ${file.name} پشتیبانی نمی‌شود`, description: `فقط ${ACCEPTED_FILE_LABEL} پذیرفته می‌شود.`, variant: "error" });
         continue;
       }
       if (file.size > MAX_FILE_SIZE) {
@@ -170,10 +170,10 @@ export function SubmissionUploader({ submissions, onChange }: {
           onDragLeave={() => setDragActive(false)}
           onDrop={onDrop}
         >
-          <input ref={bulkInput} type="file" accept=".jpg,.jpeg,.png,.webp,.pdf" multiple hidden onChange={onBulkInput} />
+          <input ref={bulkInput} type="file" accept={ACCEPTED_FILE_EXTENSIONS} multiple hidden onChange={onBulkInput} />
           <span className="upload-illustration"><UploadCloud size={29} /></span>
           <h3>برگه‌ها را اینجا رها کنید</h3>
-          <p>عکس JPG، PNG، WebP یا PDF · حداکثر {MAX_FILE_SIZE_LABEL} برای هر فایل</p>
+          <p>پسوندهای مجاز: {ACCEPTED_FILE_LABEL} · حداکثر {MAX_FILE_SIZE_LABEL} برای هر فایل</p>
           <button className="btn btn-primary" disabled={busy} onClick={() => bulkInput.current?.click()}>{busy ? <LoaderCircle className="spin-icon" size={17} /> : <FilePlus2 size={17} />}{busy ? "در حال ذخیره…" : "انتخاب فایل‌ها"}</button>
           <span className="bulk-upload-note">در بارگذاری گروهی هر فایل یک دانش‌آموز جدید می‌شود. برای چند صفحهٔ یک نفر، یک PDF بسازید یا از دکمهٔ «افزودن صفحه / فایل» در کارت همان دانش‌آموز استفاده کنید.</span>
         </div>
@@ -204,7 +204,7 @@ export function SubmissionUploader({ submissions, onChange }: {
                 </button>
                 <button className="file-chip-remove" onClick={() => removeFile(submission.id, file)} aria-label={`حذف ${file.name}`}><X size={14} /></button>
               </div>)}
-              <label className="add-page-button"><Paperclip size={15} /><span>{submission.files.length ? "افزودن صفحه / فایل" : "انتخاب برگه"}</span><input type="file" hidden multiple accept=".jpg,.jpeg,.png,.webp,.pdf" onChange={(event) => { processFiles(Array.from(event.target.files ?? []), submission.id); event.target.value = ""; }} /></label>
+              <label className="add-page-button"><Paperclip size={15} /><span>{submission.files.length ? "افزودن صفحه / فایل" : `انتخاب برگه (${ACCEPTED_FILE_LABEL})`}</span><input type="file" hidden multiple accept={ACCEPTED_FILE_EXTENSIONS} onChange={(event) => { processFiles(Array.from(event.target.files ?? []), submission.id); event.target.value = ""; }} /></label>
             </div>
             <div className="submission-card-status">{submission.result ? <span className="badge badge-success">تصحیح‌شده</span> : submission.files.length ? <span className="badge badge-info">آمادهٔ تصحیح</span> : <span className="badge badge-warning">{submission.identitySource === "roster" ? "برگه مفقود" : "فایل لازم است"}</span>}<button className="icon-button btn-icon-small danger-hover" onClick={() => removeSubmission(submission)} aria-label={`حذف ${submission.studentName}`}><Trash2 size={15} /></button></div>
           </article>

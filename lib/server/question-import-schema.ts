@@ -4,31 +4,113 @@ import { createId } from "./ids";
 
 const questionTypes = ["multiple_choice", "multiple_response", "true_false", "fill_blank", "short_answer", "essay", "math", "diagram", "matching", "ordering"] as const;
 
+/**
+ * Reading a sheet is not a place for strict typing.
+ *
+ * These fields come from a language model, whose output varies in harmless ways:
+ * the same number can be `2` or `"2"`, and a key with no marks is `null` or absent
+ * rather than `[]`. Every one of those used to fail the whole draft with
+ * "the model's draft structure is incomplete", after the tokens had already been
+ * spent — so a teacher paid for an answer and received a generic sentence.
+ *
+ * The coercions below normalise the shape without inventing content: a missing list
+ * becomes empty, a numeric string becomes a number. What must never be guessed stays
+ * strict — the schema still rejects a missing prompt, an unknown question type, or a
+ * score that is not a number at all.
+ */
+const text = (max: number) => z.preprocess((value) => (value === null || value === undefined ? "" : typeof value === "number" ? String(value) : value), z.string().max(max));
+const list = <T extends z.ZodTypeAny>(item: T, max: number) =>
+  z.preprocess((value) => (value === null || value === undefined ? [] : value), z.array(item).max(max));
+const score = z.preprocess(
+  (value) => {
+    if (typeof value === "string") {
+      // Persian/Arabic digits and a stray comma are common in a transcribed sheet.
+      const normalised = value
+        .replace(/[۰-۹]/g, (digit) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit)))
+        .replace(/[٠-٩]/g, (digit) => String("٠١٢٣٤٥٦٧٨٩".indexOf(digit)))
+        .replace(/٬|,/g, "")
+        .trim();
+      return normalised === "" ? undefined : Number(normalised);
+    }
+    return value;
+  },
+  z.number().nonnegative().max(1000),
+);
+
 const importedRubricSchema = z.object({
-  label: z.string().max(500),
-  description: z.string().max(5000),
-  points: z.number().nonnegative().max(1000),
+  label: text(500),
+  description: text(5000),
+  points: score,
 });
 
 const importedQuestionSchema = z.object({
-  number: z.number().int().nonnegative().max(200),
+  number: z.preprocess((value) => (typeof value === "string" ? Number(value.replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d))).trim()) : value), z.number().int().nonnegative().max(200)),
   type: z.enum([...questionTypes, "unknown"]),
-  prompt: z.string().max(20000),
-  maxScore: z.number().nonnegative().max(1000),
-  answer: z.string().max(20000),
-  options: z.array(z.string().max(3000)).max(30),
-  acceptedAnswers: z.array(z.string().max(3000)).max(50),
-  rubric: z.array(importedRubricSchema).max(50),
-  complete: z.boolean(),
-  issues: z.array(z.string().max(1000)).max(20),
+  // A prompt is the one thing that cannot be empty: a question with no wording is not
+  // a question, and accepting it would put a blank row in front of a teacher.
+  prompt: z.preprocess(
+    (value) => (value === null || value === undefined ? "" : typeof value === "number" ? String(value) : value),
+    z.string().trim().min(1, "صورت سؤال خالی است").max(20000),
+  ),
+  maxScore: score,
+  answer: text(20000),
+  options: list(text(3000), 30),
+  acceptedAnswers: list(text(3000), 50),
+  rubric: list(importedRubricSchema, 50),
+  complete: z.preprocess((value) => (value === "yes" || value === "true" ? true : value === "no" || value === "false" ? false : value), z.boolean().default(false)),
+  issues: list(text(1000), 20),
 });
 
 export const questionImportResultSchema = z.object({
   questions: z.array(importedQuestionSchema).max(200),
-  warnings: z.array(z.string().max(1500)).max(100),
+  warnings: list(text(1500), 100),
 });
 
 export type QuestionImportResult = z.infer<typeof questionImportResultSchema>;
+
+/**
+ * Rescues what is usable from a model's answer instead of discarding all of it.
+ *
+ * Why this exists: the whole result used to be validated as one object, so a single
+ * unusable question — or one harmless type slip anywhere — threw away every question
+ * the model had read correctly. The teacher saw "the draft is incomplete", the tokens
+ * were already spent, and the obvious next action was to send the same request again
+ * and spend them again.
+ *
+ * So: validate the answer as a whole first; if that fails, validate question by
+ * question and keep the ones that are sound. The questions that are dropped are
+ * reported by number, never silently ignored, and the caller still refuses to build
+ * a draft when nothing usable came back.
+ */
+export function salvageQuestionImport(raw: unknown): { result: QuestionImportResult | null; dropped: number[]; total: number } {
+  const whole = questionImportResultSchema.safeParse(raw);
+  if (whole.success) return { result: whole.data, dropped: [], total: whole.data.questions.length };
+
+  const container = raw as { questions?: unknown; warnings?: unknown } | null;
+  if (!container || !Array.isArray(container.questions)) return { result: null, dropped: [], total: 0 };
+
+  const kept: QuestionImportResult["questions"] = [];
+  const dropped: number[] = [];
+  container.questions.forEach((candidate, index) => {
+    const one = importedQuestionSchema.safeParse(candidate);
+    if (one.success) kept.push(one.data);
+    else dropped.push(index + 1);
+  });
+  if (!kept.length) return { result: null, dropped, total: container.questions.length };
+
+  const warnings = Array.isArray(container.warnings) ? container.warnings : [];
+  return {
+    result: {
+      questions: kept,
+      warnings: [
+        ...list(text(1500), 100).parse(warnings) as string[],
+        ...(dropped.length ? [`سؤال‌های ${dropped.join("، ")} ساختار کامل نداشتند و در پیش‌نویس نیامدند؛ آن‌ها را دستی وارد یا از برگه دوباره بخوانید.`] : []),
+      ],
+    },
+    dropped,
+    total: container.questions.length,
+  };
+}
 
 export const questionImportJsonSchema = {
   type: "object",
@@ -89,7 +171,10 @@ export class QuestionImportValidationError extends Error {
   issues: string[];
 
   constructor(issues: string[]) {
-    super(issues.join(" "));
+    // Each issue on its own line: the panel shows this text under the toast, and a
+    // run-on paragraph of six reasons is unreadable at exactly the moment the
+    // operator is trying to find out which question the model missed.
+    super(issues.join("\n"));
     this.name = "QuestionImportValidationError";
     this.issues = issues;
   }
@@ -105,61 +190,124 @@ function rubricFor(question: QuestionImportResult["questions"][number], warnings
   return [{ label: "پاسخ کامل بر اساس کلید", description: "معیار پیش‌فرض سیستم، نه متن استخراج‌شده از برگه؛ معلم باید آن را با بارم آزمون تطبیق دهد.", points: question.maxScore }];
 }
 
-/** Convert only a fully grounded model draft; incomplete or contradictory output is rejected. */
-export function normalizeImportedQuestions(result: QuestionImportResult): { questions: Question[]; warnings: string[] } {
+/**
+ * Turns a model draft into questions — keeping everything readable.
+ *
+ * An earlier version rejected the entire draft if *any* question was flagged
+ * `complete=false`, so one blurred line cost the teacher the whole sheet and prompted
+ * a resend (and a second bill for the same page images). Now a question that is
+ * marked incomplete is kept only when the parts a grader must not guess are actually
+ * present (number, wording, type, positive score, reference answer, and for a test
+ * item two real options); it is handed back with its issues named so the teacher can
+ * fix that row by hand. Anything still ungrounded — a blank prompt, an invented type,
+ * a zero score, an unreadable option, a rubric total that contradicts the score, a
+ * duplicate number — is dropped and reported by number.
+ */
+export function normalizeImportedQuestions(result: QuestionImportResult):
+  { questions: Question[]; warnings: string[]; dropped: Array<{ number: number; reasons: string[] }> } {
   const warnings = result.warnings.map((warning) => warning.trim()).filter(Boolean).slice(0, 30);
-  const issues: string[] = [];
-  if (!result.questions.length) issues.push("هیچ سؤال خوانایی در برگه پیدا نشد.");
-
+  const dropped: Array<{ number: number; reasons: string[] }> = [];
+  const missingKeys: number[] = [];
   const numbers = new Set<number>();
   const sorted = [...result.questions].sort((left, right) => left.number - right.number);
+
+  type Kept = { draft: QuestionImportResult["questions"][number]; questions: string[]; rubric: Array<{ label: string; description: string; points: number }> };
+  const kept: Kept[] = [];
+
   for (const [index, question] of sorted.entries()) {
-    const label = `سؤال ${question.number || index + 1}`;
-    if (!question.number || numbers.has(question.number)) issues.push(`${label}: شمارهٔ سؤال صفر یا تکراری است؛ تطبیق سؤال و کلید امن نیست.`);
+    const number = question.number || index + 1;
+    const label = `سؤال ${number}`;
+    const reasons: string[] = [];
+    const notes: string[] = [];
+
+    if (!question.number || numbers.has(question.number)) reasons.push("شمارهٔ سؤال صفر یا تکراری است و تطبیق با کلید امن نیست");
     numbers.add(question.number);
-    if (!question.complete || question.issues.length) {
-      issues.push(`${label}: خواندن کامل نیست و نباید حدس زده شود.${question.issues.length ? ` ${question.issues.join(" ")}` : ""}`);
+    if (!question.prompt.trim()) reasons.push("صورت سؤال خوانده نشده است");
+    if (question.type === "unknown") reasons.push("نوع سؤال از روی برگه روشن نیست");
+    if (!(question.maxScore > 0)) reasons.push("نمرهٔ صریح و مثبت ندارد");
+    if (["multiple_choice", "multiple_response", "true_false"].includes(question.type) && question.options.filter((option) => option.trim()).length < 2) {
+      reasons.push("کمتر از دو گزینهٔ خوانا دارد");
     }
-    if (question.type === "unknown") issues.push(`${label}: نوع سؤال از روی برگه روشن نیست.`);
-    if (!question.prompt.trim()) issues.push(`${label}: صورت سؤال خوانده نشده است.`);
-    if (!question.answer.trim()) issues.push(`${label}: پاسخ مرجع یا کلید خوانده نشده است.`);
     const extractedText = [question.prompt, question.answer, ...question.options, ...question.acceptedAnswers, ...question.rubric.flatMap((criterion) => [criterion.label, criterion.description])];
-    if (extractedText.some(hasUnreadableMarker)) issues.push(`${label}: در صورت، کلید، گزینه یا بارم نشانهٔ ناخوانایی وجود دارد؛ متن باید از تصویر واضح‌تر خوانده شود.`);
-    if (!(question.maxScore > 0)) issues.push(`${label}: نمرهٔ صریح و مثبت لازم است.`);
-    if (["multiple_choice", "multiple_response"].includes(question.type) && question.options.filter((option) => option.trim()).length < 2) {
-      issues.push(`${label}: حداقل دو گزینهٔ خوانا برای سؤال تستی لازم است.`);
+    if (extractedText.some(hasUnreadableMarker)) reasons.push("در متن یا گزینه‌ها نشانهٔ ناخوانایی هست");
+
+    // A reference answer is what a teacher grades against. Its absence cannot be
+    // guessed, but an empty key on a sheet that was read fine is a gap to fill in by
+    // hand, not a reason to throw the question (and the billed pages) away.
+    if (!question.answer.trim()) {
+      if (question.complete) reasons.push("پاسخ مرجع خوانده نشده است");
+      else notes.push("پاسخ مرجع خالی است و باید دستی نوشته شود");
     }
-    const rubric = rubricFor(question, warnings);
-    if (rubric.some((criterion) => !criterion.label.trim() || criterion.points < 0)) issues.push(`${label}: یکی از معیارهای بارم کامل نیست.`);
-    const rubricScore = rubric.reduce((sum, criterion) => sum + criterion.points, 0);
-    if (Math.abs(rubricScore - question.maxScore) > 0.001) issues.push(`${label}: جمع بارم (${rubricScore}) با نمرهٔ سؤال (${question.maxScore}) برابر نیست؛ سامانه آن را خودکار تغییر نمی‌دهد.`);
+
+    let rubric = question.rubric;
+    if (rubric.length) {
+      const badCriterion = rubric.find((criterion) => !criterion.label.trim() || criterion.points < 0);
+      const rubricScore = rubric.reduce((sum, criterion) => sum + criterion.points, 0);
+      if (badCriterion) reasons.push("یکی از معیارهای بارم کامل نیست");
+      else if (Math.abs(rubricScore - question.maxScore) > 0.001) reasons.push(`جمع بارم (${rubricScore}) با نمرهٔ سؤال (${question.maxScore}) برابر نیست`);
+    } else {
+      rubric = rubricFor({ ...question, number }, warnings);
+    }
+
+    if (reasons.length) { dropped.push({ number, reasons }); continue; }
+    if (!question.answer.trim()) missingKeys.push(number);
+    if (!question.complete) notes.push(...question.issues.map((issue) => issue.trim()).filter(Boolean));
+    kept.push({ draft: question, questions: notes, rubric });
   }
 
-  if (issues.length) throw new QuestionImportValidationError([...issues, ...warnings.map((warning) => `هشدار مدل: ${warning}`)].slice(0, 12));
+  if (!kept.length) {
+    throw new QuestionImportValidationError([
+      dropped.length
+        ? `هیچ سؤالی کامل خوانده نشد؛ ${dropped.length} سؤال رد شد: ${dropped.slice(0, 6).map((item) => `سؤال ${item.number} (${item.reasons[0]})`).join("، ")}${dropped.length > 6 ? " و بقیه" : ""}. برگهٔ واضح‌تر یا برش نزدیک‌تر بفرستید.`
+        : "هیچ سؤال خوانایی در برگه پیدا نشد.",
+      ...warnings.map((warning) => `هشدار مدل: ${warning}`),
+    ].slice(0, 12));
+  }
 
-  const sourceNumbers = sorted.map((question) => question.number);
-  if (sourceNumbers.some((number, index) => number !== index + 1)) warnings.push("شمارهٔ سؤال‌ها برای نمایش متوالی شد؛ متن و کلید هر سؤال تغییر نکرده است.");
+  if (missingKeys.length) {
+    warnings.push(`کلید سؤال‌های ${missingKeys.join("، ")} در برگه خوانده نشد؛ پیش‌نویس ساخته شد ولی باید پاسخ مرجع آن‌ها را دستی بنویسید.`);
+  }
+  if (dropped.length) {
+    warnings.push(`سؤال‌های ${dropped.map((item) => item.number).join("، ")} خوانا نبودند و در پیش‌نویس نیامدند؛ آن‌ها را دستی وارد یا فقط همان برگه را دوباره بخوانید.`);
+  }
+  const sourceNumbers = sorted.filter((question) => kept.some((item) => item.draft === question)).map((question) => question.number);
+  if (sourceNumbers.some((number) => number !== 0) && sourceNumbers.some((number, index) => number !== index + 1)) {
+    warnings.push("شمارهٔ سؤال‌ها برای نمایش متوالی شد؛ متن و کلید هر سؤال تغییر نکرده است.");
+  }
 
+  const finalWarnings = [...new Set(warnings)].slice(0, 30);
   return {
-    warnings: [...new Set(warnings)].slice(0, 30),
-    questions: sorted.map((question, index) => {
-      const type = question.type as QuestionType;
-      const rubric = rubricFor(question, warnings);
-      return {
+    warnings: finalWarnings,
+    dropped,
+    questions: kept.map((item, index) => {
+      const type = item.draft.type as QuestionType;
+      const question: Question & { importNotes?: string[] } = {
         id: createId("question"),
         number: index + 1,
         type,
-        prompt: question.prompt.trim(),
-        maxScore: question.maxScore,
-        answer: question.answer.trim(),
-        options: question.options.map((option) => option.trim()).filter(Boolean),
-        acceptedAnswers: question.acceptedAnswers.map((answer) => answer.trim()).filter(Boolean),
+        prompt: item.draft.prompt.trim(),
+        maxScore: item.draft.maxScore,
+        answer: item.draft.answer.trim(),
+        options: item.draft.options.map((option) => option.trim()).filter(Boolean),
+        acceptedAnswers: item.draft.acceptedAnswers.map((answer) => answer.trim()).filter(Boolean),
         partialCredit: !["multiple_choice", "true_false", "fill_blank"].includes(type),
         errorCarriedForward: type === "math",
-        rubric: rubric.map((criterion) => ({ id: createId("rubric"), label: criterion.label.trim(), description: criterion.description.trim(), points: criterion.points })),
+        rubric: item.rubric.map((criterion) => ({ id: createId("rubric"), label: criterion.label.trim(), description: criterion.description.trim(), points: criterion.points })),
       };
+      if (item.questions.length) question.importNotes = item.questions;
+      return question;
     }),
   };
+}
+
+/**
+ * Notes the panel shows next to a question that was kept but needs a human look.
+ * They travel separately from the saved question so the exam payload stays exactly
+ * the shape the rest of the app validates.
+ */
+export function importNotesOf(question: Question): string[] {
+  const notes = (question as Question & { importNotes?: string[] }).importNotes;
+  return Array.isArray(notes) ? notes : [];
 }
 
 export function buildQuestionImportPrompt(manifest: string): string {

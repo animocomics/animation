@@ -2,7 +2,7 @@
 
 import { type ChangeEvent, type DragEvent, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, Eye, FileImage, FileText, KeyRound, LoaderCircle, ScanText, Trash2, UploadCloud } from "lucide-react";
-import { ACCEPTED_FILE_TYPES, MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_LABEL } from "../../lib/file-constraints";
+import { ACCEPTED_FILE_EXTENSIONS, ACCEPTED_FILE_LABEL, ACCEPTED_FILE_TYPES, MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_LABEL } from "../../lib/file-constraints";
 import { deleteStoredFile, getStoredFile, storeFile } from "../../lib/file-store";
 import { useApp } from "../../lib/app-context";
 import type { Exam, QuestionSourceFile, QuestionSourceKind } from "../../lib/types";
@@ -66,7 +66,7 @@ export function QuestionSourceImporter({ examId, sources, needsReview, imported,
       for (const file of files) {
         const type = fileType(file);
         if (!(ACCEPTED_FILE_TYPES as readonly string[]).includes(type)) {
-          notify({ title: `فرمت ${file.name} پشتیبانی نمی‌شود`, description: "فقط JPG، PNG، WebP و PDF وارد کنید.", variant: "error" });
+          notify({ title: `فرمت ${file.name} پشتیبانی نمی‌شود`, description: `فقط ${ACCEPTED_FILE_LABEL} پذیرفته می‌شود.`, variant: "error" });
           continue;
         }
         if (file.size < 10 || file.size > MAX_FILE_SIZE_BYTES) {
@@ -169,7 +169,7 @@ export function QuestionSourceImporter({ examId, sources, needsReview, imported,
         onDragLeave={() => setDragActive(false)}
         onDrop={onDrop}
       >
-        <input ref={inputRef} type="file" hidden multiple accept=".jpg,.jpeg,.png,.webp,.pdf" onChange={onInput} />
+        <input ref={inputRef} type="file" hidden multiple accept={ACCEPTED_FILE_EXTENSIONS} onChange={onInput} />
         <UploadCloud size={24} />
         <div className="question-source-dropzone-copy"><strong>عکس بگیرید یا برگه‌ها را انتخاب کنید</strong><span>نقش هر فایل با دکمهٔ انتخاب خودکار مشخص می‌شود.</span></div>
         <div className="question-source-upload-actions">
@@ -178,7 +178,7 @@ export function QuestionSourceImporter({ examId, sources, needsReview, imported,
           <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => chooseFiles("combined")}><UploadCloud size={16} />سؤال و کلید در یک فایل</button>
         </div>
       </div>
-      <p className="question-source-limit">JPG، PNG، WebP یا PDF؛ حداکثر ۳۰ فایل و ۲۰ صفحه برای هر PDF. فایل رها شده در کادر، نقش «سؤال و کلید با هم» می‌گیرد و بعداً قابل تغییر است.</p>
+      <p className="question-source-limit">پسوندهای مجاز: {ACCEPTED_FILE_LABEL}؛ حداکثر ۳۰ فایل و ۲۰ صفحه برای هر PDF. فایل رها شده در کادر، نقش «سؤال و کلید با هم» می‌گیرد و بعداً قابل تغییر است.</p>
 
       {sources.length ? <div className="question-source-list">
         {sources.map((source, index) => <article className="question-source-file" key={source.id}>

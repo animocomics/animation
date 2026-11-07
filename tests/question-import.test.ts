@@ -4,6 +4,7 @@ import { MAX_FILE_SIZE_BYTES, MAX_FILE_BASE64_LENGTH } from "../lib/file-constra
 import { saveUserFile } from "../lib/server/file-storage";
 import {
   buildQuestionImportPrompt,
+  importNotesOf,
   normalizeImportedQuestions,
   QuestionImportValidationError,
   questionImportResultSchema,
@@ -38,21 +39,54 @@ test("question import keeps a readable draft editable and marks a system fallbac
   assert.ok(draft.questions[0].id.startsWith("question_"));
 });
 
-test("incomplete, unreadable or contradictory question extraction is rejected instead of guessed", () => {
-  const incomplete = completeImport();
-  incomplete.questions[0].complete = false;
-  incomplete.questions[0].answer = "";
-  incomplete.questions[0].issues = ["کلید در تصویر بریده شده است."];
-  assert.throws(() => normalizeImportedQuestions(incomplete), (error) => error instanceof QuestionImportValidationError && /حدس/.test(error.message));
+test("a question the model flagged incomplete is kept with its note when nothing crucial is missing", () => {
+  const draft = completeImport();
+  draft.questions[0].complete = false;
+  draft.questions[0].answer = "";
+  draft.questions[0].issues = ["کلید در تصویر بریده شده است."];
+  const result = normalizeImportedQuestions(draft);
+  assert.equal(result.questions.length, 1, "the readable question must not be thrown away");
+  assert.equal(result.questions[0].answer, "");
+  assert.deepEqual(result.dropped, []);
+  assert.ok(result.warnings.some((warning) => warning.includes("کلید سؤال‌های 1")), "a missing key is named as a warning");
+  assert.deepEqual(importNotesOf(result.questions[0]), ["پاسخ مرجع خالی است و باید دستی نوشته شود", "کلید در تصویر بریده شده است."]);
+});
 
-  const mismatch = completeImport();
-  mismatch.questions[0].rubric = [{ label: "گام اول", description: "شرح", points: 1 }];
-  assert.throws(() => normalizeImportedQuestions(mismatch), /جمع بارم/);
+test("contradictory extraction is dropped by number and the sound questions survive", () => {
+  const mixed = questionImportResultSchema.parse({
+    questions: [
+      { number: 1, type: "short_answer", prompt: "تعریف سلول", maxScore: 2, answer: "واحد ساختاری", options: [], acceptedAnswers: [], rubric: [], complete: true, issues: [] },
+      { number: 2, type: "short_answer", prompt: "بارم اشتباه", maxScore: 2, answer: "پاسخ", options: [], acceptedAnswers: [], rubric: [{ label: "گام", description: "شرح", points: 1 }], complete: true, issues: [] },
+      { number: 3, type: "multiple_choice", prompt: "گزینهٔ ناخوانا", maxScore: 1, answer: "الف", options: ["الف", "[ناخوانا]"], acceptedAnswers: [], rubric: [], complete: true, issues: [] },
+    ],
+    warnings: [],
+  });
+  const result = normalizeImportedQuestions(mixed);
+  assert.deepEqual(result.questions.map((question) => question.prompt), ["تعریف سلول"]);
+  assert.deepEqual(result.dropped.map((item) => item.number), [2, 3]);
+  assert.match(result.dropped[0].reasons[0], /جمع بارم/);
+  assert.match(result.dropped[1].reasons[0], /ناخوانایی/);
+  assert.ok(result.warnings.some((warning) => warning.includes("سؤال‌های 2، 3")));
+});
 
-  const unreadableOption = completeImport();
-  unreadableOption.questions[0].type = "multiple_choice";
-  unreadableOption.questions[0].options = ["الف", "[ناخوانا]"];
-  assert.throws(() => normalizeImportedQuestions(unreadableOption), /ناخوانایی/);
+test("when nothing is usable the error names each rejected question instead of a generic sentence", () => {
+  const nothing = questionImportResultSchema.parse({
+    questions: [{ number: 4, type: "unknown", prompt: "متن مبهم", maxScore: 0, answer: "", options: [], acceptedAnswers: [], rubric: [], complete: true, issues: [] }],
+    warnings: [],
+  });
+  assert.throws(
+    () => normalizeImportedQuestions(nothing),
+    (error) => error instanceof QuestionImportValidationError
+      && /هیچ سؤالی کامل خوانده نشد/.test(error.message)
+      && /سؤال 4/.test(error.message),
+  );
+});
+
+test("a blank prompt never reaches a draft, even though every other field is tolerant", () => {
+  assert.throws(
+    () => questionImportResultSchema.parse({ questions: [{ number: 1, type: "short_answer", prompt: "   ", maxScore: 1, answer: "", options: [], acceptedAnswers: [], rubric: [], complete: true, issues: [] }], warnings: [] }),
+    /صورت سؤال خالی است/,
+  );
 });
 
 test("question import prompt carries explicit file roles and the storage limit is 100 MiB", () => {
