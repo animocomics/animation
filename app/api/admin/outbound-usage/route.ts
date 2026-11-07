@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { AuthError, requireAdmin } from "@/lib/server/auth";
-import { providerBudgetAll, PROVIDER_BUDGET } from "@/lib/server/provider-rate-limit";
+import { providerBudgetAll, PROVIDER_BUDGET, serverOutboundUsage } from "@/lib/server/provider-rate-limit";
 import { providerStreaks, recentProviderFailures } from "@/lib/server/provider-failure-log";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -34,14 +34,18 @@ export async function GET() {
   }
 
   const usage = providerBudgetAll();
+  // The only number the provider enforces: every destination combined, across
+  // every process on this machine.
+  const server = serverOutboundUsage();
   return NextResponse.json(
     {
-      version: "v23",
+      version: "v24",
+      server,
       windowMinutes: PROVIDER_BUDGET.windowMs / 60_000,
       maxPerWindow: PROVIDER_BUDGET.maxPerWindow,
       maxConcurrency: PROVIDER_BUDGET.maxConcurrency,
       usage,
-      totalUsed: usage.reduce((sum, row) => sum + row.used, 0),
+      totalUsed: server.used,
       anyBreakerOpen: usage.some((row) => row.breakerOpen),
       streaks: providerStreaks(),
       recentFailures: recentProviderFailures().slice(0, 5),

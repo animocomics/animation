@@ -409,3 +409,26 @@ test("the operator is told which address to use, without a console", () => {
   assert.match(script, /EGRESS_OK|EGRESS_BLOCKED/, "the command must reach a verdict");
   assert.ok(!/apiKey|sk-/.test(script), "listing addresses must not touch credentials");
 });
+
+test("the ceiling is server-wide and the panel shows that number", () => {
+  // The operator's rule: the 200-per-20-minutes limit is the whole server's, not
+  // one API's. A per-host counter could be evaded by adding a second destination,
+  // and a separate worker kept its own count, so a widget could have sent 3000.
+  const limit = fs.readFileSync(path.join(root, "lib/server/provider-rate-limit.ts"), "utf8");
+  assert.match(limit, /createOutboundWindow/, "a single shared window must exist");
+  assert.match(limit, /serverWindow\.take\(\)/, "every provider request must spend from it");
+  assert.match(limit, /سقف کل خروجی سرور/, "the refusal must say it is the whole server");
+  assert.match(limit, /serverOutboundUsage/, "the panel needs the shared number");
+
+  const window = fs.readFileSync(path.join(root, "lib/server/outbound-window.ts"), "utf8");
+  // In memory only, two Next.js workers would each count to 120.
+  assert.match(window, /dataDirectory/, "the window must live on disk to be shared across processes");
+  assert.match(window, /withLock/, "concurrent writers must be serialised");
+
+  const route = fs.readFileSync(path.join(root, "app/api/admin/outbound-usage/route.ts"), "utf8");
+  assert.match(route, /serverOutboundUsage/, "the counter endpoint must report the shared window");
+
+  const panel = fs.readFileSync(path.join(root, "components/api-connection.tsx"), "utf8");
+  assert.match(panel, /همهٔ مقصدها/, "the panel must show one combined bar");
+  assert.match(panel, /محدودیت کل خروجی سرور/, "and label it as the whole server");
+});

@@ -14,6 +14,9 @@
 //
 // Everything here is in-process and cheap; nothing is written to disk.
 
+import { createOutboundWindow } from "./outbound-window";
+import { DATA_DIRECTORY } from "./db";
+
 const WINDOW_MS = 20 * 60 * 1000;
 // Kept at 60% of the 200/20min limit so other site traffic (fonts, assets, mail)
 // shares the same per-IP budget without tripping the provider's rule.
@@ -30,6 +33,33 @@ interface HostState {
 }
 
 const hosts = new Map<string, HostState>();
+
+/**
+ * The ceiling that actually matters.
+ *
+ * The hosting provider blocks the whole subscription, not one API: 200 requests to
+ * anything inside 20 minutes and the server loses egress. The per-host counter
+ * below could not enforce that — two destinations at 120 each is 240 — so every
+ * request also passes a single server-wide window, kept in the data directory so
+ * that a second Next.js worker, a console script, or the admin's own test spends
+ * from the same budget.
+ */
+// 120, not 200: the other 80 slots belong to the rest of the site's traffic, which
+// shares the same per-IP allowance at the hosting provider.
+const SERVER_WIDE_MAX = (() => {
+  // Tests exercise the provider path dozens of times; they must not consume a
+  // real 20-minute window. `npm test` sets NOMREH_OUTBOUND_WINDOW_LIMIT for that
+  // reason only; the production launcher never sets it, and the app never reads it
+  // from the database or the panel.
+  const override = Number(process.env.NOMREH_OUTBOUND_WINDOW_LIMIT || "");
+  if (Number.isInteger(override) && override > 0) return override;
+  return 120;
+})();
+const serverWindow = createOutboundWindow({
+  dataDirectory: DATA_DIRECTORY,
+  max: SERVER_WIDE_MAX,
+  windowMs: WINDOW_MS,
+});
 
 function stateFor(hostname: string): HostState {
   let state = hosts.get(hostname);
@@ -98,6 +128,16 @@ export async function withProviderBudget<T>(hostname: string, task: () => Promis
     );
   }
 
+  // Whole-server ceiling first: it is the only one the provider enforces.
+  const shared = serverWindow.take();
+  if (!shared.ok) {
+    throw new ProviderRateLimitError(
+      `سقف کل خروجی سرور در ۲۰ دقیقه پر شده است (${shared.limit} درخواست برای همهٔ مقصدها). برای جلوگیری از مسدودشدن کامل خروجی، ${Math.ceil(shared.retryAfterMs / 60_000)} دقیقهٔ دیگر تلاش کنید.`,
+      "PROVIDER_RATE_LIMITED",
+      shared.retryAfterMs,
+    );
+  }
+
   if (state.hits.length >= MAX_PER_WINDOW) {
     const retry = state.hits[0] + WINDOW_MS - now;
     throw new ProviderRateLimitError(
@@ -161,3 +201,8 @@ export function providerBudgetSnapshot(hostnames: string[]): RateLimitSnapshot[]
 }
 
 export const PROVIDER_BUDGET = { windowMs: WINDOW_MS, maxPerWindow: MAX_PER_WINDOW, maxConcurrency: MAX_CONCURRENCY };
+
+/** The whole-server ceiling, for the counter in /admin. */
+export function serverOutboundUsage(): { used: number; limit: number; remaining: number; windowMinutes: number } {
+  return serverWindow.snapshot();
+}

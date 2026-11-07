@@ -16,7 +16,7 @@
     "restart:plesk": "\"$npm_node_execpath\" scripts/plesk-standalone.cjs restart",
     "stop:plesk": "\"$npm_node_execpath\" scripts/plesk-standalone.cjs stop",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test tests/**/*.test.ts",
+    "test": "NODE_ENV=test NOMREH_OUTBOUND_WINDOW_LIMIT=100000 NOMREH_DATA_DIR=../nomreh-data-test tsx --test tests/**/*.test.ts",
     "diagnose": "node scripts/nomreh-diagnose.cjs",
     "delta": "node scripts/nomreh-delta-update.cjs",
     "shecan:off": "node scripts/nomreh-disable-shecan.cjs",

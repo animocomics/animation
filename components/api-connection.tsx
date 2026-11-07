@@ -36,6 +36,8 @@ export function ApiConnection() {
     maxConcurrency: number;
     usage: Array<{ hostname: string; used: number; limit: number; remaining: number; percentUsed: number; active: number; breakerOpen: boolean; breakerMinutesLeft: number }>;
     totalUsed: number;
+    /** Whole-server window: the only number the hosting provider enforces. */
+    server?: { used: number; limit: number; remaining: number; windowMinutes: number };
     anyBreakerOpen: boolean;
     recentFailures: Array<{ at: string; hostname: string; code: string; detail: string }>;
     kaya: { at: string; reachable: boolean; address: string; blockedSince: string | null; tcp: { detail: string }; http: { status: number; code?: string } } | null;
@@ -48,6 +50,7 @@ export function ApiConnection() {
     egress: Array<{ step: string; ok: boolean; detail: string; ms: number }>;
     host?: { verdict: string; lines: Array<{ label: string; value: string; ok: boolean | null; hint?: string }>; suggestions: string[] };
     outboundUsage?: Array<{ hostname: string; used: number; limit: number; remaining: number; windowMinutes: number; active: number; breakerOpen: boolean; breakerMinutesLeft: number; nextSlotInSeconds: number; percentUsed: number }>;
+    server?: { used: number; limit: number; remaining: number; windowMinutes: number };
     recentFailures?: Array<{ at: string; hostname: string; provider: string; code: string; detail: string; model: string }>;
     rows: Array<{ label: string; hostname: string; step: string; ok: boolean; detail: string; ms: number }>;
   }>({ loading: false, conclusion: "", egressConclusion: "", egress: [], rows: [] });
@@ -189,6 +192,7 @@ export function ApiConnection() {
           maxConcurrency: payload.maxConcurrency ?? 2,
           usage: payload.usage ?? [],
           totalUsed: payload.totalUsed ?? 0,
+          server: payload.server,
           anyBreakerOpen: Boolean(payload.anyBreakerOpen),
           recentFailures: payload.recentFailures ?? [],
           kaya: payload.kaya ?? null,
@@ -303,11 +307,28 @@ export function ApiConnection() {
       </div>
       <div className="notice notice-info outbound-usage-card" dir="rtl" style={{ marginBottom: 12 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-          <strong>محدودیت درخواست خروجی — پنجرهٔ {faNumber(usage.windowMinutes)} دقیقه‌ای</strong>
+          <strong>محدودیت کل خروجی سرور — پنجرهٔ {faNumber(usage.server?.windowMinutes ?? usage.windowMinutes)} دقیقه‌ای</strong>
           <span className="form-hint">
-            سقف {faNumber(usage.maxPerWindow)} درخواست · هم‌زمانی {faNumber(usage.maxConcurrency)} · برای جلوگیری از مسدودشدن سرور توسط میزبان
+            سقف {faNumber(usage.server?.limit ?? usage.maxPerWindow)} درخواست برای همهٔ مقصدها با هم · هم‌زمانی {faNumber(usage.maxConcurrency)} · برای جلوگیری از مسدودشدن سرور توسط میزبان
           </span>
         </div>
+        {usage.server ? (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+            <strong>همهٔ مقصدها</strong>
+            <span style={{ display: "inline-block", width: 180, height: 10, background: "#e5e7eb", borderRadius: 5 }}>
+              <span
+                style={{
+                  display: "block",
+                  width: `${Math.min(100, Math.round((usage.server.used / Math.max(1, usage.server.limit)) * 100))}%`,
+                  height: 10,
+                  borderRadius: 5,
+                  background: usage.server.remaining === 0 ? "#dc2626" : usage.server.used / usage.server.limit > 0.8 ? "#f59e0b" : "#16a34a",
+                }}
+              />
+            </span>
+            <span>{faNumber(usage.server.used)} از {faNumber(usage.server.limit)} · باقی‌مانده {faNumber(usage.server.remaining)}</span>
+          </div>
+        ) : null}
         {usage.usage.length === 0 ? (
           <div className="form-hint" style={{ marginTop: 6 }}>{usage.loaded ? "هنوز در این اجرا درخواستی به سرویس‌دهنده ارسال نشده است." : "در حال خواندن…"}</div>
         ) : (
