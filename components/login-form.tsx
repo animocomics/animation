@@ -3,12 +3,14 @@
 import { type FormEvent, useState } from "react";
 import { ArrowLeft, Check, CheckCheck, Eye, EyeOff, FileCheck2, LoaderCircle, LockKeyhole, ShieldCheck, Sparkles, UserRound, UsersRound } from "lucide-react";
 
-export function LoginForm({ showDemoAccounts }: { showDemoAccounts: boolean }) {
+export function LoginForm({ showDemoAccounts, initialError = "", next = "/" }: { showDemoAccounts: boolean; initialError?: string; next?: string }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
+  // A server-rendered message (from the no-JavaScript form) starts here, so a
+  // failed attempt explains itself even if the client never hydrates.
+  const [error, setError] = useState(initialError);
 
   async function submit(event?: FormEvent) {
     event?.preventDefault();
@@ -23,7 +25,10 @@ export function LoginForm({ showDemoAccounts }: { showDemoAccounts: boolean }) {
       });
       const payload = await response.json() as { error?: string };
       if (!response.ok) throw new Error(payload.error || "ورود انجام نشد؛ لطفاً دوباره تلاش کنید");
-      window.location.assign("/");
+      // Admin goes to the panel, everyone else to the workspace — the same
+      // destinations the server-side form uses, so both paths behave alike.
+      const role = (payload as { user?: { role?: string } }).user?.role;
+      window.location.assign(role === "admin" ? "/admin" : next || "/");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "ورود انجام نشد؛ لطفاً دوباره تلاش کنید");
       setBusy(false);
@@ -60,14 +65,18 @@ export function LoginForm({ showDemoAccounts }: { showDemoAccounts: boolean }) {
           <span className="login-lock"><LockKeyhole size={23} /></span>
           <h2>به نمره خوش آمدید</h2>
           <p className="login-subtitle">برای ورود به فضای کاری، نام کاربری و رمز عبور خود را وارد کنید</p>
-          <form onSubmit={submit} className="login-form">
+          {/* method="post" + action: if React never hydrates, the browser still
+              submits this form to the server, which sets the cookie and redirects.
+              That is the difference between "wrong password" and "nothing happens". */}
+          <form onSubmit={submit} action="/api/auth/login/form" method="post" className="login-form">
+            <input type="hidden" name="next" value={next} />
             <div className="form-field">
               <label htmlFor="login-username">نام کاربری</label>
-              <div className="input-with-icon"><UserRound size={18} /><input id="login-username" className="input" dir="ltr" autoComplete="username" autoFocus value={username} onChange={(event) => setUsername(event.target.value)} placeholder="username" disabled={busy} /></div>
+              <div className="input-with-icon"><UserRound size={18} /><input id="login-username" name="username" className="input" dir="ltr" autoComplete="username" autoFocus value={username} onChange={(event) => setUsername(event.target.value)} placeholder="username" disabled={busy} /></div>
             </div>
             <div className="form-field">
               <label htmlFor="login-password">رمز عبور</label>
-              <div className="input-with-icon input-with-action"><LockKeyhole size={18} /><input id="login-password" className="input" dir="ltr" type={showPassword ? "text" : "password"} autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="••••••••••" disabled={busy} /><button type="button" className="input-action" aria-label={showPassword ? "پنهان‌کردن رمز" : "نمایش رمز"} onClick={() => setShowPassword((value) => !value)}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div>
+              <div className="input-with-icon input-with-action"><LockKeyhole size={18} /><input id="login-password" name="password" className="input" dir="ltr" type={showPassword ? "text" : "password"} autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="••••••••••" disabled={busy} /><button type="button" className="input-action" aria-label={showPassword ? "پنهان‌کردن رمز" : "نمایش رمز"} onClick={() => setShowPassword((value) => !value)}>{showPassword ? <EyeOff size={17} /> : <Eye size={17} />}</button></div>
             </div>
             {error && <div className="login-error" role="alert">{error}</div>}
             <button className="btn btn-primary btn-lg login-submit" disabled={busy}>{busy ? <LoaderCircle className="spin-icon" size={18} /> : <ArrowLeft size={18} />}{busy ? "در حال ورود…" : "ورود به فضای کاری"}</button>
