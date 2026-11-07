@@ -78,6 +78,12 @@ class Jar {
   secureNames() {
     return [...this.cookies.entries()].filter(([, cookie]) => cookie.secure).map(([name]) => name);
   }
+  /** True when the session cookie is SameSite=None, i.e. usable in a framed preview. */
+  sameSiteNone() {
+    return [...this.cookies.values()].some((cookie) =>
+      cookie.attributes.some((attribute) => attribute.toLowerCase() === "samesite=none"),
+    );
+  }
 }
 
 async function checkStaticAssets(html) {
@@ -130,11 +136,16 @@ async function main() {
     })();
     say("session cookie", `${jar.describe("nomreh_session")} (role ${role})`);
     const secure = jar.secureNames();
-    if (secure.length) {
+    const isHttps = ORIGIN.startsWith("https://");
+    // Over plain HTTP a Secure cookie is dropped by the browser; over HTTPS it is
+    // exactly what the preview needs, so only the insecure origin is a failure.
+    if (secure.length && !isHttps) {
       fail(
         "cookie flags",
         `${secure.join(", ")} is Secure but this origin is plain HTTP, so a browser will drop it and the page will stay on the login screen`,
       );
+    } else if (secure.length) {
+      say("cookie flags", `Secure over HTTPS — accepted by the browser${jar.sameSiteNone() ? " (cross-site capable)" : ""}`);
     }
   }
 
