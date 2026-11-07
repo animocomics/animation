@@ -63,7 +63,10 @@ export async function createSession(userId: string): Promise<string> {
   cookieStore.set(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    // Secure cookies are required in production, and the sandbox preview is plain
+    // HTTP, so the override exists for local validation only. It has to be set
+    // explicitly: an unset variable can never weaken a real deployment's cookie.
+    secure: process.env.NOMREH_COOKIE_SECURE === "0" ? false : process.env.NODE_ENV === "production",
     path: "/",
     expires,
   });
