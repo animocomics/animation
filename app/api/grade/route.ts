@@ -17,6 +17,14 @@ import { providerErrorHttpStatus } from "@/lib/error-message";
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
+// One grading job per submission at a time. A double-click used to start a second
+// full run: another PDF conversion plus another provider call for every page.
+// Combined with retries that is how one operator generated thousands of outbound
+// requests, and the hosting provider then blocked the whole subscription's egress.
+const gradingGlobal = globalThis as typeof globalThis & { __nomrehGradingInFlight?: Set<string> };
+const gradingInFlight = gradingGlobal.__nomrehGradingInFlight || new Set<string>();
+gradingGlobal.__nomrehGradingInFlight = gradingInFlight;
+
 type GradeFileInput = {
   name?: string;
   type?: "image/jpeg" | "image/png" | "image/webp" | "application/pdf";
@@ -77,6 +85,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "سؤال‌ها و کلید هنوز تأیید نشده‌اند. ابتدا پیش‌نویس را با برگهٔ اصلی مقایسه و در گام ۲ تأیید کنید." }, { status: 409 });
     }
     config = await getProviderConfig();
+    const jobKey = `${user.id}:${parsed.submissionId || parsed.examId}`;
+    if (gradingInFlight.has(jobKey)) {
+      return NextResponse.json(
+        { error: "این برگه همین حالا در حال تصحیح است. تا پایان همان اجرا صبر کنید و دوباره نفرستید." },
+        { status: 429 },
+      );
+    }
+    gradingInFlight.add(jobKey);
     input = { ...parsed, files: await resolveGradeFiles(user.id, parsed.files) } as GradeApiRequest;
   } catch (error) {
     if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.status });
@@ -133,9 +149,11 @@ export async function POST(request: Request) {
     }
 
     await recordJob("succeeded", usage);
+    if (user && input) gradingInFlight.delete(`${user.id}:${(input as GradeApiRequest).submissionId || (input as GradeApiRequest).examId}`);
     return NextResponse.json({ result: normalized satisfies GradingResult });
   } catch (error) {
     const message = error instanceof Error ? error.message : "تصحیح برگه کامل نشد.";
+    if (user) gradingInFlight.delete(`${user.id}:${input?.submissionId || input?.examId || ""}`);
     await recordJob("failed", usage, message);
     if (error instanceof ProviderError) return NextResponse.json({ error: error.message }, { status: providerErrorHttpStatus(error.status) });
     return NextResponse.json({ error: "تصحیح این برگه کامل نشد. اطلاعات شما ذخیره شده است؛ لطفاً دوباره تلاش کنید." }, { status: 500 });

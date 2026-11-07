@@ -3,6 +3,7 @@ import { AuthError, requireAdmin } from "@/lib/server/auth";
 import { getApiNetworkStatus } from "@/lib/server/api-network";
 import { inspectAddresses, addressConclusion } from "@/lib/server/network-probe";
 import { inspectHost } from "@/lib/server/host-network-inspect";
+import { providerBudgetSnapshot } from "@/lib/server/provider-rate-limit";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -263,12 +264,15 @@ export async function GET(request: Request) {
   return NextResponse.json({
     // Lets the operator confirm the deploy actually took effect: if this marker
     // is missing, the browser is talking to an older build.
-    diagnosticsVersion: "v9",
+    diagnosticsVersion: "v10",
     checkedAt: new Date().toISOString(),
     elapsedMs: Date.now() - startedAt,
     runtimeVersion: process.version,
     platform: process.platform,
     networkMode,
+    // Shows the operator how much of the outbound allowance is used, so a block
+    // caused by request volume can be recognised before it happens.
+    providerBudget: providerBudgetSnapshot([...new Set(selected.map((target) => new URL(target.url).hostname))]),
     host,
     egress,
     egressConclusion,

@@ -181,3 +181,35 @@ test("host inspection does not mistake our own runtime for a foreign VPN", () =>
   assert.match(script, /OWN_PATHS/);
   assert.ok(!/\|shecan\|/.test(script), "a bare 'shecan' substring must not flag our own runtime");
 });
+
+test("outbound provider traffic is capped well under the host's block threshold", async () => {
+  // Radcom blocks a subscription after 200 outbound requests to one address in
+  // 20 minutes; a relay poll briefly produced 3612 and cost the server its egress.
+  const limit = await import("../lib/server/provider-rate-limit");
+  assert.ok(limit.PROVIDER_BUDGET.maxPerWindow < 200, "the cap must sit below the hosting threshold");
+  assert.equal(limit.PROVIDER_BUDGET.maxPerWindow, 120);
+  assert.ok(limit.PROVIDER_BUDGET.maxConcurrency <= 2);
+
+  // The gate must be reachable from the single choke point every provider call uses.
+  const network = fs.readFileSync(path.join(root, "lib/server/provider-network.ts"), "utf8");
+  assert.match(network, /withProviderBudget/, "providerFetch must pass through the budget gate");
+  assert.match(network, /providerFetchDirect/);
+
+  // Exhausting the window must throw a typed, non-retryable error.
+  const host = "budget-test.invalid";
+  const results: string[] = [];
+  for (let index = 0; index < 125; index += 1) {
+    try {
+      await limit.withProviderBudget(host, async () => "ok");
+    } catch (error) {
+      results.push((error as { code?: string }).code || "unknown");
+    }
+  }
+  assert.ok(results.includes("PROVIDER_RATE_LIMITED"), "the window must close");
+});
+
+test("the same submission cannot be graded twice at once", () => {
+  const grade = fs.readFileSync(path.join(root, "app/api/grade/route.ts"), "utf8");
+  assert.match(grade, /gradingInFlight/, "an in-flight guard must exist");
+  assert.match(grade, /status: 429/, "a duplicate run must be rejected, not queued");
+});

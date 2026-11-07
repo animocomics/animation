@@ -8,6 +8,7 @@ import { resolveShecanDoh, type ShecanDohRecord } from "./shecan-doh";
 import { resolveShecanDot } from "./shecan-dot";
 import { resolveShecanDns5353 } from "./shecan-dns5353";
 import { fixedShecanIpv4Lookup } from "./shecan-sni";
+import { withProviderBudget } from "./provider-rate-limit";
 
 const PROVIDER_HOSTNAMES = new Set([
   "api.openai.com",
@@ -198,6 +199,19 @@ export async function providerFetch(
   init: RequestInit = {},
   network?: ProviderNetworkConfig,
   dns5353Resolver: typeof resolveShecanDns5353 = resolveShecanDns5353,
+): Promise<Response> {
+  const hostname = new URL(url).hostname.toLowerCase();
+  // Every outbound provider call passes through this gate. A retry loop once sent
+  // thousands of requests to one address and the hosting provider blocked the
+  // subscription's whole egress, which then looked like a broken API key.
+  return withProviderBudget(hostname, () => providerFetchDirect(url, init, network, dns5353Resolver));
+}
+
+async function providerFetchDirect(
+  url: string,
+  init: RequestInit,
+  network: ProviderNetworkConfig | undefined,
+  dns5353Resolver: typeof resolveShecanDns5353,
 ): Promise<Response> {
   const hostname = new URL(url).hostname.toLowerCase();
   if (!network?.enabled || !isProviderHostname(hostname)) {

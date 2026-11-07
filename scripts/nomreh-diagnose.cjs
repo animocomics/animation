@@ -21,6 +21,15 @@ const TARGETS = [
   { label: "Kaya AI", host: "kayaai.ir", path: "/api/chat/completions" },
   { label: "GitHub", host: "api.github.com", path: "/" },
 ];
+// Iranian destinations behave differently from foreign ones when traffic leaves
+// through a foreign NAT: the app's server is in Iran, but its observed egress was
+// an OVH US address, and Iranian sites commonly refuse foreign source IPs. Testing
+// both classes side by side separates "Kaya blocks us" from "everything Iranian
+// blocks us", which need different fixes.
+const DESTINATIONS = {
+  "ایرانی": ["kayaai.ir", "www.digikala.com", "www.aparat.com", "www.varzesh3.com"],
+  "خارجی": ["api.github.com", "generativelanguage.googleapis.com", "api.deepseek.com"],
+};
 const MATRIX = [
   ["1.1.1.1", 443],
   ["1.1.1.1", 80],
@@ -222,6 +231,32 @@ async function main() {
     else if (!anyTls) findings.push(`tls-reset:${target.host}`);
   }
 
+  // 6. Iranian vs foreign destinations
+  console.log("\n== 6. دستهٔ مقصد (ایرانی در برابر خارجی)");
+  const classes = {};
+  for (const [label, hosts] of Object.entries(DESTINATIONS)) {
+    let okCount = 0;
+    let total = 0;
+    for (const host of hosts) {
+      const addresses = await new Promise((resolve) => dns.lookup(host, { all: true }, (error, records) => resolve(error ? [] : records.map((r) => r.address))));
+      if (!addresses.length) {
+        line(false, `${label} ${host}: بدون آدرس`);
+        continue;
+      }
+      total += 1;
+      const result = await tcp(addresses[0]);
+      if (result.ok) okCount += 1;
+      line(result.ok, `${label} ${host} (${addresses[0]}) ${result.detail}`);
+    }
+    classes[label] = { ok: okCount, total };
+  }
+  const iranian = classes["ایرانی"] || { ok: 0, total: 0 };
+  const foreign = classes["خارجی"] || { ok: 0, total: 0 };
+  if (iranian.total && foreign.total && iranian.ok === 0 && foreign.ok === foreign.total) {
+    findings.push("foreign-egress-ip");
+    console.log("  -> همهٔ مقصدهای ایرانی بسته‌اند و همهٔ مقصدهای خارجی باز: ترافیک شما با یک IP غیرایرانی خارج می‌شود.");
+  }
+
   // verdict
   console.log("\n== verdict");
   const unique = [...new Set(findings)];
@@ -251,6 +286,11 @@ async function main() {
     console.log(`  TCP reaches ${tlsReset.map((f) => f.split(":")[1]).join(", ")} but the TLS handshake is reset.`);
     console.log("  That is traffic interference or an intercepting proxy, not DNS and not an API key.");
     console.log("  Check for a transparent proxy: iptables -t nat -S | grep -i REDIRECT");
+  }
+  if (unique.includes("foreign-egress-ip")) {
+    console.log("  ترافیک خروجی با IP غیرایرانی خارج می‌شود (NAT بالادست)، بنابراین سایت‌های ایرانی");
+    console.log("  آن را رد می‌کنند. این تنظیم فقط از طرف سرویس‌دهنده اصلاح می‌شود: باید خروجی با");
+    console.log("  IP ایرانی همان سرور (src 185.192.112.x) انجام شود، نه از gateway خارجی.");
   }
   if (unique.includes("no-egress")) {
     console.log("  No outbound connection works at all. Clear the local rules above first;");
