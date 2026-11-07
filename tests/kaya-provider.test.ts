@@ -4,6 +4,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { FALLBACK_MODEL_OPTIONS, RECOMMENDED_MODELS, SUPPORTS_ACCOUNT_MODEL_DISCOVERY } from "../lib/provider-catalog";
 import { isProviderHostname } from "../lib/server/provider-network";
+import { PROVIDER_IDS } from "../lib/provider-catalog";
+import { PROVIDER_TRAITS, isChatCompletionsProvider, providerByteLimit, providerNeedsPdfRaster } from "../lib/server/provider-traits";
 
 const root = path.resolve(__dirname, "..");
 
@@ -34,26 +36,48 @@ test("Kaya stays off the Shecan route because it is served from inside Iran", ()
   }
 });
 
-test("every provider surface accepts kaya so the admin can actually save it", () => {
-  const surfaces = [
-    "lib/types.ts",
-    "lib/server/provider-config.ts",
-    "lib/server/workspace-store.ts",
+test("every provider in the table is accepted by every admin surface", () => {
+  // This used to scan each route for the literal string "kaya". That passed even
+  // when a route carried its own copy of the id list and would reject a provider
+  // the others accepted — which is precisely how a provider gets saved by one
+  // route and refused by the next. The surfaces now derive from one source, so the
+  // check is that they stay derived.
+  assert.deepEqual([...PROVIDER_IDS].sort(), Object.keys(PROVIDER_TRAITS).sort(), "the id list and the trait table must cover the same providers");
+
+  const routes = [
     "app/api/provider/route.ts",
     "app/api/provider/test/route.ts",
     "app/api/provider/models/route.ts",
   ];
-  for (const file of surfaces) {
+  for (const file of routes) {
     const body = fs.readFileSync(path.join(root, file), "utf8");
-    assert.match(body, /"kaya"/, `${file} must accept the kaya provider`);
+    assert.match(body, /z\.enum\(PROVIDER_IDS\)/, `${file} must validate against the shared provider list`);
+    assert.doesNotMatch(body, /z\.enum\(\[/, `${file} must not carry its own copy of the provider list`);
   }
+
+  // provider-config validates the same table, not a hand-written allow-list.
+  const config = fs.readFileSync(path.join(root, "lib", "server", "provider-config.ts"), "utf8");
+  assert.match(config, /Object\.keys\(PROVIDER_TRAITS\)/, "provider-config must derive its allow-list from the trait table");
+  assert.doesNotMatch(config, /\["openai", "gemini"/, "no hand-written provider allow-list");
 });
 
-test("Kaya routes PDFs through the in-house image conversion and sizes chat payloads", () => {
+test("Kaya and GapGPT both get PDF rasterisation and the chat payload size", () => {
+  // These used to be inline arrays repeated in pdf-vision and the grade route. Both
+  // providers speak Chat Completions and neither accepts a raw PDF upload, so both
+  // must be rasterised and must get the smaller payload ceiling.
+  for (const provider of ["kaya", "gapgpt"] as const) {
+    assert.equal(providerNeedsPdfRaster(provider), true, `${provider} must rasterise PDFs`);
+    assert.equal(providerByteLimit(provider), 24 * 1024 * 1024, `${provider} must use the chat payload size`);
+    assert.equal(isChatCompletionsProvider(provider), true, `${provider} must use Chat Completions`);
+  }
+  // A provider that takes PDFs and images natively must not be rasterised.
+  assert.equal(providerNeedsPdfRaster("openai"), false);
+  assert.equal(isChatCompletionsProvider("openai"), false);
+
   const pdf = fs.readFileSync(path.join(root, "lib", "server", "pdf-vision.ts"), "utf8");
-  assert.match(pdf, /"kaya"\]\.includes\(provider\)/, "PDF must be converted before sending to Kaya");
+  assert.match(pdf, /providerNeedsPdfRaster\(provider\)/, "pdf-vision must consult the trait table");
   const grade = fs.readFileSync(path.join(root, "app", "api", "grade", "route.ts"), "utf8");
-  assert.match(grade, /"kaya"\]/, "grading upload size must cover Kaya");
+  assert.match(grade, /providerSizeLimit\(config\.provider\)|providerByteLimit\(config\.provider\)/, "the grade route must consult the trait table");
 });
 
 test("Kaya call path is OpenAI-compatible and fails over only within Kaya", () => {

@@ -1,6 +1,7 @@
 import path from "path";
 import type { GradeApiRequest, ProviderId } from "../types";
 import { ProviderError } from "./providers";
+import { providerNeedsPdfRaster } from "./provider-traits";
 
 const MAX_PDF_PAGES = 20;
 const MAX_TOTAL_VISION_FILES = 30;
@@ -89,7 +90,7 @@ export async function renderPdfToVisionFiles(file: VisionFile, availableSlots: n
 }
 
 export async function prepareProviderFiles(files: GradeApiRequest["files"], provider: ProviderId, options: { convertAllPdfs?: boolean } = {}): Promise<GradeApiRequest["files"]> {
-  const shouldConvertPdfs = options.convertAllPdfs || ["deepseek", "zai", "minimax", "inkling", "mistral", "kaya"].includes(provider);
+  const shouldConvertPdfs = options.convertAllPdfs || providerNeedsPdfRaster(provider);
   if (!shouldConvertPdfs || !files.some((file) => file.type === "application/pdf")) return files;
   const output: VisionFile[] = [];
   for (const file of files) {

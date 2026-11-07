@@ -18,6 +18,7 @@ export const PROVIDER_LABELS: Record<ProviderId, string> = {
   inkling: "Inkling / Tinker",
   mistral: "Mistral AI",
   kaya: "Kaya AI",
+  gapgpt: "GapGPT",
 };
 
 export type ProviderTask = "grading" | "question-import" | "answer-key-import";
@@ -420,6 +421,22 @@ async function callMistral(input: ProviderCallInput): Promise<ProviderCallResult
 const KAYA_BASE_URL = "https://kayaai.ir/api";
 
 /**
+ * GapGPT speaks the OpenAI Chat Completions contract, so it is reached through the
+ * same call path as Kaya — one implementation, not a second copy. The base URL is
+ * configurable because the vendor documents two hosts (api.gapgpt.app for local
+ * traffic, api.gapapi.com as an external CDN); the operator picks one in the panel
+ * instead of needing a new release to switch.
+ */
+const GAPGPT_BASE_URL = "https://api.gapgpt.app/v1";
+
+export function gapgptBaseUrl(egress: KayaEgressConfig | undefined): string {
+  const host = (egress?.host || "").trim();
+  if (!host) return GAPGPT_BASE_URL;
+  const trimmed = host.replace(/\/+$/, "");
+  return /^https?:\/\//.test(trimmed) ? trimmed : `https://${trimmed}/v1`;
+}
+
+/**
  * Ordered substitutes used only when the selected model is unavailable.
  * Multi-owner order gives the best chance that one owner is not rate limited.
  */
@@ -451,6 +468,16 @@ async function callKaya(input: ProviderCallInput): Promise<ProviderCallResult> {
   return callKayaModel(input, input.model, false);
 }
 
+async function callGapGpt(input: ProviderCallInput): Promise<ProviderCallResult> {
+  if (input.files.some((file) => file.type === "application/pdf")) {
+    throw new ProviderError("PDF برای GapGPT باید پیش از ارسال، داخل سامانه به تصویر صفحه تبدیل شود.", 400);
+  }
+  // Same rule as Kaya: grade with exactly the model the admin selected. A silent
+  // substitution would make two identical sheets score differently for a reason
+  // nobody can see.
+  return callKayaModel(input, input.model, false);
+}
+
 async function callKayaModel(
   input: ProviderCallInput,
   model: string,
@@ -462,7 +489,11 @@ async function callKayaModel(
   // A custom host is checked first: a plain-HTTP address off this machine is
   // refused outright, so a "local stub" setting cannot turn into a real detour.
   assertKayaHostAllowed(input.egress);
-  const baseUrl = kayaBaseUrl(input.egress) || KAYA_BASE_URL;
+  // Both providers share this Chat Completions path, so every sentence below has to
+  // name the service that actually failed — otherwise a GapGPT error would tell the
+  // operator to check their Kaya panel.
+  const serviceName = PROVIDER_LABELS[input.provider] || "سرویس‌دهنده";
+  const baseUrl = input.provider === "gapgpt" ? gapgptBaseUrl(input.egress) : kayaBaseUrl(input.egress) || KAYA_BASE_URL;
   const egressAgent = kayaAgent(input.egress);
   try {
     response = await fetchWithTimeout(`${baseUrl}/chat/completions`, {
@@ -487,7 +518,7 @@ async function callKayaModel(
     const code = (error as { cause?: { code?: string }; code?: string })?.cause?.code || (error as { code?: string })?.code || "";
     const explained = describeEgressFailure(String(code), input.egress);
     if (explained) throw new ProviderError(explained, 400);
-    throw new ProviderError(`ارتباط با Kaya AI برای مدل ${model} برقرار نشد${code ? ` (${code})` : ""}.`, 502);
+    throw new ProviderError(`ارتباط با ${serviceName} برای مدل ${model} برقرار نشد${code ? ` (${code})` : ""}.`, 502);
   }
 
   if (!response.ok) {
@@ -501,26 +532,26 @@ async function callKayaModel(
     }
     const safe = detail.replace(/sk-[A-Za-z0-9_\-]{6,}/g, "[کلید]").replace(/\s+/g, " ").slice(0, 180);
     if (status === 401) {
-      throw new ProviderError("کلید Kaya AI پذیرفته نشد؛ کلید را در پنل کایا بررسی یا کلید تازه بسازید.", 400);
+      throw new ProviderError(`کلید ${serviceName} پذیرفته نشد؛ کلید را در پنل ${serviceName} بررسی یا کلید تازه بسازید.`, 400);
     }
     if (status === 402) {
       // Retryable: another catalogue model may be covered by the same balance.
       throw new ProviderError(
-        `مدل «${model}» برای این حساب در Kaya AI اعتبار ندارد (HTTP 402). مدل دیگری به‌طور خودکار انتخاب نمی‌شود؛ در پنل ادمین مدل دیگری برگزینید یا از پنل کایا اعتبار بگیرید.`,
+        `مدل «${model}» برای این حساب در ${serviceName} اعتبار ندارد (HTTP 402). مدل دیگری به‌طور خودکار انتخاب نمی‌شود؛ در پنل ادمین مدل دیگری برگزینید یا حساب ${serviceName} را شارژ کنید.`,
         402,
       );
     }
     if (KAYA_FAILOVER_STATUSES.has(status)) {
       throw new ProviderError(
-        `مدل ${model} در Kaya AI پاسخ نداد (HTTP ${status})${safe ? `: ${safe}` : "."}`,
+        `مدل ${model} در ${serviceName} پاسخ نداد (HTTP ${status})${safe ? `: ${safe}` : "."}`,
         status >= 500 ? 502 : status,
       );
     }
-    throw new ProviderError(`Kaya AI درخواست را نپذیرفت (HTTP ${status})${safe ? `: ${safe}` : "."}`, status >= 500 ? 502 : status);
+    throw new ProviderError(`${serviceName} درخواست را نپذیرفت (HTTP ${status})${safe ? `: ${safe}` : "."}`, status >= 500 ? 502 : status);
   }
 
   const payload = (await response.json().catch(() => null)) as Record<string, unknown> | null;
-  if (!payload) throw new ProviderError(`پاسخ مدل ${model} در Kaya AI قابل خواندن نبود.`, 502);
+  if (!payload) throw new ProviderError(`پاسخ مدل ${model} در ${serviceName} قابل خواندن نبود.`, 502);
 
   const choices = payload.choices as Array<{ message?: { content?: unknown }; finish_reason?: string }> | undefined;
   let outputText = extractTextContent(choices?.[0]?.message?.content).trim();
@@ -648,6 +679,7 @@ export function callProvider(input: ProviderCallInput): Promise<ProviderCallResu
   if (input.provider === "inkling") return callInkling(input);
   if (input.provider === "mistral") return callMistral(input);
   if (input.provider === "kaya") return callKaya(input);
+  if (input.provider === "gapgpt") return callGapGpt(input);
   return callOpenAI(input);
 }
 

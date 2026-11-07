@@ -7,6 +7,7 @@ import { AuthError, requireWorkspaceUser } from "@/lib/server/auth";
 import { readUserFile } from "@/lib/server/file-storage";
 import { prepareProviderFiles } from "@/lib/server/pdf-vision";
 import { getProviderConfig } from "@/lib/server/provider-config";
+import { providerByteLimit } from "@/lib/server/provider-traits";
 import { callProvider, ProviderError } from "@/lib/server/providers";
 import {
   buildQuestionImportPrompt,
@@ -28,12 +29,6 @@ const requestSchema = z.object({
     kind: z.enum(["questions", "answers", "combined"]),
   })).min(1).max(30),
 });
-
-function providerByteLimit(provider: ProviderId): number {
-  if (provider === "gemini") return 14 * 1024 * 1024;
-  if (["deepseek", "zai", "minimax", "inkling", "mistral", "kaya"].includes(provider)) return 24 * 1024 * 1024;
-  return 40 * 1024 * 1024;
-}
 
 export async function POST(request: Request) {
   let user: AuthUser | undefined;

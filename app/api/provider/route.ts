@@ -2,9 +2,10 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { AuthError, requireAdmin, requireUser } from "@/lib/server/auth";
 import { getProviderStatus, saveProviderConfig } from "@/lib/server/provider-config";
+import { PROVIDER_IDS } from "@/lib/provider-catalog";
 
 const schema = z.object({
-  provider: z.enum(["openai", "gemini", "deepseek", "zai", "minimax", "inkling", "mistral", "kaya"]),
+  provider: z.enum(PROVIDER_IDS),
   model: z.string().trim().min(2).max(120),
   apiKey: z.string().trim().max(500).optional(),
 });

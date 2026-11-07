@@ -2,6 +2,7 @@ import type { ProviderId } from "../types";
 import { FALLBACK_MODEL_OPTIONS, mergeModelOptions, SUPPORTS_ACCOUNT_MODEL_DISCOVERY } from "../provider-catalog";
 import { providerFetch } from "./provider-network";
 import { kayaBaseUrl, type KayaEgressConfig } from "./kaya-egress";
+import { gapgptBaseUrl } from "./providers";
 import { ProviderError } from "./providers";
 import { isJsonParserErrorMessage } from "../error-message";
 
@@ -30,6 +31,14 @@ const DISCOVERY_URLS: Partial<Record<ProviderId, string>> = {
   mistral: "https://api.mistral.ai/v1/models",
   // Kaya returns an OpenAI-style list; the same URL also accepts POST.
   kaya: "https://kayaai.ir/api/chat/completions",
+  // Standard OpenAI catalogue endpoint.
+  gapgpt: "https://api.gapgpt.app/v1/models",
+};
+
+/** Providers whose discovery URL depends on the operator's configured host. */
+const HOST_DRIVEN_DISCOVERY: Partial<Record<ProviderId, (egress: KayaEgressConfig | undefined) => string>> = {
+  kaya: (egress) => `${kayaBaseUrl(egress)}/chat/completions`,
+  gapgpt: (egress) => `${gapgptBaseUrl(egress)}/models`,
 };
 
 function safeProviderDetail(rawMessage: string, apiKey: string): string {
@@ -99,6 +108,12 @@ function isGradingCandidate(provider: ProviderId, record: ProviderModelRecord): 
     if (record.output_modalities?.length && !record.output_modalities.includes("text")) return false;
     return /^[a-z0-9][a-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(id) || /^claude-/.test(id);
   }
+  if (provider === "gapgpt") {
+    // One catalogue covers many vendors, so the ids carry no shared prefix. Drop
+    // only what cannot return a text grade: image/video/audio/embedding models.
+    if (record.output_modalities?.length && !record.output_modalities.includes("text")) return false;
+    return !/(?:image|imagen|embed|whisper|tts|audio|video|veo|kling|sora|midjourney|rerank|moderation)/i.test(id);
+  }
   if (provider === "openai") {
     if (!/^(?:gpt-|o\d|chatgpt-)/i.test(id)) return false;
     return !/(?:gpt-image|gpt-live|realtime|audio|transcribe|tts|embedding|moderation)/i.test(id);
@@ -144,9 +159,8 @@ async function discoveryJson(url: string, input: ProviderModelRequest): Promise<
 /** Read current model IDs from the provider account; no model or key is saved. */
 export async function discoverProviderModels(input: ProviderModelRequest): Promise<string[]> {
   if (!SUPPORTS_ACCOUNT_MODEL_DISCOVERY[input.provider]) return [...FALLBACK_MODEL_OPTIONS[input.provider]];
-  const initialUrl = input.provider === "kaya"
-    ? `${kayaBaseUrl(input.egress)}/chat/completions`
-    : DISCOVERY_URLS[input.provider];
+  const resolveUrl = HOST_DRIVEN_DISCOVERY[input.provider];
+  const initialUrl = resolveUrl ? resolveUrl(input.egress) : DISCOVERY_URLS[input.provider];
   if (!initialUrl) return [...FALLBACK_MODEL_OPTIONS[input.provider]];
 
   const records: ProviderModelRecord[] = [];

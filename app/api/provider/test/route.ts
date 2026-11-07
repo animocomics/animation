@@ -2,17 +2,19 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { AuthError, requireAdmin } from "@/lib/server/auth";
 import { getProviderConfig } from "@/lib/server/provider-config";
-import { kayaBaseUrl } from "@/lib/server/kaya-egress";
+import { kayaBaseUrl, assertKayaHostAllowed } from "@/lib/server/kaya-egress";
+import { isChatCompletionsProvider } from "@/lib/server/provider-traits";
 import { providerFetch, ProviderNetworkError } from "@/lib/server/provider-network";
 import { providerResponseError } from "@/lib/server/provider-models";
-import { ProviderError } from "@/lib/server/providers";
+import { gapgptBaseUrl, ProviderError } from "@/lib/server/providers";
 import { invalidProviderJsonMessage, isJsonParserErrorMessage, providerErrorHttpStatus } from "@/lib/error-message";
+import { PROVIDER_IDS } from "@/lib/provider-catalog";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
 const schema = z.object({
-  provider: z.enum(["openai", "gemini", "deepseek", "zai", "minimax", "inkling", "mistral", "kaya"]),
+  provider: z.enum(PROVIDER_IDS),
   model: z.string().min(2).max(120),
   apiKey: z.string().max(500).optional(),
 });
@@ -29,7 +31,7 @@ export async function POST(request: Request) {
       if (stored.provider !== input.provider) throw new ProviderError("برای آزمایش این سرویس، کلید همان سرویس را وارد کنید.", 400);
       apiKey = stored.apiKey;
     }
-    const isChat = ["zai", "minimax", "mistral", "kaya"].includes(input.provider);
+    const isChat = isChatCompletionsProvider(input.provider);
     const isInkling = input.provider === "inkling";
     const url = isInkling
       ? "https://tinker.thinkingmachines.dev/services/tinker-prod/anthropic/api/v1/messages"
@@ -43,11 +45,15 @@ export async function POST(request: Request) {
               ? `https://api.openai.com/v1/models/${encodeURIComponent(input.model)}`
               : input.provider === "deepseek"
                 ? "https://api.deepseek.com/models"
-                : input.provider === "kaya"
-                  // Honour the configured Kaya host: when the operator points the
-                  // app at a local stand-in for validation, the test must reach the
-                  // same place a real grading request would.
-                  ? `${kayaBaseUrl(stored.egress)}/chat/completions`
+                : input.provider === "gapgpt"
+                  // Same rule as Kaya: test the host the grading request will use,
+                  // not a hard-coded default, or a green test proves nothing.
+                  ? `${gapgptBaseUrl(stored.egress)}/chat/completions`
+                  : input.provider === "kaya"
+                    // Honour the configured Kaya host: when the operator points the
+                    // app at a local stand-in for validation, the test must reach the
+                    // same place a real grading request would.
+                    ? `${kayaBaseUrl(stored.egress)}/chat/completions`
                   : `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(input.model)}`;
     const testBody = isInkling
       ? {
@@ -81,7 +87,7 @@ export async function POST(request: Request) {
                 max_tokens: 8,
                 stream: false,
               }
-            : input.provider === "kaya"
+            : input.provider === "kaya" || input.provider === "gapgpt"
               ? {
                   // Exercise the same Chat Completions path grading uses, so a
                   // green test means the key and this exact model really work.
@@ -91,6 +97,9 @@ export async function POST(request: Request) {
                   stream: false,
                 }
               : undefined;
+    // The configured host decides where this test is sent, so it passes exactly the
+    // same guard grading does: a remote plain-HTTP host is refused either way.
+    if (input.provider === "kaya" || input.provider === "gapgpt") assertKayaHostAllowed(stored.egress);
     const response = await providerFetch(url, {
       method: isChat || isInkling ? "POST" : "GET",
       headers: isInkling
@@ -108,12 +117,12 @@ export async function POST(request: Request) {
       if (!payload.data?.some((item) => item.id === input.model)) {
         return NextResponse.json({ error: "کلید معتبر است اما این مدل در فهرست مدل‌های حساب DeepSeek دیده نمی‌شود." }, { status: 400 });
       }
-    } else if (input.provider === "kaya") {
+    } else if (input.provider === "kaya" || input.provider === "gapgpt") {
       const payload = await response.json() as { choices?: Array<{ message?: { content?: unknown } }> };
       const content = payload.choices?.[0]?.message?.content;
       const text = typeof content === "string" ? content : Array.isArray(content) ? content.map((part) => (part && typeof part === "object" && "text" in part ? String((part as { text?: unknown }).text ?? "") : "")).join("") : "";
       if (!text.trim()) {
-        return NextResponse.json({ error: "Kaya AI پاسخ خالی برگرداند؛ ممکن است سهمیهٔ استدلال توکن را مصرف کرده باشد. دوباره تلاش کنید." }, { status: 502 });
+        return NextResponse.json({ error: "سرویس‌دهنده پاسخ خالی برگرداند؛ ممکن است سهمیهٔ استدلال توکن را مصرف کرده باشد. دوباره تلاش کنید." }, { status: 502 });
       }
     } else if (input.provider === "minimax") {
       const payload = await response.json() as { base_resp?: { status_code?: number; status_msg?: string } };

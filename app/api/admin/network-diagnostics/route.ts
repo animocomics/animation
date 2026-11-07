@@ -34,6 +34,9 @@ interface ProbeResult {
 
 const TARGETS = [
   { label: "Kaya AI", url: "https://kayaai.ir/api/chat/completions" },
+  // The address that must open for GapGPT is the API host, not the website: the
+  // marketing domain answering says nothing about the gateway being reachable.
+  { label: "GapGPT API", url: "https://api.gapgpt.app/v1/models" },
   { label: "GitHub API", url: "https://api.github.com" },
 ];
 

@@ -17,6 +17,7 @@ const PROVIDERS = {
   inkling: { label: "Inkling", hint: "Tinker 256K · PNG/JPEG و PDF · سرویس بتا", icon: AudioLines },
   mistral: { label: "Mistral Large 4", hint: "Reasoning High · Public Preview · تصویر و PDF", icon: Layers },
   kaya: { label: "Kaya AI (ایران · بدون تحریم)", hint: "سازگار با OpenAI · بدون نیاز به شکن · تصویر و PDF با تبدیل خودکار", icon: Globe },
+  gapgpt: { label: "GapGPT (ایران · چند مدل)", hint: "GPT · Claude · Gemini با یک کلید · پرداخت ریالی · تصویر و PDF با تبدیل خودکار", icon: Layers },
 } as const;
 
 export function ApiConnection() {

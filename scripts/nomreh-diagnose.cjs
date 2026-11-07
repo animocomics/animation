@@ -27,6 +27,7 @@ const { execFile } = require("node:child_process");
 
 const TARGETS = [
   { label: "Kaya AI", host: "kayaai.ir", path: "/api/chat/completions" },
+  { label: "GapGPT API", host: "api.gapgpt.app", path: "/v1/models" },
   { label: "GitHub", host: "api.github.com", path: "/" },
 ];
 // Iranian destinations behave differently from foreign ones when traffic leaves

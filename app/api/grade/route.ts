@@ -8,6 +8,7 @@ import { MAX_FILE_SIZE_BYTES } from "@/lib/file-constraints";
 import { mergeVerifiedResult, normalizeGradingResult } from "@/lib/server/normalize";
 import { prepareProviderFiles } from "@/lib/server/pdf-vision";
 import { getProviderConfig } from "@/lib/server/provider-config";
+import { providerByteLimit as providerSizeLimit } from "@/lib/server/provider-traits";
 import { buildGradingPrompt, callProvider, ProviderError } from "@/lib/server/providers";
 import { loadWorkspace } from "@/lib/server/workspace-store";
 import type { AuthUser, GradeApiRequest, GradingResult, ProviderId } from "@/lib/types";
@@ -102,7 +103,7 @@ export async function POST(request: Request) {
   }
 
   const approximateFileBytes = input.files.reduce((sum, file) => sum + Math.floor(file.data.length * 0.75), 0);
-  const providerByteLimit = config.provider === "gemini" ? 14 * 1024 * 1024 : ["deepseek", "zai", "minimax", "inkling", "mistral", "kaya"].includes(config.provider) ? 24 * 1024 * 1024 : 40 * 1024 * 1024;
+  const providerByteLimit = providerSizeLimit(config.provider);
   const hasPdf = input.files.some((file) => file.type === "application/pdf");
   if (approximateFileBytes > providerByteLimit && !hasPdf) {
     return NextResponse.json({ error: "حجم کل فایل‌های این دانش‌آموز برای یک درخواست زیاد است؛ فایل را فشرده یا برگه را به دسته‌های کوچک‌تر تقسیم کنید." }, { status: 413 });

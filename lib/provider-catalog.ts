@@ -1,6 +1,15 @@
 import type { ProviderId } from "./types";
 
 /**
+ * Every provider id, in one place.
+ *
+ * This is derived from FALLBACK_MODEL_OPTIONS at the bottom of this file, but the
+ * routes import it directly: each route used to carry its own copy of the id list,
+ * and a provider missing from even one copy was rejected with a bare 400 before any
+ * request was sent. Adding a provider now touches one table, not six enums.
+ */
+
+/**
  * Offline suggestions only. The admin UI also reads the account's live model
  * list and accepts a manually entered model ID, so a provider release never
  * waits for a Nomreh release.
@@ -30,6 +39,20 @@ export const FALLBACK_MODEL_OPTIONS: Record<ProviderId, string[]> = {
   mistral: ["mistral-large-4", "mistral-large-4-0"],
   // Kaya AI serves an OpenAI-compatible catalogue; IDs are owner/model strings.
   // Every entry below was read from the live GET /api/chat/completions list.
+  // GapGPT is an OpenAI-compatible gateway over several vendors. Only chat models
+  // that accept images are listed; the admin panel also reads the live list from
+  // the account, and a manually typed ID is always accepted.
+  gapgpt: [
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+    "gpt-4o",
+    "gemini-2.5-pro",
+    "gemini-2.5-flash",
+    "claude-sonnet-5.5",
+    "claude-3.7-sonnet",
+    "deepseek-chat",
+  ],
   kaya: [
     "deepseek/deepseek-v4.1-flash",
     "deepseek/deepseek-v4-flash",
@@ -45,6 +68,10 @@ export const FALLBACK_MODEL_OPTIONS: Record<ProviderId, string[]> = {
   ],
 };
 
+const PROVIDER_IDS = Object.keys(FALLBACK_MODEL_OPTIONS) as [ProviderId, ...ProviderId[]];
+
+export { PROVIDER_IDS };
+
 export const RECOMMENDED_MODELS: Record<ProviderId, string> = {
   openai: "gpt-6.1-terra",
   // Current stable Flash with a free tier; unlike 2.5 it is open to new projects.
@@ -56,6 +83,9 @@ export const RECOMMENDED_MODELS: Record<ProviderId, string> = {
   mistral: "mistral-large-4",
   // Cheapest capable multimodal chat model on the Kaya catalogue.
   kaya: "deepseek/deepseek-v4.1-flash",
+  // A general vision model that is reliable on Persian handwriting; the operator
+  // can switch to a cheaper Flash model from the same page once grading is proven.
+  gapgpt: "gemini-2.5-pro",
 };
 
 export const SUPPORTS_ACCOUNT_MODEL_DISCOVERY: Record<ProviderId, boolean> = {
@@ -68,6 +98,8 @@ export const SUPPORTS_ACCOUNT_MODEL_DISCOVERY: Record<ProviderId, boolean> = {
   mistral: true,
   // GET /api/chat/completions returns an OpenAI-style { object: "list" }.
   kaya: true,
+  // GET /v1/models is part of the OpenAI contract this gateway implements.
+  gapgpt: true,
 };
 
 export function mergeModelOptions(provider: ProviderId, ...groups: string[][]): string[] {
