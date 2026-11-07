@@ -125,7 +125,7 @@ async function run() {
     const summary = payload.summary || {};
     lines.push(`- Nomreh-recorded usage: jobs ${summary.jobs || 0}; input tokens ${summary.input_tokens || 0}; output tokens ${summary.output_tokens || 0}; failed ${summary.failures || 0}.`);
   } else lines.push(`- Usage read: HTTP ${usage.status}; ${summarize(usage)}.`);
-  lines.push("", "No grading request, provider save, Shecan change, or workspace mutation was made. Remaining provider quota is not exposed by these endpoints.");
+  lines.push("", "No grading request, provider save, or workspace mutation was made. Remaining provider quota is not exposed by these endpoints.");
 }
 
 run().catch((error) => {

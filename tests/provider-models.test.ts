@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Resolver } from "node:dns/promises";
 import { FALLBACK_MODEL_OPTIONS, mergeModelOptions, RECOMMENDED_MODELS } from "../lib/provider-catalog";
 import { discoverProviderModels, providerResponseError } from "../lib/server/provider-models";
 
@@ -88,20 +87,16 @@ test("Gemini errors explain unrestricted standard keys and free quota instead of
   assert.equal(denied.status, 400, "provider authorization failures must stay JSON instead of triggering the host's HTML 403 page");
 });
 
-test("model discovery uses the scoped Shecan dispatcher when enabled", async () => {
-  const originalResolve = Resolver.prototype.resolve4;
-  let dispatcher: unknown;
-  Resolver.prototype.resolve4 = (async () => [{ address: "203.0.113.80", ttl: 60 }]) as unknown as typeof Resolver.prototype.resolve4;
-  await mockFetch((_url, init) => {
-    dispatcher = (init as RequestInit & { dispatcher?: unknown }).dispatcher;
+test("model discovery goes out directly, with no dispatcher of its own", async () => {
+  // The old test asserted that a Shecan agent was attached. The point now is the
+  // opposite: discovery must use the platform's own agent so a failure it reports
+  // is the failure the vendor sees, not one created by a local detour.
+  let init: (RequestInit & { dispatcher?: unknown }) | undefined;
+  await mockFetch((_url, options) => {
+    init = options as typeof init;
     return Response.json({ models: [{ name: "models/gemini-3.8-flash", supportedGenerationMethods: ["generateContent"] }] });
   }, async () => {
-    await discoverProviderModels({
-      provider: "gemini",
-      apiKey: "free-gemini-key",
-      network: { enabled: true, plan: "free", servers: ["198.51.100.80", "198.51.100.81"] },
-    });
-    assert.ok(dispatcher, "provider model discovery must not bypass Shecan");
+    await discoverProviderModels({ provider: "gemini", apiKey: "free-gemini-key" });
+    assert.equal(init?.dispatcher, undefined, "discovery must not install its own dispatcher");
   });
-  Resolver.prototype.resolve4 = originalResolve;
 });

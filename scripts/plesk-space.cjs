@@ -62,7 +62,7 @@ function processReport() {
     const inApplication = cwd === APP_ROOT || cwd.startsWith(`${APP_ROOT}/`) || args.includes(`${APP_ROOT}/`);
     if (!inApplication) continue;
     let kind = "";
-    if (/(?:^|\/)xray(?:\s|$)/.test(args) || args.includes("nomreh-v2ray/xray")) kind = "xray";
+    if (/(?:^|\/)xray(?:\s|$)/.test(args)) kind = "xray";
     else if (/next(?:\.js)?\s+build|next\/dist\/bin\/next\s+build/.test(args)) kind = "next-build";
     else if (/(?:^|\/)node(?:\s|$)/.test(args) && /next|server\.js|npm/.test(args)) kind = "node-app";
     if (kind) rows.push({ pid, elapsed, kind });

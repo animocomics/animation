@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { AuthError, requireAdmin } from "@/lib/server/auth";
-import { getApiNetworkStatus } from "@/lib/server/api-network";
 import { inspectAddresses, addressConclusion } from "@/lib/server/network-probe";
 import { inspectHost } from "@/lib/server/host-network-inspect";
 import { providerBudgetAll, providerBudgetSnapshot } from "@/lib/server/provider-rate-limit";
@@ -199,18 +198,6 @@ export async function GET(request: Request) {
   const targets = only ? TARGETS.filter((item) => item.label.toLowerCase().includes(only.toLowerCase())) : TARGETS;
   const selected = targets.length ? targets : TARGETS;
 
-  // A stale tunnel or a dead local proxy produces exactly the "connection
-  // failed" symptom, so report the active routing mode alongside the probes.
-  const networkModePromise = getApiNetworkStatus()
-    .then((status) => ({
-      shecanEnabled: status.enabled,
-      transport: status.transport,
-      plan: status.plan,
-      lastTestStatus: status.lastTestStatus,
-      lastTestMessage: status.lastTestMessage,
-    }))
-    .catch((error) => ({ error: describe(error) }));
-
   // Raw IPs so a DNS problem cannot masquerade as a routing problem. 1.1.1.1 and
   // 8.8.8.8 are neutral; the provider IP shows whether the block is destination
   // specific, and port 80 shows whether only 443 is filtered.
@@ -227,8 +214,7 @@ export async function GET(request: Request) {
 
   const hostInspectionPromise = inspectHost().catch((error) => ({ verdict: `بازرسی میزبان انجام نشد: ${describe(error)}`, lines: [], suggestions: [] }));
 
-  const [networkMode, results, egress, addressChecks] = await Promise.all([
-    withBudget(networkModePromise, 4000, { error: "timeout" } as Record<string, unknown>),
+  const [results, egress, addressChecks] = await Promise.all([
     Promise.all(selected.map((target) => withBudget(probeTarget(target), 16000, { label: target.label, hostname: new URL(target.url).hostname, probes: [] }))),
     Promise.all([
       ...matrixTargets.map(([host, port]) => probeTcp(host, port, 4000).then((probe) => ({ ...probe, step: `port ${host}:${port}` }))),
@@ -265,12 +251,13 @@ export async function GET(request: Request) {
   return NextResponse.json({
     // Lets the operator confirm the deploy actually took effect: if this marker
     // is missing, the browser is talking to an older build.
-    diagnosticsVersion: "v12",
+    diagnosticsVersion: "v25",
     checkedAt: new Date().toISOString(),
     elapsedMs: Date.now() - startedAt,
     runtimeVersion: process.version,
     platform: process.platform,
-    networkMode,
+    // A resume of the only transport that exists any more: this host, direct.
+    transport: "direct" as const,
     // Shows the operator how much of the outbound allowance is used, so a block
     // caused by request volume can be recognised before it happens.
     providerBudget: providerBudgetSnapshot([...new Set(selected.map((target) => new URL(target.url).hostname))]),

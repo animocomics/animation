@@ -39,40 +39,6 @@ export interface ProviderPublicStatus {
   updatedAt?: string;
 }
 
-export interface ShecanOrderPublic {
-  id: number;
-  product: string;
-  tier?: string;
-  active: boolean;
-  statusName: string;
-  due?: string;
-  hasUpdateToken: boolean;
-  lastRegisteredIp?: string;
-}
-
-export interface ApiNetworkPublicStatus {
-  configured: boolean;
-  enabled: boolean;
-  plan: "free" | "pro";
-  servers: [string, string];
-  transport: "dns" | "official-vm";
-  hasUpdateUrl: boolean;
-  updateUrlSource: "manual" | "account" | "none";
-  hasAccountKey: boolean;
-  accountLogin?: string;
-  accountName?: string;
-  accountAuthenticatedAt?: string;
-  selectedOrderId?: number;
-  selectedOrderLabel?: string;
-  selectedOrderDue?: string;
-  lastTestStatus: "idle" | "success" | "error";
-  lastTestMessage: string;
-  lastTestedAt?: string;
-  lastTestLatencyMs?: number;
-  lastActivatedAt?: string;
-  updatedAt?: string;
-}
-
 export type QuestionType =
   | "multiple_choice"
   | "multiple_response"

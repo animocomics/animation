@@ -39,7 +39,7 @@ export async function GET() {
   const server = serverOutboundUsage();
   return NextResponse.json(
     {
-      version: "v24",
+      version: "v25-clean",
       server,
       windowMinutes: PROVIDER_BUDGET.windowMs / 60_000,
       maxPerWindow: PROVIDER_BUDGET.maxPerWindow,

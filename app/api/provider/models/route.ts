@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { AuthError, requireAdmin } from "@/lib/server/auth";
-import { getProviderConfig, getProviderNetworkConfig } from "@/lib/server/provider-config";
+import { getProviderConfig } from "@/lib/server/provider-config";
 import { discoverProviderModels } from "@/lib/server/provider-models";
 import { ProviderError } from "@/lib/server/providers";
 import { ProviderNetworkError } from "@/lib/server/provider-network";
@@ -20,17 +20,13 @@ export async function POST(request: Request) {
     await requireAdmin();
     const input = schema.parse(await request.json());
     let apiKey = input.apiKey || "";
-    let network;
     if (!apiKey) {
       const stored = await getProviderConfig();
       if (stored.provider !== input.provider) throw new ProviderError("برای خواندن مدل‌های این سرویس، کلید همان سرویس را وارد کنید.", 400);
       apiKey = stored.apiKey;
-      network = stored.network;
-    } else {
-      network = await getProviderNetworkConfig();
     }
     if (apiKey.length < 12) throw new ProviderError("کلید API کوتاه‌تر از حد انتظار است.", 400);
-    const models = await discoverProviderModels({ provider: input.provider, apiKey, network });
+    const models = await discoverProviderModels({ provider: input.provider, apiKey });
     return NextResponse.json({ models }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     if (error instanceof z.ZodError) return NextResponse.json({ error: "سرویس‌دهنده و کلید را بررسی کنید." }, { status: 400 });

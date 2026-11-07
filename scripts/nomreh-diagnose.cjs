@@ -46,7 +46,7 @@ const MATRIX = [
   ["140.82.121.6", 443],
 ];
 const PROXY_PROCESS = /^(v2ray|xray|sing-box|sing_box|dns2socks|psiphon|tun2socks|warp-svc|openvpn|wg-quick|wireguard|hysteria|naive|trojan|shadowsocks|ss-local|ss-redir|clash|mihomo)/i;
-const OWN_PATHS = /(nomreh-vm|nomreh-data|nomreh\.arounidea\.com|shecan-runtime|next-server)/;
+const OWN_PATHS = /(nomreh-vm|nomreh-data|nomreh\.arounidea\.com|next-server)/;
 const REDIRECT_RULE = /(REDIRECT|TPROXY|DNAT|REJECT|DROP)/;
 const SERVICES = ["v2ray", "xray", "sing-box", "shecan", "tun2socks"];
 

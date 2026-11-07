@@ -23,3 +23,7 @@ data/
 /nomreh-vm/
 # Next build output copied into the public document root during plesk builds
 /public/_next/
+
+# Deployment archives are built, not committed (GitHub warns over 50 MB)
+/nomreh-deploy-*.zip
+/nomreh-direct-*.zip

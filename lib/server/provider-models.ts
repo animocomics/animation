@@ -1,5 +1,4 @@
 import type { ProviderId } from "../types";
-import type { ProviderNetworkConfig } from "../api-network";
 import { FALLBACK_MODEL_OPTIONS, mergeModelOptions, SUPPORTS_ACCOUNT_MODEL_DISCOVERY } from "../provider-catalog";
 import { providerFetch } from "./provider-network";
 import { ProviderError } from "./providers";
@@ -8,7 +7,6 @@ import { isJsonParserErrorMessage } from "../error-message";
 interface ProviderModelRequest {
   provider: ProviderId;
   apiKey: string;
-  network?: ProviderNetworkConfig;
 }
 
 interface ProviderModelRecord {
@@ -117,7 +115,7 @@ async function discoveryJson(url: string, input: ProviderModelRequest): Promise<
       headers: input.provider === "gemini" ? { "x-goog-api-key": input.apiKey } : { Authorization: `Bearer ${input.apiKey}` },
       signal: AbortSignal.timeout(20_000),
       cache: "no-store",
-    }, input.network);
+    });
   } catch (error) {
     if (error instanceof Error && error.name === "TimeoutError") throw new ProviderError("خواندن مدل‌ها بیش از حد طول کشید؛ دوباره تلاش کنید.", 504);
     // A socket failure has no HTTP status; report the code instead of letting the

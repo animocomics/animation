@@ -49,7 +49,7 @@
 - مستندات رسمی MiniMax برای M3.1-Flash/M3، تصویر و Chat Completions بررسی شده است؛ `reasoning_split` فعال است و JSON Schema در Prompt قرار می‌گیرد، نه در پارامتر پشتیبانی‌نشدهٔ M3. [13](https://platform.minimax.io/docs/api-reference/text-openai-api)
 - Inkling-Small از مسیر رسمی Tinker و مدل `thinkingmachines/Inkling-Small:peft:262144:sampling-nvfp4` با تصویر Base64 و Reasoning High پشتیبانی می‌شود. Serverless Inference این مسیر در **Beta** است و برای بار تولیدی سنگین توصیه نمی‌شود. [14](https://tinker-docs.thinkingmachines.ai/tinker/compatible-apis/anthropic/) [15](https://tinker-docs.thinkingmachines.ai/tinker/models/models_and_pricing/)
 - Mistral Large 4 با شناسهٔ `mistral-large-4`، تصویر، JSON Mode و `reasoning_effort: high` پشتیبانی می‌شود؛ این مدل در **Public Preview** است و از پاسخ فقط TextChunk نهایی خوانده می‌شود. [16](https://docs.mistral.ai/models/mistral-large-4-0) [17](https://docs.mistral.ai/studio/conversations/reasoning)
-- مستندات رسمی شکن نشان می‌دهد سرویس مبتنی بر DNS است و برای اشتراک حرفه‌ای ثبت IP با «لینک به‌روزرسان» سفارش انجام می‌شود؛ بنابراین در «نمره» Resolver اختصاصی و ذخیرهٔ رمزنگاری‌شدهٔ همان لینک پیاده شده، نه پروکسی یا رمز حساب فرضی. [18](https://shecan.ir/faq/) [19](https://shecan.ir/tutorials/tutorials-pro/)
+- مسیر AI در «نمره» مستقیم است: هیچ DNS جایگزین، تونل، پروکسی یا ماشین مجازی در مسیر درخواست نیست. سرویس‌های واسطه (شکن و مشابهش) از این نسخه حذف شده‌اند، چون خطای مقصد و خطای واسطه را از هم تفکیک‌ناپذیر می‌کردند و هزینهٔ نگهداری دائمی داشتند.
 
 ## ۴. نقش‌ها و مسئولیت‌ها
 
@@ -141,11 +141,9 @@ PostgreSQL، Object Storage سازگار با S3، صف و Worker، KMS، Retent
 
 ### مسیر اختصاصی شبکه و شکن
 
-- تنظیم در SQLite و در `GET/PUT /api/admin/api-network` فقط با نقش Admin نگهداری می‌شود؛ معلم به DNS، لینک اشتراک یا این API دسترسی ندارد.
-- DNSهای رایگان `178.22.122.100` و `185.51.200.2` و حرفه‌ای `178.22.122.101` و `185.51.200.1` پیش‌پر و قابل ویرایش‌اند. `dns.Resolver` مستقل و `undici.Agent` فقط به درخواست‌های هفت دامنهٔ Provider داده می‌شود؛ هیچ تغییر سراسری DNS یا Proxy روی Node، سیستم‌عامل، Plesk و مرورگر انجام نمی‌شود.
-- لینک به‌روزرسان حرفه‌ای فقط با HTTPS روی دامنهٔ `shecan.ir` پذیرفته و با AAD مستقل و AES-256-GCM رمزنگاری می‌شود. فراخوانی صریح هنگام اتصال و Refresh هر ۶ ساعت برای ثبت IP انجام می‌شود؛ خود لینک هرگز در Status یا پاسخ معلم ظاهر نمی‌شود.
-- فعال‌سازی فقط پس از پاسخ معتبر DNS و Endpoint واقعی Google Gemini انجام می‌شود. این تست بدون API Key است و با تست کلید/مدل Provider متفاوت است. خطای فعال‌سازی، DNS، HTTPS یا محدودیت جغرافیایی پیام جدا دارد و شکن را روشن نمی‌کند.
-- در حالت خاموش رفتار قبلی Fetch مستقیم حفظ می‌شود. در حالت روشن، خطای شکن Fallback پنهان به Direct ندارد. DNS دارای Cache کوتاه TTL است و Socketهای مسیر هنگام تغییر/خاموش‌سازی بسته می‌شوند.
+- هیچ تنظیم شبکه‌ای برای مدیر وجود ندارد، چون هیچ انتخابی نیست: تنها مسیر، درخواست مستقیم HTTPS از همین هاست است. «تشخیص شبکه» فقط گزارش می‌دهد، چیزی را تغییر نمی‌دهد.
+- سقف مشترک خروجی در `lib/server/outbound-window.ts` روی دیسک نگهداری می‌شود تا همهٔ پروسه‌ها و همهٔ مقصدها یک سقف داشته باشند؛ پیش‌فرض ۱۲۰ در ۲۰ دقیقه، زیر سقف ۲۰۰ میزبان.
+- اگر مقصد این هاست را نپذیرد، خطا صریح و لایه‌محور است (TCP/TLS/HTTP) و هیچ Fallback یا واسطه‌ای جای آن را نمی‌گیرد.
 
 ## ۹. خط لولهٔ تصحیح و Rule Engine
 

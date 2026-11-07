@@ -468,41 +468,8 @@ function compactProduction(runtime) {
   });
 }
 
-function downloadWindowsRuntime(runtime) {
-  if (!process.env.NOMREH_WINDOWS_GITHUB_TOKEN) return;
-  const script = path.join(APP_ROOT, "scripts", "shecan-vm", "download-windows-runtime.cjs");
-  if (!fs.existsSync(script)) throw new Error("Nomreh's authenticated Windows runtime downloader is missing.");
-  progress("Downloading the verified Windows runtime directly from the private GitHub tag");
-  execute(runtime.nodeBinary, [script], {
-    cwd: APP_ROOT,
-    env: { ...runtimeEnvironment(runtime), NODE_OPTIONS: "--use-system-ca", NOMREH_DATA_DIR: DATA_DIR, NOMREH_APP_ROOT: APP_ROOT, NOMREH_WINDOWS_GITHUB_TOKEN: process.env.NOMREH_WINDOWS_GITHUB_TOKEN },
-    timeout: 1800000,
-  });
-}
 
-function assembleWindowsRuntime(runtime) {
-  const script = path.join(APP_ROOT, "scripts", "shecan-vm", "assemble-windows-runtime.cjs");
-  if (!fs.existsSync(path.join(APP_ROOT, "deploy", "windows-runtime", "manifest.json"))) return;
-  if (!fs.existsSync(script)) throw new Error("Nomreh's bounded Windows runtime assembler is missing.");
-  progress("Assembling and verifying the genuine Windows Shecan runtime");
-  execute(runtime.nodeBinary, [script], {
-    cwd: APP_ROOT,
-    env: { ...runtimeEnvironment(runtime), NOMREH_DATA_DIR: DATA_DIR, NOMREH_APP_ROOT: APP_ROOT },
-    timeout: 900000,
-  });
-}
 
-function deployOfficialShecan(runtime) {
-  const tsxCli = path.join(APP_ROOT, "node_modules", "tsx", "dist", "cli.mjs");
-  const script = path.join(APP_ROOT, "scripts", "shecan-official-deploy.ts");
-  if (!fs.existsSync(tsxCli) || !fs.existsSync(script)) throw new Error("Nomreh's official Shecan deployment helper is missing.");
-  progress("Patching the existing official Shecan guest and testing its AI-only route");
-  execute(runtime.nodeBinary, [tsxCli, script], {
-    cwd: APP_ROOT,
-    env: { ...runtimeEnvironment(runtime), NOMREH_DATA_DIR: DATA_DIR },
-    timeout: 900000,
-  });
-}
 
 function smokeRuntime(runtime) {
   const source = `
@@ -554,9 +521,6 @@ async function build() {
     restorePublicStaticAfterBuild(staticStash, true);
     progress("Publishing Next.js static assets for nginx");
     syncPublicStatic();
-    downloadWindowsRuntime(runtime);
-    assembleWindowsRuntime(runtime);
-    deployOfficialShecan(runtime);
     progress("Removing development-only packages and regenerable build caches");
     compactProduction(runtime);
     progress("Testing SQLite and canvas with the production runtime");

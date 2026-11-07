@@ -198,7 +198,10 @@ test("outbound provider traffic is capped well under the host's block threshold"
   // The gate must be reachable from the single choke point every provider call uses.
   const network = fs.readFileSync(path.join(root, "lib/server/provider-network.ts"), "utf8");
   assert.match(network, /withProviderBudget/, "providerFetch must pass through the budget gate");
-  assert.match(network, /providerFetchDirect/);
+  assert.match(network, /await withProviderBudget\(hostname, \(\) => fetch\(url, init\)\)/, "the request must be a plain direct fetch inside the budget gate");
+  // Prose is allowed to name what was removed; executable lines are not.
+  const code = network.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  assert.ok(!/ProxyAgent|dispatcher|localAddress|new Resolver/.test(code), "no transport may be reintroduced");
 
   // Exhausting the window must throw a typed, non-retryable error.
   const host = "budget-test.invalid";
@@ -245,38 +248,29 @@ test("the delta updater is bounded and never touches user data", () => {
   assert.ok(pkg.scripts.delta, "npm run delta must exist");
 });
 
-test("the Shecan guest can be switched off without editing scripts", () => {
-  // A restart is treated as "always on", so the panel Stop button comes back after
-  // every Restart App. The operator needs a switch, and editing server.js by hand is
-  // exactly what broke this deployment before.
-  const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as { scripts: Record<string, string> };
-  assert.ok(pkg.scripts["shecan:off"], "npm run shecan:off must exist");
-  assert.ok(pkg.scripts["shecan:on"], "the switch must be reversible");
-  const script = fs.readFileSync(path.join(root, "scripts/nomreh-disable-shecan.cjs"), "utf8");
-  assert.match(script, /stop-requested/, "it must write the marker the runtime honours");
-  assert.match(script, /NOMREH_DISABLE_SHECAN_SUPERVISOR/, "it must name the permanent opt-out");
-  // The script documents what it avoids, so check the write targets, not the prose.
-  const writes = script.match(/writeAtomic\(\s*[A-Z_]+,/g) || [];
-  assert.ok(writes.length <= 2, `it must write only its own markers, found ${writes.length}`);
-  for (const forbidden of ["nomreh.db", "provider-secret", ".env"]) {
-    const usedAsPath = new RegExp(`(writeAtomic|writeFileSync|unlinkSync)\\([^)]*${forbidden.replace(".", "\\.")}`);
-    assert.ok(!usedAsPath.test(script), `it must never write ${forbidden}`);
+test("no bypass transport can come back without a failing test", () => {
+  // The whole point of this branch: there is one route out of this server. A
+  // future change that re-adds a tunnel, a DNS override or a guest VM must fail
+  // here instead of quietly making a blocked destination look like a bug.
+  const forbidden = [
+    "lib/server/shecan-runtime.ts",
+    "lib/server/shecan-windows-runtime.ts",
+    "lib/server/v2ray-runtime.ts",
+    "lib/server/v2ray-config.ts",
+    "scripts/shecan-vm",
+    "components/v2ray-connection.tsx",
+    "components/official-shecan-console.tsx",
+    "app/api/admin/v2ray",
+    "app/api/admin/shecan-runtime",
+  ];
+  for (const path of forbidden) {
+    assert.equal(fs.existsSync(`${root}/${path}`), false, `${path} must stay deleted`);
   }
-});
-
-test("a marker file disables the Shecan guest with no panel access", () => {
-  // A Plesk subscription panel does not always expose custom environment variables,
-  // and .env.local is read by Next's runtime, not by the launcher. The operator
-  // needs a switch that works from the file system alone.
-  const launcher = fs.readFileSync(path.join(root, "scripts", "next-server.cjs"), "utf8");
-  assert.match(launcher, /operatorDisabledShecan/, "the launcher must consult the marker");
-  assert.match(launcher, /shecan-disabled-by-operator/, "the marker file name must match the one shecan:off writes");
-  assert.match(launcher, /NOMREH_DISABLE_SHECAN_SUPERVISOR/, "the environment variable must still work");
-  // Both supervisor branches must be reachable only through the same guard.
-  const guards = launcher.match(/if \(operatorDisabledShecan\(\)\) return;/g) || [];
-  assert.ok(guards.length >= 1);
-  const marker = fs.readFileSync(path.join(root, "scripts", "nomreh-disable-shecan.cjs"), "utf8");
-  assert.match(marker, /shecan-disabled-by-operator/, "shecan:off and the launcher must agree on the file name");
+  const gateway = fs.readFileSync(path.join(root, "lib/server/provider-network.ts"), "utf8");
+  assert.ok(!/shecan|v2ray|xray|socks|tunnel|proxy/i.test(gateway.replace(/\/\*[\s\S]*?\*\//g, "")), "the provider gateway must not mention a transport");
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as { scripts: Record<string, string>; dependencies: Record<string, string> };
+  for (const name of Object.keys(pkg.scripts)) assert.ok(!/shecan|v2ray|vnc/i.test(name), `script ${name} must be gone`);
+  for (const name of Object.keys(pkg.dependencies)) assert.ok(!/novnc|^ws$/.test(name), `dependency ${name} must be gone`);
 });
 
 test("the Kaya watcher is rate-safe and needs no key", () => {

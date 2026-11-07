@@ -14,8 +14,6 @@
 //   * the already-built `.next` output (12 MB, cache excluded) so a restart is
 //     enough even when the host cannot run a build
 //   * `vendor/*.tgz` and the lockfile, so a later `npm ci` works offline-ish
-//   * the genuine `shecan (2).exe` installer (the Windows runtime itself is a
-//     separate, already-uploaded download and is never shipped here)
 //
 // What it never contains:
 //   * node_modules (the existing install is enough: this release adds no new

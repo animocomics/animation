@@ -63,11 +63,13 @@ jobs:
             unzip -Z1 "$archive" | grep -Fx "$required" > /dev/null
           done
           test "$(unzip -Z1 "$archive" | grep -vc '/$')" -eq 4
-          test "$(git show "$source_sha:vendor/ws-8.22.1.tgz" | sha256sum | cut -d' ' -f1)" = a5cdb19c7090b816ffc109b6d928d352aa2bce73e38f73bd9678d484a62d2f75
-          test "$(git show "$source_sha:vendor/novnc-novnc-1.7.0.tgz" | sha256sum | cut -d' ' -f1)" = 32689f18d6abe96bc6530828a6bd0b9ae33bda07c083a6575ed255b5a8f2e903
           test "$(git show "$source_sha:vendor/next-swc-wasm-nodejs-16.4.3.tgz" | sha256sum | cut -d' ' -f1)" = f3891128551b931b7189fa4f65619eaa0791fe9be4558efdd34d979ee056ada3
-          git show "$source_sha:package.json" | grep -F '"ws": "file:vendor/ws-8.22.1.tgz"' > /dev/null
-          git show "$source_sha:package.json" | grep -F '"@novnc/novnc": "file:vendor/novnc-novnc-1.7.0.tgz"' > /dev/null
+          # The desktop-channel packages must stay absent: they existed only to
+          # carry a VNC stream to a guest VM that this build no longer has.
+          if git show "$source_sha:package.json" | grep -Eq '"(ws|@novnc/novnc)"'; then
+            echo 'A removed remote-desktop dependency came back.' >&2
+            exit 1
+          fi
           git show "$source_sha:package.json" | grep -F '"@next/swc-wasm-nodejs": "file:vendor/next-swc-wasm-nodejs-16.4.3.tgz"' > /dev/null
           git show "$source_sha:scripts/plesk-node22.cjs" | grep -F 'NEXT_TEST_WASM_DIR: wasmDirectory' > /dev/null
           git show "$source_sha:scripts/plesk-node22.cjs" | grep -F 'Nomreh Passenger-aware launcher is active for this build.' > /dev/null
@@ -76,13 +78,18 @@ jobs:
           git show "$source_sha:scripts/plesk-node22.cjs" | grep -F '"--include=dev", "--omit=optional"' > /dev/null
           git show "$source_sha:next.config.mjs" | grep -F 'webpackBuildWorker: false' > /dev/null
           git show "$source_sha:package.json" | grep -F '"@napi-rs/canvas-linux-x64-gnu": "0.1.100"' > /dev/null
-          git show "$source_sha:components/admin-panel.tsx" | grep -F '<OfficialShecanConsole />' > /dev/null
           if git show "$source_sha:components/admin-panel.tsx" | grep -F '<ApiNetworkConnection />' > /dev/null; then
             echo 'The rejected substitute OTP panel is still mounted in admin.' >&2
             exit 1
           fi
-          git show "$source_sha:scripts/next-server.cjs" | grep -F 'attachShecanVncWebSocket(server, port)' > /dev/null
-          git show "$source_sha:lib/server/provider-network.ts" | grep -F 'network.transport === "official-vm"' > /dev/null
+          # Direct-only is the whole point of this release: the launcher and the
+          # provider gateway must contain no bypass transport at all.
+          git show "$source_sha:scripts/next-server.cjs" | grep -F 'const server = createServer((request, response) => handle(request, response));' > /dev/null
+          git show "$source_sha:lib/server/provider-network.ts" | grep -F 'await withProviderBudget(hostname, () => fetch(url, init))' > /dev/null
+          if git show "$source_sha:lib/server/provider-network.ts" | grep -Eq 'ProxyAgent|dispatcher|localAddress'; then
+            echo 'A bypass transport reappeared in the provider gateway.' >&2
+            exit 1
+          fi
           if unzip -Z1 "$archive" | grep -E '(^|/)(nomreh-data|node_modules|\.next|uploads?)(/|$)|(^|/)\.env$|(^|/)\.env\.(local|production|development|test)$'; then
             echo 'Sensitive, persistent, uploaded, or generated content was included in the archive.' >&2
             exit 1

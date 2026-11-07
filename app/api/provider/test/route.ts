@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { AuthError, requireAdmin } from "@/lib/server/auth";
-import { getProviderConfig, getProviderNetworkConfig } from "@/lib/server/provider-config";
+import { getProviderConfig } from "@/lib/server/provider-config";
 import { providerFetch, ProviderNetworkError } from "@/lib/server/provider-network";
 import { providerResponseError } from "@/lib/server/provider-models";
 import { ProviderError } from "@/lib/server/providers";
@@ -20,7 +20,6 @@ export async function POST(request: Request) {
   try {
     await requireAdmin();
     const input = schema.parse(await request.json());
-    const network = await getProviderNetworkConfig();
     let apiKey = input.apiKey?.trim() || "";
     if (!apiKey) {
       const stored = await getProviderConfig();
@@ -96,7 +95,7 @@ export async function POST(request: Request) {
       body: testBody ? JSON.stringify(testBody) : undefined,
       signal: AbortSignal.timeout(20_000),
       cache: "no-store",
-    }, network);
+    });
     if (!response.ok) throw await providerResponseError(response, input.provider, apiKey);
     if (input.provider === "deepseek") {
       const payload = await response.json() as { data?: Array<{ id?: string }> };

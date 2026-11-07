@@ -65,21 +65,15 @@ test("empty successful responses do not become raw JSON parser errors", async ()
 });
 
 test("Plesk-facing mutations use POST while authenticated PUT compatibility remains", async () => {
-  const [providerRoute, providerClient, networkRoute, networkClient, workspaceRoute, workspaceClient] = await Promise.all([
+  const [providerRoute, providerClient, workspaceRoute, workspaceClient] = await Promise.all([
     readFile("app/api/provider/route.ts", "utf8"),
     readFile("components/api-connection.tsx", "utf8"),
-    readFile("app/api/admin/api-network/route.ts", "utf8"),
-    readFile("components/api-network-connection.tsx", "utf8"),
     readFile("app/api/workspace/route.ts", "utf8"),
     readFile("lib/app-context.tsx", "utf8"),
   ]);
   assert.match(providerRoute, /saveProvider as POST, saveProvider as PUT/);
-  assert.match(networkRoute, /saveApiNetwork as POST, saveApiNetwork as PUT/);
-  assert.match(networkRoute, /startApiNetworkJob/);
-  assert.match(networkRoute, /status: 202/);
-  assert.match(networkClient, /resolveNetworkJob/);
   assert.match(workspaceRoute, /updateWorkspace as POST, updateWorkspace as PUT/);
-  for (const client of [providerClient, networkClient, workspaceClient]) {
+  for (const client of [providerClient, workspaceClient]) {
     assert.match(client, /method: "POST"/);
     assert.doesNotMatch(client, /method: "PUT"/);
   }

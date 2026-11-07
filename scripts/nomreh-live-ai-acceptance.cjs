@@ -177,13 +177,10 @@ async function run() {
   lines.push("## Current provider and recorded usage", "");
   lines.push(`- Configured: ${provider.configured ? "yes" : "no"}; provider: ${clean(provider.providerLabel)}; model: ${clean(provider.model)}.`);
   if (!provider.configured) lines.push("- No stored provider key is configured; no external AI grading request can be made.");
-  const networkResult = await api(admin, "GET", "/api/admin/api-network");
-  if (networkResult.response.ok() && networkResult.payload?.status) {
-    const network = networkResult.payload.status;
-    lines.push(`- Shecan status (read-only): configured ${network.configured ? "yes" : "no"}; enabled ${network.enabled ? "yes" : "no"}; plan ${clean(network.plan)}; last test ${clean(network.lastTestStatus)}; message: ${clean(network.lastTestMessage)}.`);
-  } else {
-    lines.push(`- Shecan status could not be read: HTTP ${networkResult.status} ${errorText(networkResult)}.`);
-  }
+  // There is one route out of this server now, so the only route worth reporting
+  // is whether the destination answers the host at all. The old check asked a
+  // proxy for its own opinion, which could disagree with reality.
+  lines.push("- Transport: direct (no tunnel, no proxy, no DNS override).");
   const publicResponse = await admin.get(`${ORIGIN}/`, { timeout: 20000 }).catch(() => undefined);
   lines.push(`- Public home response during this check: ${publicResponse ? `HTTP ${publicResponse.status()}` : "unavailable"}.`);
 

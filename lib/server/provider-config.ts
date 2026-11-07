@@ -1,6 +1,5 @@
 import type { ProviderId, ProviderPublicStatus } from "@/lib/types";
-import { ApiNetworkError, ensureApiNetworkActivated, getApiNetworkConfig, type ProviderNetworkConfig } from "./api-network";
-import { DEFAULT_MODELS, PROVIDER_LABELS, ProviderError } from "./providers";
+import { DEFAULT_MODELS, PROVIDER_LABELS } from "./providers";
 import { decryptSecret, encryptSecret } from "./secret-crypto";
 import type { KayaEgressConfig } from "./kaya-egress";
 
@@ -31,36 +30,21 @@ export async function getProviderStatus(includeKeyHint = false): Promise<Provide
   };
 }
 
-export async function getProviderNetworkConfig(): Promise<ProviderNetworkConfig> {
-  try {
-    const { getV2RayNetworkConfig } = await import("./v2ray-runtime");
-    const v2ray = await getV2RayNetworkConfig();
-    if (v2ray) return v2ray;
-    const network = await getApiNetworkConfig();
-    if (network.enabled) await ensureApiNetworkActivated(network);
-    return { enabled: network.enabled, plan: network.plan, servers: network.servers, transport: network.transport };
-  } catch (error) {
-    if (error instanceof ApiNetworkError) throw new ProviderError(error.message, error.status);
-    throw error;
-  }
-}
-
 export async function getProviderConfig(): Promise<{
   provider: ProviderId;
   model: string;
   apiKey: string;
-  network: ProviderNetworkConfig;
   /** Source address and host override for Kaya, empty when unset. */
   egress: KayaEgressConfig;
 }> {
-  const [row, network] = await Promise.all([findProviderRow(), getProviderNetworkConfig()]);
+  const row = await findProviderRow();
   if (!row?.encrypted_api_key) throw new Error("اتصال هوش مصنوعی هنوز توسط مدیر سامانه پیکربندی نشده است.");
   // Read the egress setting on every call: it changes only when the operator
   // saves it, and a stale source address is exactly the failure it exists to fix.
   const { getKayaEgress } = await import("./kaya-egress-store");
   const egressStatus = await getKayaEgress();
   const egress: KayaEgressConfig = { bindAddress: egressStatus.bindAddress, host: egressStatus.host };
-  return { provider: row.provider, model: row.model, apiKey: await decryptSecret(row.encrypted_api_key, PROVIDER_SECRET_PURPOSE), network, egress };
+  return { provider: row.provider, model: row.model, apiKey: await decryptSecret(row.encrypted_api_key, PROVIDER_SECRET_PURPOSE), egress };
 }
 
 export async function disconnectProviderConfig(): Promise<ProviderPublicStatus> {

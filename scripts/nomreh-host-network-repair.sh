@@ -170,5 +170,5 @@ for item in "${VERDICTS[@]}"; do
   echo
 done
 
-echo "Kaya needs no DNS trick, no VPN and no Shecan: kayaai.ir is reachable directly"
+echo "Nomreh has no tunnel, no VPN and no DNS override: every provider request leaves this host directly"
 echo "from Iran. This host only needs its normal outbound connection back."

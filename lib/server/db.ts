@@ -47,54 +47,6 @@ function createDatabase(): DatabaseConnection {
       updated_at TEXT NOT NULL,
       updated_by TEXT REFERENCES users(id)
     );
-    CREATE TABLE IF NOT EXISTS api_network_settings (
-      id INTEGER PRIMARY KEY CHECK(id = 1),
-      plan TEXT NOT NULL CHECK(plan IN ('free', 'pro')),
-      dns_primary TEXT NOT NULL,
-      dns_secondary TEXT NOT NULL,
-      transport TEXT NOT NULL DEFAULT 'dns' CHECK(transport IN ('dns', 'official-vm')),
-      enabled INTEGER NOT NULL DEFAULT 0,
-      encrypted_update_url TEXT NOT NULL DEFAULT '',
-      update_url_source TEXT NOT NULL DEFAULT 'manual',
-      encrypted_account_key TEXT NOT NULL DEFAULT '',
-      account_login TEXT NOT NULL DEFAULT '',
-      account_name TEXT NOT NULL DEFAULT '',
-      account_authenticated_at TEXT,
-      selected_order_id INTEGER,
-      selected_order_label TEXT NOT NULL DEFAULT '',
-      selected_order_due TEXT NOT NULL DEFAULT '',
-      last_test_status TEXT NOT NULL DEFAULT 'idle',
-      last_test_message TEXT NOT NULL DEFAULT '',
-      last_tested_at TEXT,
-      last_test_latency_ms INTEGER,
-      last_activated_at TEXT,
-      updated_at TEXT NOT NULL,
-      updated_by TEXT REFERENCES users(id)
-    );
-    CREATE TABLE IF NOT EXISTS v2ray_settings (
-      id INTEGER PRIMARY KEY CHECK(id = 1),
-      enabled INTEGER NOT NULL DEFAULT 0,
-      selected_config_id TEXT,
-      last_test_status TEXT NOT NULL DEFAULT 'idle',
-      last_test_message TEXT NOT NULL DEFAULT '',
-      last_tested_at TEXT,
-      updated_at TEXT NOT NULL,
-      updated_by TEXT REFERENCES users(id)
-    );
-    CREATE TABLE IF NOT EXISTS v2ray_configs (
-      id TEXT PRIMARY KEY,
-      slot INTEGER NOT NULL,
-      protocol TEXT NOT NULL,
-      encrypted_config TEXT NOT NULL,
-      fingerprint TEXT NOT NULL UNIQUE,
-      last_test_status TEXT NOT NULL DEFAULT 'idle',
-      last_error_code TEXT,
-      last_latency_ms INTEGER,
-      last_tested_at TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_v2ray_configs_slot ON v2ray_configs(slot);
     CREATE TABLE IF NOT EXISTS workspaces (
       user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
       data_json TEXT NOT NULL,
@@ -117,22 +69,6 @@ function createDatabase(): DatabaseConnection {
     CREATE INDEX IF NOT EXISTS idx_ai_jobs_user ON ai_jobs(user_id);
     CREATE INDEX IF NOT EXISTS idx_ai_jobs_created ON ai_jobs(created_at);
   `);
-  const networkColumns = database.prepare("PRAGMA table_info(api_network_settings)").all() as Array<{ name: string }>;
-  const networkColumnNames = new Set(networkColumns.map((column) => column.name));
-  const networkMigrations: Array<[string, string]> = [
-    ["transport", "TEXT NOT NULL DEFAULT 'dns'"],
-    ["update_url_source", "TEXT NOT NULL DEFAULT 'manual'"],
-    ["encrypted_account_key", "TEXT NOT NULL DEFAULT ''"],
-    ["account_login", "TEXT NOT NULL DEFAULT ''"],
-    ["account_name", "TEXT NOT NULL DEFAULT ''"],
-    ["account_authenticated_at", "TEXT"],
-    ["selected_order_id", "INTEGER"],
-    ["selected_order_label", "TEXT NOT NULL DEFAULT ''"],
-    ["selected_order_due", "TEXT NOT NULL DEFAULT ''"],
-  ];
-  for (const [name, definition] of networkMigrations) {
-    if (!networkColumnNames.has(name)) database.exec(`ALTER TABLE api_network_settings ADD COLUMN ${name} ${definition}`);
-  }
   // Kaya egress: the source address Kaya is allowed to see, and an optional host
   // override. One row, off by default, because a wrong source address on a shared
   // host would break every provider request.
@@ -144,12 +80,18 @@ function createDatabase(): DatabaseConnection {
     updated_by TEXT REFERENCES users(id)
   )`);
 
-  const v2rayColumns = database.prepare("PRAGMA table_info(v2ray_configs)").all() as Array<{ name: string }>;
-  if (!v2rayColumns.some((column) => column.name === "last_error_code")) database.exec("ALTER TABLE v2ray_configs ADD COLUMN last_error_code TEXT");
   const workspaceColumns = database.prepare("PRAGMA table_info(workspaces)").all() as Array<{ name: string }>;
   if (!workspaceColumns.some((column) => column.name === "revision")) {
     database.exec("ALTER TABLE workspaces ADD COLUMN revision INTEGER NOT NULL DEFAULT 0");
   }
+  // Remove the tables the bypass era left behind. On a host that upgraded from an
+  // older build they still exist, and they contain a Shecan account key, an
+  // update link and proxy share links — none of which anything reads any more, and
+  // all of which are better off deleted than kept "just in case".
+  for (const table of ["v2ray_configs", "v2ray_settings", "api_network_settings"]) {
+    database.exec(`DROP TABLE IF EXISTS ${table}`);
+  }
+
   database.prepare("DELETE FROM sessions WHERE expires_at <= ?").run(new Date().toISOString());
 
   const userCount = database.prepare("SELECT COUNT(*) AS count FROM users").get() as { count: number };
