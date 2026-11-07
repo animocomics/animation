@@ -96,6 +96,9 @@ function walk(directory, relative, collected) {
     // without it. Blanket-skipping ".env*" shipped an archive with no template.
     if (entry.name.startsWith(".env") && entry.name !== ".env.example") continue;
     if (!relative && /^nomreh-(deploy|direct-v\d+).*\.zip$/i.test(entry.name)) continue;
+    // A teacher's exam paper or a test scan is data, not source, and must not end
+    // up inside a release archive that other people download.
+    if (!relative && /\.pdf$/i.test(entry.name)) continue;
     // Local build artifacts must never ship.
     if (entry.name.endsWith(".tsbuildinfo")) continue;
     collected.push(rel);
