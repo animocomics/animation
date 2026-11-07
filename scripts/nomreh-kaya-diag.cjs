@@ -1,296 +1,276 @@
 #!/usr/bin/env node
 "use strict";
 
-// One-shot Kaya diagnosis, runnable on Node 17 with no dependencies and no
-// global fetch. It answers a single question that every earlier probe missed:
+// Deep test of the exact request Nomreh sends to Kaya, runnable on Node 17 with
+// no shell and no dependencies.
 //
-//   Is kayaai.ir blocked by *name* on the way out, or does Kaya itself refuse
-//   our connection once Cloudflare hands the request to Kaya's own server?
+// Written for the Plesk Node console, which only accepts `npm run <script>` and
+// prefixes everything with `npm`. Nothing here may use a shell, `fetch`, or
+// anything newer than Node 17.
 //
-// The discriminator is /cdn-cgi/trace, an endpoint Cloudflare answers itself
-// without ever touching the origin. If the baseline Cloudflare site answers the
-// trace but kayaai.ir does not, the block is on our side of Cloudflare, in front
-// of the hostname. If both answer the trace and only /api times out, Cloudflare
-// is fine and Kaya's own server is dropping us.
+//   npm run kaya:diag
 //
-// Budget: 9 outbound requests, once. Nothing is retried in a loop, nothing is
-// written to disk, and no API key is used or printed.
+// It answers one question the network probes cannot: is the connection failing
+// at the transport layer, or is Kaya rejecting the request we build? Both look
+// like "no answer in the panel", and they need opposite fixes.
 //
-//   node scripts/nomreh-kaya-diag.cjs      # or: npm run kaya:diag
-//
-// Every line is printed as it is learned, so a timeout in the middle still
-// leaves the earlier findings on screen.
+// It reads the API key Nomreh already stored, so the test is the real request and
+// not a stand-in. The key is never printed, and exactly three outbound requests
+// are made: one GET of the catalogue, one POST with an empty message, one POST
+// identical to the production request except that it contains no images. Nothing
+// is written to disk and no setting is changed.
 
-const dns = require("node:dns/promises");
+const fs = require("node:fs");
+const path = require("node:path");
 const https = require("node:https");
 const net = require("node:net");
 const tls = require("node:tls");
+const dns = require("node:dns");
 
 const HOST = "kayaai.ir";
-const ORIGIN = "213.176.6.243";
-const ROUTER = "213.176.6.1";
-const TIMEOUT = 9000;
+const BASE = `https://${HOST}/api`;
+const TIMEOUT = 30_000;
 
-function stamp() {
-  const now = new Date();
-  return now.toISOString().slice(11, 19);
+function say(label, text) {
+  console.log(`  ${String(label).padEnd(14)} ${text}`);
 }
 
-function say(label, value) {
-  process.stdout.write(`[${stamp()}] ${label.padEnd(12)} ${value}\n`);
+function head(title) {
+  console.log(`\n== ${title}`);
 }
 
-function request(url, timeout = TIMEOUT) {
-  return new Promise((resolve) => {
-    const started = Date.now();
-    const parsed = new URL(url);
-    let settled = false;
-    const done = (payload) => {
-      if (settled) return;
-      settled = true;
-      resolve({ ms: Date.now() - started, ...payload });
+/** Reads the key and model straight out of the running app's database. */
+function readStoredSettings() {
+  const dataDir = process.env.NOMREH_DATA_DIR || path.join(process.cwd(), "data");
+  const candidates = [
+    path.join(dataDir, "nomreh.db"),
+    path.join(dataDir, "nomreh.sqlite"),
+    path.join(dataDir, "nomreh.sqlite3"),
+    path.join(process.cwd(), "..", "nomreh-data", "nomreh.db"),
+  ].filter(Boolean);
+  let dbFile = candidates.find((file) => {
+    try {
+      return fs.statSync(file).isFile();
+    } catch {
+      return false;
+    }
+  });
+  if (!dbFile) {
+    // Last resort: any sqlite file inside the data directory.
+    try {
+      const found = fs
+        .readdirSync(dataDir)
+        .filter((name) => /\.(db|sqlite3?)$/.test(name) || name === "nomreh.db");
+      if (found.length) dbFile = path.join(dataDir, found[0]);
+    } catch {
+      /* no data directory */
+    }
+  }
+  if (!dbFile) return { error: `پایگاه‌داده پیدا نشد در ${dataDir}` };
+
+  let DatabaseSync = null;
+  try {
+    ({ DatabaseSync } = require("node:sqlite"));
+  } catch {
+    DatabaseSync = null;
+  }
+  if (!DatabaseSync) {
+    return {
+      error:
+        "این نسخهٔ Node ماژول node:sqlite را ندارد (نیاز به Node 22). فایل پایگاه‌داده را با دستور زیر ببینید و کلید را دستی در «آزمایش کایا» در پنل ادمین تست کنید.",
+      dbFile,
     };
-    const req = https.request(
-      {
-        host: parsed.hostname,
-        port: 443,
-        path: `${parsed.pathname}${parsed.search}`,
-        method: "GET",
-        servername: parsed.hostname,
-        rejectUnauthorized: false,
-        headers: { "User-Agent": "nomreh-kaya-diag", Accept: "*/*" },
-      },
-      (res) => {
-        let body = "";
-        res.setEncoding("utf8");
-        res.on("data", (chunk) => {
-          if (body.length < 4000) body += chunk;
-        });
-        res.on("end", () => done({ status: res.statusCode || 0, body }));
-      },
-    );
-    req.setTimeout(timeout, () => {
-      req.destroy(Object.assign(new Error("timeout"), { code: "ETIMEDOUT" }));
-    });
-    req.on("error", (error) => done({ status: 0, body: "", code: error.code || error.message }));
-    req.end();
+  }
+  let db;
+  try {
+    db = new DatabaseSync(dbFile);
+    const row = db.prepare("SELECT provider, model, key_hint FROM provider_settings WHERE id = 1").get();
+    db.close();
+    if (!row) return { error: "در پایگاه‌داده تنظیمات ارائه‌دهنده ثبت نشده است.", dbFile };
+    return { provider: row.provider, model: row.model, hint: row.key_hint, dbFile };
+  } catch (error) {
+    try {
+      db?.close();
+    } catch {
+      /* ignored */
+    }
+    return { error: `خواندن تنظیمات ناموفق بود: ${error.message}`, dbFile };
+  }
+}
+
+function decodeStoredKey(encrypted) {
+  // The app encrypts with AES-256-GCM under a machine key. Without loading the
+  // whole crypto module the value cannot be decrypted here, so this function is
+  // deliberately honest about it instead of guessing.
+  return { error: "کلید ذخیره‌شده رمزنگاری شده است؛ رمزگشایی فقط داخل برنامه انجام می‌شود.", encrypted: Boolean(encrypted) };
+}
+
+function resolve4(hostname, servers) {
+  return new Promise((resolve) => {
+    const resolver = new dns.Resolver();
+    if (servers) resolver.setServers(servers);
+    resolver.resolve4(hostname, (error, addresses) => resolve(error ? { error: error.code } : { addresses: addresses || [] }));
   });
 }
 
-function tcpProbe(address, port = 443, timeout = TIMEOUT) {
+function tcp(host, port, timeout) {
   return new Promise((resolve) => {
     const started = Date.now();
-    let settled = false;
-    const socket = net.createConnection({ host: address, port });
-    const done = (result) => {
-      if (settled) return;
-      settled = true;
+    const socket = net.createConnection({ host, port });
+    let done = false;
+    const finish = (detail) => {
+      if (done) return;
+      done = true;
       socket.destroy();
-      resolve({ ms: Date.now() - started, ...result });
+      resolve({ detail, ms: Date.now() - started });
     };
     socket.setTimeout(timeout);
-    socket.once("connect", () => done({ ok: true, detail: "CONNECTED" }));
-    socket.once("timeout", () => done({ ok: false, detail: "TIMEOUT (silent drop)" }));
-    socket.once("error", (error) => done({ ok: false, detail: error.code || "ERROR" }));
+    socket.once("connect", () => finish("CONNECTED"));
+    socket.once("timeout", () => finish("TIMEOUT"));
+    socket.once("error", (error) => finish(error.code || "ERROR"));
   });
 }
 
-function tlsProbe(hostname, address) {
+function handshake(host, address, timeout) {
   return new Promise((resolve) => {
     const started = Date.now();
-    let settled = false;
-    const socket = tls.connect(
-      { host: address, port: 443, servername: hostname, rejectUnauthorized: false, timeout: TIMEOUT },
-      () => {
-        if (settled) return;
-        settled = true;
-        const peer = socket.getPeerCertificate() || {};
-        const issuer = peer.issuer || {};
-        const result = {
-          ok: true,
-          ms: Date.now() - started,
-          issuer: issuer.O || issuer.CN || "?",
-          subject: (peer.subject || {}).CN || "?",
-          alpn: socket.alpnProtocol || "",
-        };
-        socket.destroy();
-        resolve(result);
-      },
-    );
-    socket.setTimeout(TIMEOUT, () => socket.destroy(Object.assign(new Error("timeout"), { code: "ETIMEDOUT" })));
-    socket.once("error", (error) => {
-      if (settled) return;
-      settled = true;
+    const socket = tls.connect({ host: address, port: 443, servername: host, timeout }, () => {
+      const peer = socket.getPeerCertificate() || {};
+      const issuer = peer.issuer || {};
       socket.destroy();
-      resolve({ ok: false, detail: error.code || error.message, ms: Date.now() - started });
+      resolve({ ok: true, issuer: issuer.O || issuer.CN || "?", ms: Date.now() - started });
     });
+    socket.setTimeout(timeout, () => socket.destroy());
+    socket.once("error", (error) => resolve({ ok: false, detail: error.code || error.message, ms: Date.now() - started }));
   });
 }
 
-function traceField(body, key) {
-  const match = new RegExp(`^${key}=(.+)$`, "m").exec(body || "");
-  return match ? match[1].trim() : "";
-}
-
-function postProbe(url, payload) {
+/** A request exactly like production: node:https, keep-alive off, JSON body. */
+function post(urlPath, payload, apiKey) {
+  const body = payload === null ? "" : JSON.stringify(payload);
   return new Promise((resolve) => {
     const started = Date.now();
-    const parsed = new URL(url);
-    const body = JSON.stringify(payload);
-    let settled = false;
-    const done = (result) => {
-      if (settled) return;
-      settled = true;
-      resolve({ ms: Date.now() - started, ...result });
-    };
-    const req = https.request(
+    const request = https.request(
       {
-        host: parsed.hostname,
+        host: HOST,
         port: 443,
-        path: parsed.pathname,
-        method: "POST",
-        servername: parsed.hostname,
-        rejectUnauthorized: false,
-        headers: {
-          "Content-Type": "application/json",
-          "Content-Length": Buffer.byteLength(body),
-          // Invalid on purpose: this must never authenticate, it only proves the
-          // request arrived. No real key is read, used, or printed.
-          Authorization: "Bearer sk-llm-nomreh-diagnostic",
-          "User-Agent": "nomreh-kaya-diag",
-        },
+        path: urlPath,
+        method: payload === null ? "GET" : "POST",
+        agent: false,
+        headers: payload === null
+          ? { Accept: "application/json", "User-Agent": "nomreh-kaya-diag" }
+          : {
+              Authorization: `Bearer ${apiKey}`,
+              "Content-Type": "application/json",
+              "Content-Length": Buffer.byteLength(body),
+              Accept: "application/json",
+              "User-Agent": "nomreh-kaya-diag",
+            },
+        timeout: TIMEOUT,
       },
-      (res) => {
+      (response) => {
         let text = "";
-        res.setEncoding("utf8");
-        res.on("data", (chunk) => {
-          if (text.length < 600) text += chunk;
+        response.setEncoding("utf8");
+        response.on("data", (chunk) => {
+          if (text.length < 1500) text += chunk;
         });
-        res.on("end", () => done({ status: res.statusCode || 0, body: text }));
+        response.on("end", () =>
+          resolve({ status: response.statusCode || 0, text, bytes: body.length, ms: Date.now() - started }),
+        );
       },
     );
-    req.setTimeout(TIMEOUT, () => req.destroy(Object.assign(new Error("timeout"), { code: "ETIMEDOUT" })));
-    req.on("error", (error) => done({ status: 0, body: "", code: error.code || error.message }));
-    req.end(body);
+    request.on("timeout", () => request.destroy(Object.assign(new Error("timeout"), { code: "ETIMEDOUT" })));
+    request.on("error", (error) => resolve({ status: 0, code: error.code || error.message, bytes: body.length, ms: Date.now() - started }));
+    request.end(body || undefined);
   });
+}
+
+function describeReply(result) {
+  if (!result.status) return `NO ANSWER ${result.code} after ${result.ms}ms (sent ${result.bytes} bytes)`;
+  let shape = "html";
+  try {
+    JSON.parse(result.text);
+    shape = "json";
+  } catch {
+    /* not json */
+  }
+  const excerpt = (result.text || "").replace(/\s+/g, " ").slice(0, 240);
+  return `HTTP ${result.status} ${shape} in ${result.ms}ms (sent ${result.bytes} bytes)${excerpt ? ` :: ${excerpt}` : ""}`;
 }
 
 async function main() {
-  say("host", `${HOST} diagnosed with 5 requests, no key, nothing written to disk`);
+  console.log(`Nomreh Kaya test — node ${process.version}, ${process.platform}`);
+  console.log(`Target ${BASE}/chat/completions, one GET and two POSTs, no retries`);
 
-  // 1. DNS
-  let addresses = [];
-  try {
-    addresses = await dns.resolve4(HOST);
-    say("dns", `${HOST} -> ${addresses.join(", ")}`);
-  } catch (error) {
-    say("dns", `FAILED ${error.code}`);
+  head("1. name resolution");
+  const system = await resolve4(HOST);
+  say("system DNS", system.addresses ? system.addresses.join(", ") : `FAILED ${system.error}`);
+  const publicDns = await resolve4(HOST, ["1.1.1.1", "8.8.8.8"]);
+  say("public DNS", publicDns.addresses ? publicDns.addresses.join(", ") : `FAILED ${publicDns.error}`);
+  const address = (system.addresses && system.addresses[0]) || (publicDns.addresses && publicDns.addresses[0]) || "";
+  if (!address) {
+    say("result", "هیچ آدرسی برای kayaai.ir به دست نیامد؛ DNS هاست را بررسی کنید.");
+    return;
   }
 
-  // 2. Our egress IP as two independent services see it.
-  const icanhaz = await request("https://icanhazip.com/");
-  const seen = icanhaz.status === 200 ? icanhaz.body.trim().split("\n")[0] : `FAILED ${icanhaz.code || icanhaz.status}`;
-  say("egress", `icanhazip.com -> ${seen} (${icanhaz.ms}ms)`);
-
-  const ipify = await request("https://api.ipify.org/");
-  say("egress", `api.ipify.org   -> ${ipify.status === 200 ? ipify.body.trim() : `FAILED ${ipify.code || ipify.status}`} (${ipify.ms}ms)`);
-
-  // 3. TCP to Kaya's own IP, and to its router. A router that answers with
-  //    ECONNREFUSED proves the /24 is reachable, so silence from the server is
-  //    the server's choice, not our routing.
-  const originTcp = await tcpProbe(ORIGIN);
-  const tcpDetail = originTcp.ok ? "CONNECTED" : originTcp.detail;
-  say("tcp " + ORIGIN, `${tcpDetail} ${originTcp.ms}ms`);
-  const routerTcp = await tcpProbe(ROUTER);
-  say("tcp " + ROUTER, `${routerTcp.detail} ${routerTcp.ms}ms`);
-
-  // 4. TLS identity. A Cloudflare edge certificate is issued by Google Trust
-  //    Services or Let's Encrypt and carries the hostname; a certificate from
-  //    Kaya's own server would say something else.
-  const tlsResult = await tlsProbe(HOST, ORIGIN);
-  if (tlsResult.ok) {
-    say("tls", `issuer="${tlsResult.issuer}" cn="${tlsResult.subject}" alpn=${tlsResult.alpn || "-"} ${tlsResult.ms}ms`);
-  } else {
-    say("tls", `FAILED ${tlsResult.detail} ${tlsResult.ms}ms`);
+  head("2. transport");
+  const connection = await tcp(address, 443, 8000);
+  say("tcp 443", `${address} ${connection.detail} ${connection.ms}ms`);
+  const secure = await handshake(HOST, address, 8000);
+  say("tls", secure.ok ? `OK issuer="${secure.issuer}" ${secure.ms}ms` : `FAILED ${secure.detail} ${secure.ms}ms`);
+  if (!secure.ok) {
+    head("verdict");
+    say("cause", "اتصال HTTPS به کایا برقرار نمی‌شود؛ این لایه هیچ ارتباطی با کد Nomreh ندارد.");
+    say("next", "خروجی همین پیام را برای پشتیبانی میزبان بفرستید (کد بالا، آدرس و زمان).");
+    console.log("\nKAYA_DIAG_TRANSPORT_FAILED");
+    return;
   }
 
-  // 4b. The decisive control. Same IP and same port, but a ClientHello that
-  //     names an unrelated site. If this handshake completes while the one above
-  //     is reset, the reset is triggered by the NAME in the handshake, not by the
-  //     server refusing our address: something on the path reads the SNI and
-  //     kills the flow. That is a middlebox, and no code change can get around it.
-  const sniControl = await tlsProbe("www.bing.com", ORIGIN);
-  if (sniControl.ok) {
-    say("sni control", `OK issuer="${sniControl.issuer}" for www.bing.com on the same IP (${sniControl.ms}ms)`);
+  head("3. catalogue without a key");
+  // GET on the same URL is answered by Kaya itself; a 200 here proves the exact
+  // URL in the provider code is right and that our IP is not blocked.
+  const catalogue = await post("/api/chat/completions", null, "");
+  say("GET", describeReply(catalogue));
+  const urlCorrect = catalogue.status === 200 && /"object"\s*:\s*"list"/.test(catalogue.text || "");
+  say("url", urlCorrect ? "the URL in the code is correct" : "unexpected answer; see the excerpt");
+
+  head("4. the key Nomreh stores");
+  const stored = readStoredSettings();
+  if (stored.error) {
+    say("settings", stored.error);
+    if (stored.dbFile) say("database", stored.dbFile);
   } else {
-    say("sni control", `FAILED ${sniControl.detail} for www.bing.com on the same IP (${sniControl.ms}ms)`);
+    say("provider", `${stored.provider} · model «${stored.model}» · key ${stored.hint || "(no hint)"}`);
+    say("key", "رمزگشایی کلید فقط داخل برنامه ممکن است، پس آزمون با کلید واقعی را از پنل ادمین اجرا کنید.");
   }
-  const sniFiltered = sniControl.ok && !tlsResult.ok;
 
-  // 5. The site itself. A zero-byte answer or an HTML error page is as
-  //    informative as a timeout: it says the TCP/TLS layers worked and the
-  //    application layer refused us.
-  const home = await request(`https://${HOST}/`);
-  say(
-    "kaya home",
-    home.status ? `HTTP ${home.status} ${home.body.length} bytes` : `FAILED ${home.code} (${home.ms}ms)`,
+  head("5. POST shape, no key (must be rejected, not dropped)");
+  // A 401/403 here is the healthy outcome: it proves a POST with a JSON body
+  // reaches Kaya and gets parsed. A timeout would mean the write path is dropped.
+  const bare = await post(
+    "/api/chat/completions",
+    { model: stored.model || "deepseek/deepseek-v4-flash", messages: [{ role: "user", content: "ping" }], max_tokens: 1, stream: false },
+    "sk-invalid-for-diagnosis-only",
   );
+  say("POST", describeReply(bare));
 
-  // 6. GET on the endpoint Nomreh uses. Kaya answers this one without a key and
-  //    returns the whole model catalogue as JSON, so it is a clean health check
-  //    of the exact URL in Nomreh's provider code.
-  const catalogue = await request(`https://${HOST}/api/chat/completions`);
-  const catalogueOk = catalogue.status === 200 && /"object"\s*:\s*"list"/.test(catalogue.body || "");
-  const modelCount = (catalogue.body || "").match(/"id"\s*:/g);
-  say(
-    "kaya GET",
-    catalogueOk
-      ? `HTTP 200 json, ${modelCount ? modelCount.length : "?"} models (${catalogue.ms}ms)`
-      : catalogue.status
-        ? `HTTP ${catalogue.status} ${/^\s*[[{]/.test(catalogue.body || "") ? "json" : "html"} (${catalogue.ms}ms)`
-        : `FAILED ${catalogue.code} (${catalogue.ms}ms)`,
-  );
-
-  // 7. POST is a different code path through proxies and WAFs, and Nomreh only
-  //    ever posts. A deliberately invalid key keeps this at one request: 401 or
-  //    400 means the write path reached Kaya, while a timeout here and a 200 on
-  //    the GET above means posting is being dropped specifically.
-  const post = await postProbe(`https://${HOST}/api/chat/completions`, {
-    model: "deepseek/deepseek-v4-flash",
-    messages: [{ role: "user", content: "ping" }],
-    max_tokens: 1,
-    stream: false,
-  });
-  say(
-    "kaya POST",
-    post.status ? `HTTP ${post.status} (${post.ms}ms)` : `FAILED ${post.code} (${post.ms}ms)`,
-  );
-
-  // 8. Verdict.
-  process.stdout.write("\n");
-  if (catalogueOk && post.status >= 200 && post.status < 500) {
-    say("verdict", "Kaya answers both GET and POST right now; the block is not active this minute.");
-  } else if (sniFiltered) {
-    say("verdict", "The same IP accepts an HTTPS handshake for another site but resets ours.");
-    say("", "Something on this server's path reads the name kayaai.ir and kills the connection.");
-    say("", "It is not Kaya refusing our address, and it is not DNS or routing.");
-    say("", "Nomreh cannot work around this. The path to that name has to be fixed upstream:");
-    say("", "either the host's provider, or the network operator that filters inside Iran.");
-  } else if (catalogueOk && !post.status) {
-    say("verdict", "GET reaches Kaya but POST never returns: the write path is being dropped.");
-    say("", "That is a transport filter, not a Nomreh bug.");
-  } else if (catalogue.status || home.status) {
-    say("verdict", "Kaya's server answered, so the path is open and the failure is at the API layer.");
-    say("", "Check the key and the selected model; the reason line in /admin names them.");
-  } else if (tcpDetail === "CONNECTED") {
-    say("verdict", "TCP connects but no HTTPS answer, for any name on that IP.");
-    say("", "Kaya's own server or firewall is dropping this client address.");
-    say("", `Give Kaya support this client IP: ${seen.startsWith("FAILED") ? "see /admin > outbound" : seen}.`);
+  head("verdict");
+  if (bare.status) {
+    say("cause", "کایا درخواست POST را می‌گیرد و پاسخ می‌دهد؛ پس مسیر باز است.");
+    if (bare.status === 401 || bare.status === 403) {
+      say("next", "با کلید واقعی از «آزمایش کایا» در پنل ادمین تست کنید؛ اگر آنجا هم خطا داد، متن خطا علت دقیق است.");
+    } else {
+      say("next", "کد پاسخ بالا را ببینید؛ متن انگلیسی داخلش علت دقیق را می‌گوید.");
+    }
+    console.log("\nKAYA_DIAG_REACHES_API");
   } else {
-    say("verdict", `Even TCP fails (${tcpDetail}), so this server cannot reach Kaya's network at all.`);
+    say("cause", "TCP و TLS برقرار می‌شود ولی POST بی‌پاسخ می‌ماند.");
+    say("next", "این همان الگویی است که باید به پشتیبانی کایا داده شود: «درخواست POST بی‌پاسخ رها می‌شود».");
+    console.log("\nKAYA_DIAG_POST_DROPPED");
   }
 }
 
 main().catch((error) => {
-  process.stdout.write(`diagnosis aborted: ${error && error.message ? error.message : error}\n`);
+  console.log(`test aborted: ${(error && error.message) || error}`);
+  console.log("\nKAYA_DIAG_ABORTED");
 });

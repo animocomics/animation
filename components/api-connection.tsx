@@ -52,6 +52,45 @@ export function ApiConnection() {
     rows: Array<{ label: string; hostname: string; step: string; ok: boolean; detail: string; ms: number }>;
   }>({ loading: false, conclusion: "", egressConclusion: "", egress: [], rows: [] });
 
+  /**
+   * The deep test sends the real request with the real key, so it answers the one
+   * question the network probes cannot: is our request rejected, or is the path
+   * closed? It is deliberately manual and one press at a time, because every step
+   * spends a slot of the 20-minute outbound budget.
+   */
+  const [deepTest, setDeepTest] = useState<{
+    running: boolean;
+    conclusion: string;
+    error: string;
+    steps: Array<{ step: string; ok: boolean; status: number; ms: number; sentBytes: number; reading: string; detail: string }>;
+    budget?: { usedAfter: number; limit: number; remaining: number; windowMinutes: number };
+  }>({ running: false, conclusion: "", error: "", steps: [] });
+
+  async function runDeepTest() {
+    setDeepTest({ running: true, conclusion: "", error: "", steps: [] });
+    try {
+      const response = await fetch("/api/admin/kaya-live-test", { method: "POST", cache: "no-store" });
+      const payload = (await response.json()) as {
+        error?: string;
+        conclusion?: string;
+        steps?: Array<{ step: string; ok: boolean; status: number; ms: number; sentBytes: number; reading: string; detail: string }>;
+        budget?: { usedAfter: number; limit: number; remaining: number; windowMinutes: number };
+      };
+      if (!response.ok) throw new Error(payload.error || "آزمون انجام نشد.");
+      setDeepTest({ running: false, conclusion: payload.conclusion || "", error: "", steps: payload.steps || [], budget: payload.budget });
+    } catch (error) {
+      setDeepTest({ running: false, conclusion: "", error: error instanceof Error ? error.message : "آزمون انجام نشد.", steps: [] });
+    }
+  }
+
+  // Named per layer, because "failed" alone is what made this take days.
+  function stepLabel(step: string): string {
+    if (step === "catalogue") return "کاتالوگ";
+    if (step === "text") return "درخواست متنی";
+    if (step === "image") return "درخواست با تصویر";
+    return step;
+  }
+
   if (user.role !== "admin") return null;
 
   const modelOptions = mergeModelOptions(provider, FALLBACK_MODEL_OPTIONS[provider], accountModels, [model]);
@@ -368,12 +407,35 @@ export function ApiConnection() {
       </div>
       <div className="api-test-row">
         <button className="btn btn-secondary" type="button" onClick={() => void runDiagnostics()} disabled={diagnostics.loading}>{diagnostics.loading ? <LoaderCircle className="spin-icon" size={16} /> : <ShieldCheck size={16} />}{diagnostics.loading ? "در حال تشخیص…" : "تشخیص شبکه"}</button>
+        <button className="btn btn-secondary" type="button" onClick={() => void runDeepTest()} disabled={deepTest.running}>{deepTest.running ? <LoaderCircle className="spin-icon" size={16} /> : <BrainCircuit size={16} />}{deepTest.running ? "در حال آزمون واقعی…" : "آزمون واقعی کایا"}</button>
         <button className="btn btn-secondary" onClick={() => testConnection(false)} disabled={["testing", "saving"].includes(testState)}>{testState === "testing" ? <LoaderCircle className="spin-icon" size={16} /> : <RefreshCw size={16} />}{testState === "testing" ? "در حال بررسی…" : "آزمایش اتصال"}</button>
         <button className="btn btn-primary" onClick={() => testConnection(true)} disabled={["testing", "saving"].includes(testState)}>{testState === "saving" ? <LoaderCircle className="spin-icon" size={16} /> : <ShieldCheck size={16} />}{testState === "saving" ? "در حال ذخیره…" : "آزمایش و ذخیرهٔ امن"}</button>
         {testState === "success" && <span className="api-test-message success"><CheckCircle2 size={15} />{message}</span>}
         {testState === "error" && <span className="api-test-message error"><TriangleAlert size={15} />{message}</span>}
         {testState === "idle" && providerStatus.configured && <span className="api-test-message"><ShieldCheck size={15} />اتصال فعال سامانه: {providerStatus.providerLabel} · {providerStatus.model}</span>}
       </div>
+      {(deepTest.steps.length > 0 || deepTest.error) && (
+        <div className="diagnostics-block">
+          {deepTest.error && <div className="api-test-message error"><TriangleAlert size={15} />{deepTest.error}</div>}
+          {deepTest.steps.map((step) => (
+            <div key={step.step} className={step.ok ? "api-test-message success" : "api-test-message error"}>
+              {step.ok ? <CheckCircle2 size={15} /> : <TriangleAlert size={15} />}
+              <span>
+                <b>{stepLabel(step.step)}</b>
+                {" · "}{step.status ? `HTTP ${step.status}` : "بی‌پاسخ"}{" · "}{(step.sentBytes / 1024).toFixed(1)} KB{" · "}{step.ms}ms
+                {" — "}{step.reading}
+                {step.detail ? <span dir="ltr" className="diagnostics-detail"> · {step.detail}</span> : null}
+              </span>
+            </div>
+          ))}
+          {deepTest.conclusion && <div className="diagnostics-conclusion">{deepTest.conclusion}</div>}
+          {deepTest.budget && (
+            <div className="diagnostics-conclusion">
+              مصرف پنجرهٔ ۲۰ دقیقه‌ای: {deepTest.budget.usedAfter} از {deepTest.budget.limit} · باقی‌مانده {deepTest.budget.remaining}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -157,7 +157,10 @@ test("diagnosis is reachable without a shell", () => {
   assert.match(pkg.scripts.diagnose, /nomreh-diagnose\.cjs/);
 
   const script = fs.readFileSync(path.join(root, "scripts/nomreh-diagnose.cjs"), "utf8");
-  assert.ok(!/require\(["'](?!node:)/.test(script), "the diagnosis script must have no third-party dependency");
+  // Local helpers under scripts/lib are our own code and ship in the same zip;
+  // what must not appear is a third-party package that is not installed on a host
+  // with only node_modules for the app.
+  assert.ok(!/require\(["'](?!node:|\.)/.test(script), "the diagnosis script must have no third-party dependency");
   assert.match(script, /resolv\.conf/);
   assert.match(script, /NOMREH_DIAGNOSE_OK/);
   // It must never read or print a credential.
@@ -289,4 +292,58 @@ test("the Kaya watcher is rate-safe and needs no key", () => {
   assert.ok(perWindow <= 2, "well inside the hosting egress budget");
   const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as { scripts: Record<string, string> };
   assert.ok(pkg.scripts["kaya:watch"] && pkg.scripts["kaya:check"]);
+});
+
+test("the Kaya deep test is runnable from the panel console", () => {
+  // The operator's console is Plesk's npm box: everything is prefixed with `npm`,
+  // there is no shell, and the runtime is Node 17. The transport probes were all
+  // green, so the remaining question is whether the request Nomreh builds is
+  // accepted. That test has to survive all three of those constraints.
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as { scripts: Record<string, string> };
+  assert.match(pkg.scripts["kaya:test"] || "", /nomreh-kaya-test\.cjs/);
+  assert.match(pkg.scripts["kaya:measure"] || "", /nomreh-kaya-measure\.cjs/);
+
+  const script = fs.readFileSync(path.join(root, "scripts/nomreh-kaya-test.cjs"), "utf8");
+  // Node 17 compatibility: these are ES2022+ and would crash the console runtime.
+  for (const newer of [/\.at\(/, /structuredClone/, /\?\?\./, /Object\.hasOwn/, /AbortSignal\.timeout/]) {
+    assert.ok(!newer.test(script), `the console script must not use ${newer} on Node 17`);
+  }
+  // It re-runs itself on the domain-local Node 22 the app already installed.
+  assert.match(script, /ensureNode22/);
+  const delegate = fs.readFileSync(path.join(root, "scripts/lib/plesk-node-delegate.cjs"), "utf8");
+  assert.match(delegate, /runtime", "node", "bin", "node"/);
+  assert.ok(!/require\(["'](?!node:|\.)/.test(delegate), "the delegating helper must stay dependency-free");
+
+  // The key is decrypted in memory only: never logged, never written.
+  assert.ok(!/console\.log\(\s*apiKey/.test(script), "the key must never be printed");
+  assert.ok(!/writeFileSync/.test(script), "the test must not write to disk");
+  // A failure must name the layer instead of a generic network error.
+  for (const verdict of ["KAYA_TEST_ALL_OK", "KAYA_TEST_POST_DROPPED", "KAYA_TEST_TRANSPORT_BLOCKED", "KAYA_TEST_API_ERROR"]) {
+    assert.ok(script.indexOf(verdict) >= 0, `the test must be able to conclude ${verdict}`);
+  }
+});
+
+test("the panel can test the real key without a console", () => {
+  // The operator has no shell, only the Plesk npm box, and that box rejected every
+  // command that was not `npm run <script>`. A test that lives in the panel needs
+  // no console at all, so the deep check must also exist as an admin endpoint.
+  const route = fs.readFileSync(path.join(root, "app/api/admin/kaya-live-test/route.ts"), "utf8");
+  assert.match(route, /requireAdmin/, "the endpoint must be admin-only");
+  assert.match(route, /getProviderConfig/, "it must use the stored key, not a pasted one");
+  // The 20-minute ceiling is the operator's top concern: the test must be gated by
+  // the same budget as grading, otherwise pressing it could block the host.
+  assert.match(route, /withProviderBudget/, "the test must spend the same outbound budget as grading");
+  // Grading a real failure must never be caused by the test retrying behind a wall.
+  assert.ok(!/for\s*\(\s*let\s+attempt/.test(route), "the test must not retry");
+  assert.ok(!/console\.log/.test(route), "the key must never reach a log line");
+});
+
+test("the panel shows the deep-test result layer by layer", () => {
+  const component = fs.readFileSync(path.join(root, "components/api-connection.tsx"), "utf8");
+  assert.match(component, /kaya-live-test/, "the panel must call the deep test");
+  assert.match(component, /آزمون واقعی کایا/, "the button must be labelled for the operator");
+  // A single "failed" line is what made this take days to diagnose.
+  for (const layer of ["catalogue", "text", "image"]) {
+    assert.ok(component.indexOf(`step === "${layer}"`) >= 0, `the result must separate the ${layer} step`);
+  }
 });

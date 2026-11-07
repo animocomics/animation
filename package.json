@@ -23,7 +23,10 @@
     "shecan:on": "node scripts/nomreh-disable-shecan.cjs --on",
     "kaya:watch": "node scripts/kaya-reachability-watch.cjs",
     "kaya:check": "node scripts/kaya-reachability-watch.cjs --once",
-    "kaya:diag": "node scripts/nomreh-kaya-diag.cjs"
+    "kaya:diag": "node scripts/nomreh-kaya-diag.cjs",
+    "kaya:test": "node scripts/nomreh-kaya-test.cjs",
+    "kaya:measure": "node scripts/nomreh-kaya-measure.cjs",
+    "kaya:selftest": "node scripts/nomreh-kaya-test-selftest.cjs"
   },
   "engines": {
     "node": ">=22.0.0"

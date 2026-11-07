@@ -790,6 +790,12 @@ input[type="number"] { font-variant-numeric: tabular-nums; }
 .api-test-message { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 8px; line-height: 1.8; }
 .api-test-message.success { color: var(--brand); }
 .api-test-message.error { color: var(--red); }
+
+/* Deep-test report: one line per layer, so a failure names where it happened
+   instead of saying "connection failed". */
+.diagnostics-block { display: grid; gap: 6px; margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--line); }
+.diagnostics-conclusion { font-size: 8px; color: var(--muted); line-height: 1.9; }
+.diagnostics-detail { opacity: 0.75; font-size: 7px; }
 .api-connection.compact .provider-options { grid-template-columns: 1fr; gap: 7px; }
 .api-connection.compact .provider-option { padding: 9px; }
 .api-connection.compact .provider-logo { width: 30px; height: 30px; }

@@ -11,6 +11,14 @@
 // It is read-only: no file is written, no setting is changed, no secret is read.
 // The same checks are also available in the admin console under "تشخیص شبکه".
 
+const { ensureNode22 } = require("./lib/plesk-node-delegate.cjs");
+
+// A Plesk subscription whose console runs Node 17 is the normal case here, and
+// reporting "this needs Node 22" wasted the operator's time with no information.
+// Switch to the domain-local Node 22 that `npm run setup:plesk` installs, and keep
+// going on the old runtime only when there really is none.
+const onSupportedRuntime = ensureNode22(__filename);
+
 const dns = require("node:dns");
 const net = require("node:net");
 const tls = require("node:tls");
@@ -102,9 +110,10 @@ async function main() {
   const major = Number(String(node).replace("v", "").split(".")[0]);
   console.log(`Nomreh diagnosis — node ${node} on ${process.platform}`);
   console.log(`NODE_MAJOR=${major}`);
-  if (major < 22) {
-    line(false, `این برنامه به Node 22 نیاز دارد؛ نسخهٔ فعلی ${node} است و نتیجهٔ اتصال با آن معتبر نیست.`);
-    findings.push("node-version");
+  if (major < 22 && !onSupportedRuntime) {
+    // No domain-local Node 22 exists yet. The probes below use nothing newer than
+    // Node 17, so the only thing lost is process introspection, not connectivity.
+    line(null, `اجرای روی Node ${major}؛ نتایج اتصال معتبر است. برای تشخیص کامل یک‌بار npm run setup:plesk را اجرا کنید.`);
   }
   console.log("");
 
