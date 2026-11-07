@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "crypto";
 import { cookies } from "next/headers";
 import { verifyPassword } from "./password";
+import { sessionCookieOptions } from "./session-cookie";
 import type { AuthUser, UserRole } from "@/lib/types";
 
 export const SESSION_COOKIE = "nomreh_session";
@@ -60,16 +61,7 @@ export async function createSession(userId: string): Promise<string> {
   (await import("./db")).getDb().prepare(`INSERT INTO sessions (id, token_hash, user_id, expires_at, created_at, last_seen_at)
     VALUES (?, ?, ?, ?, ?, ?)`).run(...values);
   const cookieStore = await cookies();
-  cookieStore.set(SESSION_COOKIE, token, {
-    httpOnly: true,
-    sameSite: "lax",
-    // Secure cookies are required in production, and the sandbox preview is plain
-    // HTTP, so the override exists for local validation only. It has to be set
-    // explicitly: an unset variable can never weaken a real deployment's cookie.
-    secure: process.env.NOMREH_COOKIE_SECURE === "0" ? false : process.env.NODE_ENV === "production",
-    path: "/",
-    expires,
-  });
+  cookieStore.set(SESSION_COOKIE, token, sessionCookieOptions(expires));
   return token;
 }
 

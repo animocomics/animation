@@ -29,25 +29,26 @@ function safeNext(value: string | null): string {
 }
 
 /**
- * Builds the redirect against the address the browser actually used.
+ * Redirects to a path, never to an absolute URL.
  *
- * `request.url` behind a reverse proxy or a preview host is the internal bind
- * address — `http://0.0.0.0:3100` on this app — and redirecting a browser there
- * sends it nowhere. The forwarded headers are the only truthful source, so they
- * win, and the internal URL is a last resort for a direct local request.
+ * This used to rebuild an absolute URL from `x-forwarded-host` / `x-forwarded-proto`
+ * and that was still wrong in the two cases that matter:
+ *
+ *  - a proxy that does not forward those headers produced `http://<host>/…`, i.e. a
+ *    downgrade from https to http, which the https preview proxy refuses to follow;
+ *  - a request straight at the bind address produced `http://0.0.0.0:3100/…`, which
+ *    a browser cannot use at all.
+ *
+ * Both looked exactly like "the login page just refreshes and stays there". A
+ * relative Location is resolved by the browser against the URL it actually used, so
+ * it is correct behind every proxy, on https and on http, with or without forwarded
+ * headers. There is nothing left to get wrong.
  */
-function publicUrl(request: Request, path: string): URL {
-  const forwardedHost = request.headers.get("x-forwarded-host");
-  const host = forwardedHost || request.headers.get("host") || "";
-  const forwardedProto = request.headers.get("x-forwarded-proto");
-  const proto = forwardedProto || (request.url.startsWith("https:") ? "https" : "http");
-  // A bind address is never something a browser can use.
-  if (!host || /^(0\.0\.0\.0|\[::\])(:\d+)?$/.test(host)) return new URL(path, request.url);
-  try {
-    return new URL(path, `${proto}://${host}`);
-  } catch {
-    return new URL(path, request.url);
-  }
+function redirectTo(path: string, status: 303 = 303) {
+  const response = new NextResponse(null, { status, headers: { Location: path } });
+  // A cached 303 would replay an old success/failure after the credentials changed.
+  response.headers.set("Cache-Control", "no-store, max-age=0");
+  return response;
 }
 
 export async function POST(request: Request) {
@@ -58,21 +59,21 @@ export async function POST(request: Request) {
 
   const back = new URLSearchParams({ next });
   if (!rateLimit(`login-form:${requestIp(request)}:${username.toLowerCase()}`, 10, 15 * 60 * 1000)) {
-    return NextResponse.redirect(publicUrl(request, `/login?e=rate&${back}`), 303);
+    return redirectTo(`/login?e=rate&${back}`);
   }
   if (!username || !password) {
-    return NextResponse.redirect(publicUrl(request, `/login?e=empty&${back}`), 303);
+    return redirectTo(`/login?e=empty&${back}`);
   }
 
   const user = await authenticate(username, password);
   if (!user) {
     // No detail about which half was wrong: that is an account-enumeration hint.
-    return NextResponse.redirect(publicUrl(request, `/login?e=bad&${back}`), 303);
+    return redirectTo(`/login?e=bad&${back}`);
   }
 
   await createSession(user.id);
   // Admins land on their panel, teachers on their workspace; both are the app's
   // own destinations, not a value taken from the request.
   const target = user.role === "admin" ? "/admin" : next;
-  return NextResponse.redirect(publicUrl(request, target), 303);
+  return redirectTo(target);
 }
