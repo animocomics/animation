@@ -347,3 +347,26 @@ test("the panel shows the deep-test result layer by layer", () => {
     assert.ok(component.indexOf(`step === "${layer}"`) >= 0, `the result must separate the ${layer} step`);
   }
 });
+
+test("no probe in the console script can hang", () => {
+  // The operator's run printed "tcp 443 TIMEOUT" and then sat there forever: the
+  // socket's timeout event destroyed the socket without ever resolving the
+  // promise. A diagnostic that hangs is worse than none, because it looks like
+  // the server froze.
+  const script = fs.readFileSync(path.join(root, "scripts/nomreh-kaya-test.cjs"), "utf8");
+
+  // Never destroy-on-timeout without settling the promise.
+  assert.ok(
+    !/setTimeout\(timeout,\s*\(\)\s*=>\s*socket\.destroy\(\)\)/.test(script),
+    "a socket timeout must resolve the promise, not just destroy the socket",
+  );
+  // Every network wait has an independent timer, so a socket that never answers
+  // cannot keep the process alive.
+  const timers = (script.match(/clearTimeout\(/g) || []).length;
+  assert.ok(timers >= 2, `each guarded wait must clear its timer (found ${timers})`);
+  // A failed TCP connect must stop the run before TLS and the three HTTP calls.
+  assert.match(script, /reportBlocked/, "a dead port must be reported as a layer, not retried");
+  assert.match(script, /reportTicket/, "a block must print something the operator can send");
+  // And the block path must return, not fall through to the requests.
+  assert.ok(script.indexOf('reportBlocked("tcp"') > 0, "the connect failure must be handled at one place");
+});

@@ -75,6 +75,17 @@ function makeDataDirectory(behaviour) {
   return { root, data };
 }
 
+/** A socket that accepts the TCP handshake and then never answers: the host's
+ *  "tcp 443 TIMEOUT" case and the "accepted then dropped" case, one each. */
+function startSilent(behaviour) {
+  const net = require("node:net");
+  const server = net.createServer((socket) => {
+    if (behaviour === "drop") socket.destroy();
+    // "silent" keeps the socket open and says nothing at all.
+  });
+  return new Promise((resolve) => server.listen(0, "127.0.0.1", () => resolve({ server, port: server.address().port })));
+}
+
 function startMock(behaviour) {
   // A certificate for kayaai.ir is impossible here, so the mock listens on
   // 127.0.0.1 and the test is pointed at it through an override used only when
@@ -226,6 +237,23 @@ async function main() {
     fs.rmSync(root, { recursive: true, force: true });
   }
 
+  // 5. The case that actually happened on the host: TCP never connects. The
+  //    command must say so, print the ticket line, and exit — not hang.
+  {
+    const { data, root } = makeDataDirectory("healthy");
+    const { server, port } = await startSilent("silent");
+    const started = Date.now();
+    const { output } = await runTest(data, port, { timeout: 60_000 });
+    const seconds = Math.round((Date.now() - started) / 1000);
+    failures += expect("a silent TLS layer is reported, not hung", output, "KAYA_TEST_TRANSPORT_BLOCKED") ? 0 : 1;
+    failures += expect("it says which layer failed", output, "TLS") ? 0 : 1;
+    const quick = seconds < 45;
+    console.log(`  ${quick ? "OK  " : "FAIL"} the command finishes quickly → ${seconds}s (limit 45s)`);
+    failures += quick ? 0 : 1;
+    server.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+
   console.log(failures === 0 ? "\nSELFTEST_OK" : `\nSELFTEST_FAILED ${failures}`);
   process.exitCode = failures === 0 ? 0 : 1;
 }
@@ -234,3 +262,4 @@ main().catch((error) => {
   console.log(`self-test aborted: ${(error && error.message) || error}`);
   process.exitCode = 1;
 });
+

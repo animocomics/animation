@@ -161,35 +161,81 @@ function resolve4(hostname, servers) {
   });
 }
 
+/**
+ * A TCP connect that always answers.
+ *
+ * The earlier version used `socket.setTimeout`, which destroys the socket and
+ * emits nothing, so the promise never settled and the whole command sat there
+ * after printing "tcp 443 … TIMEOUT". Every wait below therefore has two
+ * guards: the socket's own timeout event and an independent timer, and both go
+ * through one `settle` that can only fire once.
+ */
 function tcp(host, port, timeout) {
   return new Promise((resolve) => {
     const started = Date.now();
-    const socket = net.createConnection({ host, port });
     let settled = false;
-    const finish = (detail) => {
+    let socket;
+    const timer = setTimeout(() => settle("TIMEOUT (no answer)"), timeout);
+    function settle(detail, extra) {
       if (settled) return;
       settled = true;
-      socket.destroy();
-      resolve({ detail, ms: Date.now() - started });
-    };
+      clearTimeout(timer);
+      try {
+        socket.destroy();
+      } catch {
+        /* already closed */
+      }
+      resolve(Object.assign({ detail, ms: Date.now() - started }, extra || {}));
+    }
+    try {
+      socket = net.createConnection({ host, port });
+    } catch (error) {
+      return settle(error.code || error.message);
+    }
     socket.setTimeout(timeout);
-    socket.once("connect", () => finish("CONNECTED"));
-    socket.once("timeout", () => finish("TIMEOUT"));
-    socket.once("error", (error) => finish(error.code || "ERROR"));
+    socket.once("connect", () => settle("CONNECTED"));
+    socket.once("timeout", () => settle("TIMEOUT (no answer)"));
+    socket.once("error", (error) => settle(error.code || "ERROR"));
   });
 }
 
-function handshake(host, address, timeout) {
+function handshake(host, address, timeout, options) {
+  const port = (options && options.port) || 443;
+  const servername = (options && options.insecure) || host === address ? undefined : host;
   return new Promise((resolve) => {
     const started = Date.now();
-    const socket = tls.connect({ host: address, port: 443, servername: host, timeout }, () => {
+    let settled = false;
+    let socket;
+    const timer = setTimeout(() => settle(false, "TIMEOUT (no answer)"), timeout);
+    function settle(ok, detail, extra) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try {
+        socket.destroy();
+      } catch {
+        /* already closed */
+      }
+      resolve(Object.assign({ ok, detail, ms: Date.now() - started }, extra || {}));
+    }
+    try {
+      socket = tls.connect({
+        host: address,
+        port,
+        servername,
+        rejectUnauthorized: !(options && options.insecure),
+      });
+    } catch (error) {
+      return settle(false, error.code || error.message);
+    }
+    socket.setTimeout(timeout);
+    socket.once("secureConnect", () => {
       const peer = socket.getPeerCertificate() || {};
       const issuer = peer.issuer || {};
-      socket.destroy();
-      resolve({ ok: true, issuer: issuer.O || issuer.CN || "?", ms: Date.now() - started });
+      settle(true, "", { issuer: issuer.O || issuer.CN || "?" });
     });
-    socket.setTimeout(timeout, () => socket.destroy());
-    socket.once("error", (error) => resolve({ ok: false, detail: error.code || error.message, ms: Date.now() - started }));
+    socket.once("timeout", () => settle(false, "TIMEOUT (no answer)"));
+    socket.once("error", (error) => settle(false, error.code || error.message));
   });
 }
 
@@ -226,15 +272,34 @@ function call(requestPath, payload, apiKey, timeout) {
         response.on("data", (chunk) => {
           if (text.length < 2000) text += chunk;
         });
-        response.on("end", () =>
-          resolve({ status: response.statusCode || 0, text, sent: Buffer.byteLength(body), ms: Date.now() - started }),
-        );
+        response.on("end", () => finish({ status: response.statusCode || 0, text }));
       },
     );
-    request.on("timeout", () => request.destroy(Object.assign(new Error("timeout"), { code: "ETIMEDOUT" })));
-    request.on("error", (error) =>
-      resolve({ status: 0, code: error.code || error.message, sent: Buffer.byteLength(body), ms: Date.now() - started }),
-    );
+    // Two guards, one exit: the request's own timeout and an independent timer.
+    let settled = false;
+    const finish = (payload) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(Object.assign({ sent: Buffer.byteLength(body), ms: Date.now() - started }, payload));
+    };
+    const timer = setTimeout(() => {
+      try {
+        request.destroy();
+      } catch {
+        /* already closed */
+      }
+      finish({ status: 0, code: "TIMEOUT" });
+    }, (timeout || TIMEOUT) + 2_000);
+    request.on("timeout", () => {
+      try {
+        request.destroy();
+      } catch {
+        /* already closed */
+      }
+      finish({ status: 0, code: "TIMEOUT" });
+    });
+    request.on("error", (error) => finish({ status: 0, code: error.code || error.message }));
     request.end(body || undefined);
   });
 }
@@ -297,6 +362,37 @@ function sampleJpegBase64(targetBytes) {
   return tiny;
 }
 
+/** The address Kaya resolves to, preferring the system resolver. */
+async function resolveTargetAddress() {
+  const system = await resolve4(HOST);
+  if (system.addresses && system.addresses.length) {
+    say("system DNS", system.addresses.join(", "));
+    return system.addresses[0];
+  }
+  say("system DNS", `FAILED ${system.error}; falling back to ${ORIGIN}`);
+  return ORIGIN;
+}
+
+/** The block to paste into a support ticket, identical for every block case. */
+function reportTicket(target, result) {
+  head("send this to your host / Kaya");
+  console.log(`  time      ${new Date().toISOString()}`);
+  console.log(`  from      this Nomreh server (egress address is in /admin > outbound)`);
+  console.log(`  to        ${target}`);
+  console.log(`  result    ${result}`);
+  console.log("  control   npm registry and GitHub work from the same server at the same minute");
+  console.log("  ask       is our client address blocked on 443 for this destination, and would you allowlist it");
+}
+
+function reportBlocked(layer, target, probe) {
+  head("verdict");
+  say("layer", `اتصال TCP به ${target} برقرار نشد (${probe.detail}).`);
+  say("meaning", "پس هیچ درخواستی از Nomreh ساخته و ارسال نشده است: این لایه پیش از کد ما است.");
+  say("not-code", "هیچ تغییر کد یا نسخه‌ای این را درست نمی‌کند؛ مسیر خروجی سرور باید باز شود.");
+  reportTicket(target, `${probe.detail} after ${probe.ms}ms`);
+  console.log("\nKAYA_TEST_TRANSPORT_BLOCKED");
+}
+
 /* -------------------------------------------------------------------- main */
 
 async function main() {
@@ -304,16 +400,34 @@ async function main() {
   console.log(`Target https://${HOST}/api/chat/completions · at most 3 requests · no retries`);
 
   head("1. transport");
-  if (TARGET.host !== HOST) {
-    say("target", `${TARGET.host}:${TARGET.port} (self-test mock)`);
-  } else {
-    const system = await resolve4(HOST);
-    say("system DNS", system.addresses ? system.addresses.join(", ") : `FAILED ${system.error}`);
-    const address = (system.addresses && system.addresses[0]) || ORIGIN;
-    const connection = await tcp(address, 443, 8000);
-    say("tcp 443", `${address} ${connection.detail} ${connection.ms}ms`);
-    const secure = await handshake(HOST, address, 8000);
-    say("tls", secure.ok ? `OK issuer="${secure.issuer}" ${secure.ms}ms` : `FAILED ${secure.detail} ${secure.ms}ms`);
+  // One code path for the mock and for the real host. The mock only changes the
+  // address and port, so this branch is exercised by the self-test exactly as it
+  // runs on the server: a difference between the two would hide a bug.
+  if (TARGET.host !== HOST) say("target", `${TARGET.host}:${TARGET.port} (self-test mock)`);
+  const probeHost = TARGET.host === HOST ? await resolveTargetAddress() : TARGET.host;
+  const probePort = TARGET.port;
+  const probeLabel = TARGET.host === HOST ? `${ORIGIN} (${HOST})` : `${TARGET.host}:${TARGET.port}`;
+
+  const connection = await tcp(probeHost, probePort, 8000);
+  say("tcp 443", `${probeLabel} ${connection.detail} ${connection.ms}ms`);
+  if (connection.detail !== "CONNECTED") {
+    // A failed connect means TLS and HTTP cannot work either. Saying so and
+    // stopping is faster and truer than three more identical timeouts, and it
+    // spends none of the 20-minute outbound budget.
+    reportBlocked("tcp", probeLabel, connection);
+    return;
+  }
+
+  const secure = await handshake(TARGET.host, probeHost, 8000, { port: probePort, insecure: TARGET.insecure });
+  say("tls", secure.ok ? `OK issuer="${secure.issuer}" ${secure.ms}ms` : `FAILED ${secure.detail} ${secure.ms}ms`);
+  if (!secure.ok) {
+    head("verdict");
+    say("layer", `TCP باز است ولی TLS بسته می‌شود (${secure.detail}).`);
+    say("meaning", "دست‌انداز TLS پیش از هر درخواستی قطع می‌شود؛ کلید، مدل و کد بی‌تأثیرند.");
+    say("not-code", "این هم مثل حالت قبل یک فیلتر مسیر است، نه خطای Nomreh.");
+    reportTicket(probeLabel, `TLS ${secure.detail} after ${secure.ms}ms`);
+    console.log("\nKAYA_TEST_TRANSPORT_BLOCKED");
+    return;
   }
 
   head("2. the saved settings");
