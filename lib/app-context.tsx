@@ -208,8 +208,11 @@ export function AppProvider({ children, initialUser, initialProvider }: { childr
   }, [persist]);
   const refreshProviderStatus = useCallback(async () => {
     const response = await fetch("/api/provider", { cache: "no-store" });
-    const payload = await readJsonResponse<{ status?: ProviderPublicStatus; error?: string }>(response, "دریافت وضعیت اتصال");
+    const payload = await readJsonResponse<{ status?: ProviderPublicStatus; warning?: string | null; error?: string }>(response, "دریافت وضعیت اتصال");
     if (!response.ok || !payload.status) throw new Error(payload.error || "وضعیت اتصال خوانده نشد.");
+    // The server remembers a provider that already refused this host by country.
+    // Showing it once, when the status is read, is enough to stop a routine retry.
+    if (payload.warning) notify({ title: "این سرویس‌دهنده از این سرور درخواست نمی‌پذیرد", description: payload.warning, variant: "error" });
     setProviderStatus(payload.status);
     setSettings((current) => ({ ...current, provider: payload.status!.provider, model: payload.status!.model }));
   }, []);

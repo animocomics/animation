@@ -5,6 +5,7 @@ import type { GradeApiRequest, ProviderId } from "../types";
 import { RECOMMENDED_MODELS } from "../provider-catalog";
 import { providerFetch, ProviderNetworkError } from "./provider-network";
 import { assertKayaHostAllowed, describeEgressFailure, kayaAgent, kayaBaseUrl, type KayaEgressConfig } from "./kaya-egress";
+import { clearRegionBlocked, markRegionBlocked } from "./region-block";
 import { isJsonParserErrorMessage } from "../error-message";
 
 export const DEFAULT_MODELS: Record<ProviderId, string> = RECOMMENDED_MODELS;
@@ -41,11 +42,14 @@ interface ProviderCallResult<T = ModelResult | QuestionImportResult | AnswerKeyI
 
 export class ProviderError extends Error {
   status: number;
+  /** A stable reason the routes and the panel can act on, not just prose. */
+  reason?: string;
 
-  constructor(message: string, status = 502) {
+  constructor(message: string, status = 502, reason?: string) {
     super(message);
     this.name = "ProviderError";
     this.status = status;
+    this.reason = reason;
   }
 }
 
@@ -110,6 +114,25 @@ function isLocalKayaHost(egress: KayaEgressConfig | undefined): boolean {
     return false;
   }
 }
+
+/**
+ * Google answers 400 with "User location is not supported for the API use." when the
+ * request comes from a country the Gemini API does not serve — which is exactly what
+ * a server inside Iran produces. It has nothing to do with the key, the model, the
+ * file or the credit, and no retry can change it, so it must be named precisely:
+ * a generic "the request was rejected" sends the operator hunting for a key problem
+ * that does not exist, and "temporarily unavailable" invites another billed attempt.
+ */
+export function isRegionBlocked(status: number, detail: string): boolean {
+  return (status === 400 || status === 403)
+    && /user location is not supported|location is not supported|unsupported country|region.*not supported|not available in your (country|region)/i.test(detail);
+}
+
+const REGION_BLOCKED_MESSAGE =
+  "Google Gemini درخواست این سرور را از نظر کشور مبدأ نپذیرفت (User location is not supported). "
+  + "این محدودیت از سمت Google است و با تغییر کلید، مدل یا فایل حل نمی‌شود و ارسال دوباره هم فایده‌ای ندارد. "
+  + "یا سرویس‌دهندهٔ دیگری (Kaya یا GapGPT از داخل ایران) را انتخاب کنید، یا اگر مسیر خروجی مجاز دارید، "
+  + "سرور را از آن مسیر بیرون بفرستید؛ آنگاه همین تنظیمات بدون تغییر کار می‌کند.";
 
 /**
  * How many times one request may be put on the wire.
@@ -637,6 +660,10 @@ async function callKayaModel(
       // Keep the status code; the body may be empty or non-JSON.
     }
     const safe = detail.replace(/sk-[A-Za-z0-9_\-]{6,}/g, "[کلید]").replace(/\s+/g, " ").slice(0, 180);
+    if (isRegionBlocked(status, detail)) {
+      markRegionBlocked(input.provider, detail.slice(0, 200));
+      throw new ProviderError(REGION_BLOCKED_MESSAGE, 400, "region-blocked");
+    }
     if (status === 401) {
       throw new ProviderError(`کلید ${serviceName} پذیرفته نشد؛ کلید را در پنل ${serviceName} بررسی یا کلید تازه بسازید.`, 400);
     }
@@ -729,6 +756,13 @@ async function callInkling(input: ProviderCallInput): Promise<ProviderCallResult
   };
 }
 
+/**
+ * Gemini's host, overridable for a host that must reach it through a permitted
+ * egress (a domain-limited local proxy) instead of directly. Without the variable
+ * this is exactly the documented Google endpoint, so nothing changes by default.
+ */
+const GEMINI_BASE_URL = process.env.NOMREH_GEMINI_BASE_URL || "https://generativelanguage.googleapis.com";
+
 async function callGemini(input: ProviderCallInput): Promise<ProviderCallResult> {
   const parts: Array<Record<string, unknown>> = [{ text: input.prompt }];
   for (const [index, file] of input.files.entries()) {
@@ -736,7 +770,7 @@ async function callGemini(input: ProviderCallInput): Promise<ProviderCallResult>
     parts.push({ inline_data: { mime_type: file.type, data: file.data } });
   }
   const response = await fetchWithTimeout(
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(input.model)}:generateContent`,
+    `${GEMINI_BASE_URL.replace(/\/+$/, "")}/v1beta/models/${encodeURIComponent(input.model)}:generateContent`,
     {
       method: "POST",
       headers: { "x-goog-api-key": input.apiKey, "Content-Type": "application/json" },
@@ -758,6 +792,22 @@ async function callGemini(input: ProviderCallInput): Promise<ProviderCallResult>
       }),
     },
   );
+  if (!response.ok) {
+    // Read the body once and answer the region case with its real cause.
+    const raw = await response.text().catch(() => "");
+    let detail = raw;
+    try {
+      const parsed = JSON.parse(raw) as { error?: { message?: string } };
+      detail = parsed.error?.message || raw;
+    } catch {
+      // A non-JSON body is still worth matching against the same words.
+    }
+    if (isRegionBlocked(response.status, detail)) {
+      markRegionBlocked("gemini", detail.slice(0, 200));
+      throw new ProviderError(REGION_BLOCKED_MESSAGE, 400, "region-blocked");
+    }
+    throw friendlyProviderError(response.status, "Google Gemini", detail.slice(0, 220) || undefined);
+  }
   const payload = await responseJson(response, "Gemini");
   const candidates = payload.candidates as Array<{
     content?: { parts?: Array<{ text?: string }> };
@@ -768,6 +818,8 @@ async function callGemini(input: ProviderCallInput): Promise<ProviderCallResult>
     const reason = candidates?.[0]?.finishReason;
     throw new ProviderError(`Gemini نتیجهٔ قابل استفاده برنگرداند${reason ? ` (${reason})` : ""}. فایل یا مدل را بررسی و دوباره تلاش کنید.`, 502);
   }
+  // It worked, so the earlier country block no longer describes this host.
+  clearRegionBlocked("gemini");
   const usage = payload.usageMetadata as { promptTokenCount?: number; candidatesTokenCount?: number } | undefined;
   return {
     result: parseProviderResult(input, outputText),

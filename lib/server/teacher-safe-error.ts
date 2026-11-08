@@ -53,6 +53,15 @@ export function teacherSafeError(error: unknown): TeacherSafeError {
   if (NETWORK_CODES.test(code) || /برقرار نشد|timeout|فتیله|ارتباط/.test(message)) {
     return { error: OUTAGE, retryable: true, code: code || "network" };
   }
+  // A country block is not an outage and not a credit problem: retrying is futile
+  // and uselessly billed, so a teacher must be told to stop, not to wait.
+  if (/User location is not supported|از نظر کشور مبدأ/.test(message)) {
+    return {
+      error: "سرویس هوش مصنوعی انتخاب‌شده درخواست این سرور را از نظر کشور مبدأ نمی‌پذیرد. با تغییر کلید یا دوباره فرستادن حل نمی‌شود؛ مدیر سامانه باید سرویس‌دهنده یا مسیر خروجی را عوض کند.",
+      retryable: false,
+      code: "region-blocked",
+    };
+  }
   if (code === "HTTP_402" || /اعتبار/.test(message)) return { error: CREDIT, retryable: false, code: "credit" };
   if (code === "HTTP_401" || code === "HTTP_403" || /کلید/.test(message)) return { error: AUTH, retryable: false, code: "auth" };
   if (code === "HTTP_429" || /سقف درخواست/.test(message)) return { error: BUSY, retryable: true, code: "busy" };
