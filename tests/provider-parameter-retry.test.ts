@@ -28,3 +28,23 @@ test("failures that mean the request itself is wrong are not resent", () => {
   assert.equal(isParameterRejection(502, "upstream unavailable"), false);
   assert.equal(isParameterRejection(500, "response_format exploded"), false);
 });
+
+/**
+ * The other half of the bill: how many times one paid request may be re-sent.
+ *
+ * A teacher reported tokens draining while nothing was built. Each automatic
+ * attempt re-uploads every page image, and a metered gateway bills the input even
+ * when it returns 503 and no answer. The default must therefore be exactly one
+ * attempt, with the old behaviour available only when a host asks for it.
+ */
+test("a paid request is sent once by default", async () => {
+  const { readFileSync } = await import("node:fs");
+  const source = readFileSync(new URL("../lib/server/providers.ts", import.meta.url), "utf8");
+  assert.match(source, /function providerAttempts\(\)/, "the attempt count must be configurable, not implicit");
+  assert.match(source, /NOMREH_PROVIDER_ATTEMPTS/, "the host needs a documented switch");
+  assert.match(source, /if \(!Number\.isFinite\(configured\) \|\| configured < 1\) return 1;/, "the default is one attempt");
+  assert.match(source, /Math\.min\(Math\.floor\(configured\), 3\)/, "and it is capped, so a typo cannot become a loop");
+  // Both retry sites must be bounded by that number, not by a literal 0.
+  assert.doesNotMatch(source, /attempt === 0 && \[429/, "the status retry must use the same bound");
+  assert.match(source, /attempt \+ 1 < attempts/);
+});

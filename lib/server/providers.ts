@@ -111,16 +111,37 @@ function isLocalKayaHost(egress: KayaEgressConfig | undefined): boolean {
   }
 }
 
+/**
+ * How many times one request may be put on the wire.
+ *
+ * This is a cost decision, not a comfort one. Every attempt re-uploads the page
+ * images, and on a metered gateway those input tokens are billed whether or not an
+ * answer comes back. A teacher watching "tokens falling, nothing built" was paying
+ * for 2 identical uploads per failure, 4 with the 429/5xx path below, and more
+ * again with the plain-body retry. `NOMREH_PROVIDER_ATTEMPTS` sets the real number
+ * (default 1 = never re-send a paid request automatically); a host that wants the
+ * old behaviour can set it, but the default no longer spends money on its own.
+ */
+function providerAttempts(): number {
+  const configured = Number(process.env.NOMREH_PROVIDER_ATTEMPTS || "");
+  if (!Number.isFinite(configured) || configured < 1) return 1;
+  return Math.min(Math.floor(configured), 3);
+}
+
 async function fetchWithTimeout(url: string, init: RequestInit, local = false, timeout = 240_000): Promise<Response> {
   let lastError: unknown;
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  const attempts = providerAttempts();
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
     try {
       // A loopback stand-in consumes no host egress, so it must not consume the
       // 120-per-20-minute allowance that protects the real one either.
       const response = local
         ? await fetch(url, { ...init, signal: AbortSignal.timeout(timeout), cache: "no-store" })
         : await providerFetch(url, { ...init, signal: AbortSignal.timeout(timeout), cache: "no-store" });
-      if (attempt === 0 && [429, 500, 502, 503, 504].includes(response.status)) {
+      // 503/500 from a gateway usually means it never reached the model, but the
+      // input may still have been counted. Only retry when the operator has
+      // explicitly allowed more than one attempt.
+      if (attempt + 1 < attempts && [429, 500, 502, 503, 504].includes(response.status)) {
         await response.arrayBuffer();
         await new Promise((resolve) => setTimeout(resolve, 900));
         continue;
@@ -128,7 +149,7 @@ async function fetchWithTimeout(url: string, init: RequestInit, local = false, t
       return response;
     } catch (error) {
       lastError = error;
-      if (attempt === 0) {
+      if (attempt + 1 < attempts) {
         await new Promise((resolve) => setTimeout(resolve, 700));
         continue;
       }
