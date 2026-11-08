@@ -112,6 +112,11 @@ function isGradingCandidate(provider: ProviderId, record: ProviderModelRecord): 
     // One catalogue covers many vendors, so the ids carry no shared prefix. Drop
     // only what cannot return a text grade: image/video/audio/embedding models.
     if (record.output_modalities?.length && !record.output_modalities.includes("text")) return false;
+    // A model that declares its input modalities and cannot take an image is the
+    // most common reason a sheet "reads" but never produces a draft: every request
+    // is refused for carrying a picture, and nothing in the panel said so. Grading
+    // and importing are always vision tasks, so such a model is not a candidate.
+    if (record.input_modalities?.length && !record.input_modalities.includes("image")) return false;
     return !/(?:image|imagen|embed|whisper|tts|audio|video|veo|kling|sora|midjourney|rerank|moderation)/i.test(id);
   }
   if (provider === "openai") {

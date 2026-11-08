@@ -4,6 +4,7 @@ import { AuthError, requireAdmin, requireUser } from "@/lib/server/auth";
 import { getProviderStatus, saveProviderConfig } from "@/lib/server/provider-config";
 import { PROVIDER_IDS } from "@/lib/provider-catalog";
 import { regionBlockWarning } from "@/lib/server/region-block";
+import { textOnlyReason } from "@/lib/server/vision-capability";
 
 const schema = z.object({
   provider: z.enum(PROVIDER_IDS),
@@ -29,7 +30,15 @@ async function saveProvider(request: Request) {
   try {
     const admin = await requireAdmin();
     const input = schema.parse(await request.json());
-    return NextResponse.json({ status: await saveProviderConfig(input, admin.id) });
+    // Saving is allowed — the operator may be configuring a text-only model for
+    // something else later — but the answer says plainly that images will not work,
+    // so the next failed sheet is not a surprise.
+    const visionReason = textOnlyReason(input.model);
+    const status = await saveProviderConfig(input, admin.id);
+    return NextResponse.json({
+      status,
+      warning: visionReason ? `${visionReason}. خواندن برگه و تصحیح با این مدل انجام نمی‌شود؛ یک مدل تصویری انتخاب کنید.` : null,
+    });
   } catch (error) {
     if (error instanceof z.ZodError) return NextResponse.json({ error: "ارائه‌دهنده و مدل را کامل وارد کنید." }, { status: 400 });
     const status = error instanceof AuthError ? error.status : 400;

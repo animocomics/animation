@@ -1,7 +1,7 @@
 "use client";
 
 import { type ChangeEvent, type DragEvent, useRef, useState } from "react";
-import { AlertTriangle, CheckCircle2, Eye, FileImage, FileText, KeyRound, LoaderCircle, ScanText, Trash2, UploadCloud, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Eye, FileImage, FileText, Info, KeyRound, LoaderCircle, ScanText, Trash2, UploadCloud, XCircle } from "lucide-react";
 import { ACCEPTED_FILE_EXTENSIONS, ACCEPTED_FILE_LABEL, ACCEPTED_FILE_TYPES, MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_LABEL } from "../../lib/file-constraints";
 import { deleteStoredFile, getStoredFile, storeFile } from "../../lib/file-store";
 import { useApp } from "../../lib/app-context";
@@ -136,7 +136,7 @@ export function QuestionSourceImporter({ examId, sources, needsReview, imported,
     // a confirmation, not a block: a teacher whose first attempt failed for a reason
     // the panel cannot see still gets to retry, but by choosing to.
     if (lastSentAt && Date.now() - lastSentAt < 120_000) {
-      const confirmed = typeof window === "undefined" ? false : window.confirm("همین برگه‌ها کمتر از دو دقیقه پیش به مدل فرستاده شد و هزینه شد. ارسال دوباره یعنی پرداخت دوباره. فقط اگر پاسخ قبلی خطا داد دوباره بفرست. ادامه می‌دهید؟");
+      const confirmed = typeof window === "undefined" ? false : window.confirm("همین برگه‌ها کمتر از دو دقیقه پیش خوانده شدند. اگر پاسخ قبلی خطا داد، اول آن خطا را بخوانید؛ بعضی خطاها با تکرار درست نمی‌شوند. دوباره بفرستم؟");
       if (!confirmed) return;
     }
     setErrorDetails([]);
@@ -185,7 +185,7 @@ export function QuestionSourceImporter({ examId, sources, needsReview, imported,
       const aborted = error instanceof DOMException && error.name === "AbortError";
       notify({
         title: aborted ? "درخواست لغو شد" : keyOnly ? "کلید جدا خوانده نشد" : "پیش‌نویس ساخته نشد",
-        description: aborted ? "درخواستی که لغو شد ممکن است هزینه شده باشد؛ پیش از ارسال دوباره، نتیجه یا خطای همان درخواست را ببینید." : error instanceof Error ? error.message : "دوباره تلاش کنید.",
+        description: aborted ? "درخواست لغو شد. پیش از فرستادن دوباره، نتیجه را بررسی کنید." : error instanceof Error ? error.message : "دوباره تلاش کنید.",
         variant: aborted ? "info" : "error",
       });
     } finally {
@@ -230,12 +230,13 @@ export function QuestionSourceImporter({ examId, sources, needsReview, imported,
       </div> : <p className="question-source-empty">می‌توانید سؤال‌ها را دستی وارد کنید و بعد فقط عکس کلید را اضافه کنید؛ لازم نیست همه‌چیز را از نو بسازید.</p>}
 
       {answerKeyOnly ? <div className="notice notice-info question-key-only-state"><KeyRound size={18} /><div><strong>حالت کلید جدا، خودکار</strong><p>فقط پاسخ‌های سؤال‌های موجود خوانده می‌شود؛ صورت سؤال، گزینه‌ها، نمره و بارم دست نمی‌خورد. در تستی‌ها گزینهٔ سیاه/علامت‌خورده خوانده می‌شود و علامت مبهم یا چندگانه پذیرفته نمی‌شود.</p></div></div> : null}
+      {lastSentAt && !busy ? <div className="notice notice-info question-source-cost"><Info size={16} /><div><strong>این برگه‌ها همین حالا خوانده شدند</strong><p>اگر نتیجه نیامد، پیام خطای بالا را بخوانید؛ بعضی خطاها (مدل بدون پشتیبانی تصویر، کشور مبدأ، کلید) با فرستادن دوباره درست نمی‌شوند.</p></div></div> : null}
       {errorDetails.length ? <div className="notice notice-warning question-source-errors"><AlertTriangle size={18} /><div><strong>موارد نیازمند اصلاح در خواندن</strong><ul>{errorDetails.map((detail, index) => <li key={`${index}-${detail}`}>{detail}</li>)}</ul></div></div> : null}
       {warnings?.length ? <div className="notice notice-warning question-source-warnings"><AlertTriangle size={18} /><div><strong>هشدارهای پیش‌نویس</strong><ul>{warnings.map((warning, index) => <li key={`${index}-${warning}`}>{warning}</li>)}</ul></div></div> : null}
       {needsReview && sources.length ? <div className="question-source-review-state"><AlertTriangle size={16} /><span>پیش‌نویس هنوز تأیید نشده است؛ تصحیح تا تأیید صریح معلم انجام نمی‌شود.</span></div> : null}
 
       <div className="question-source-footer">
-        <p><CheckCircle2 size={15} />هر بار فرستادن این برگه‌ها یک درخواست پرداختی است؛ پیش از دوباره فرستادن، خطای همان درخواست را بخوانید. خروجی مدل فقط پیش‌نویس است. هیچ سؤال، کلید یا نمرهٔ مبهمی به‌صورت خودکار قطعی نمی‌شود؛ آن را با تصویر اصلی مقایسه کنید.</p>
+        <p><CheckCircle2 size={15} />پیش‌نویس است، نه نمرهٔ نهایی؛ آن را با برگهٔ اصلی مقایسه کنید.</p>
         <div className="question-source-read-actions">
           {!answerKeyOnly && sources.some((source) => source.kind === "answers") ? <button type="button" className="btn btn-secondary" disabled={busy || sources.length > 30} onClick={() => void readSources(true)}><KeyRound size={17} />فقط خواندن کلید</button> : null}
           {busy ? <button type="button" className="btn btn-secondary" onClick={() => controllerRef.current?.abort()}><XCircle size={17} />لغو درخواست</button> : null}

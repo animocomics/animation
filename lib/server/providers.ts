@@ -6,6 +6,7 @@ import { RECOMMENDED_MODELS } from "../provider-catalog";
 import { providerFetch, ProviderNetworkError } from "./provider-network";
 import { assertKayaHostAllowed, describeEgressFailure, kayaAgent, kayaBaseUrl, type KayaEgressConfig } from "./kaya-egress";
 import { clearRegionBlocked, markRegionBlocked } from "./region-block";
+import { taskNeedsVision, textOnlyMessage, textOnlyReason } from "./vision-capability";
 import { isJsonParserErrorMessage } from "../error-message";
 
 export const DEFAULT_MODELS: Record<ProviderId, string> = RECOMMENDED_MODELS;
@@ -165,6 +166,24 @@ function providerTimeoutMs(): number {
   if (Number.isFinite(configured) && configured >= 15_000) return Math.min(configured, 600_000);
   return 120_000;
 }
+
+/**
+ * Recognises the refusal a text-only model gives when a page image arrives.
+ *
+ * This is the failure that looks like "nothing happened": the model is reachable, the
+ * key is fine, the request is answered — with a 400 saying the image part is invalid
+ * or unsupported. The panel showed one generic sentence, so the operator changed keys
+ * and providers instead of the model. Name it, and keep the model: it is not broken,
+ * it simply cannot see.
+ */
+export function isVisionRejection(status: number, detail: string): boolean {
+  if (status !== 400 && status !== 404 && status !== 422) return false;
+  return /image_url|image input|input_image|images? (?:are |is )?not supported|does not support (?:image|vision|multimodal)|only support(?:s)? text|text-only|invalid.*(?:image|content).*type|unsupported content type/i.test(detail);
+}
+
+const VISION_REJECTION_MESSAGE =
+  "مدل انتخاب‌شده تصویر نمی‌پذیرد (مدل متنی است) و برگه‌ها تصویر هستند. "
+  + "کلید و اعتبار درست است؛ فقط مدل باید عوض شود. از فهرست مدل‌ها یکی از مدل‌های بینایی مثل gpt-4o، gemini-2.5-flash یا claude-3.7-sonnet را انتخاب کنید.";
 
 async function fetchWithTimeout(url: string, init: RequestInit, local = false, timeout = providerTimeoutMs()): Promise<Response> {
   let lastError: unknown;
@@ -675,6 +694,9 @@ async function callKayaModel(
       // Keep the status code; the body may be empty or non-JSON.
     }
     const safe = detail.replace(/sk-[A-Za-z0-9_\-]{6,}/g, "[کلید]").replace(/\s+/g, " ").slice(0, 180);
+    if (isVisionRejection(status, detail)) {
+      throw new ProviderError(VISION_REJECTION_MESSAGE, 400, "vision-required");
+    }
     if (isRegionBlocked(status, detail)) {
       markRegionBlocked(input.provider, detail.slice(0, 200));
       throw new ProviderError(REGION_BLOCKED_MESSAGE, 400, "region-blocked");
@@ -846,6 +868,14 @@ export function callProvider(input: ProviderCallInput & { task: "question-import
 export function callProvider(input: ProviderCallInput & { task: "answer-key-import" }): Promise<ProviderCallResult<AnswerKeyImportResult>>;
 export function callProvider(input: ProviderCallInput): Promise<ProviderCallResult<ModelResult>>;
 export function callProvider(input: ProviderCallInput): Promise<ProviderCallResult<ModelResult | QuestionImportResult | AnswerKeyImportResult>> {
+  // Stop before the wire when the selected model provably cannot see.
+  // A text-only model given page images either refuses or ignores them and invents a
+  // draft; both look like a broken importer and both are billed. Naming the model
+  // costs nothing and ends a whole class of "it does not work" reports.
+  if (taskNeedsVision(input.task, input.files.length > 0)) {
+    const reason = textOnlyReason(input.model);
+    if (reason) throw new ProviderError(textOnlyMessage(input.model, reason), 400, "model-without-vision");
+  }
   if (input.provider === "gemini") return callGemini(input);
   if (input.provider === "zai") return callZai(input);
   if (input.provider === "minimax") return callMiniMax(input);

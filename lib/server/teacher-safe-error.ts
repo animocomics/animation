@@ -37,6 +37,11 @@ const NETWORK_CODES = /^(UND_ERR_|ECONN|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|EAI_A
 export function teacherSafeError(error: unknown): TeacherSafeError {
   const code = codeOf(error);
   const message = error instanceof Error ? error.message : "";
+  const reason = (error as { reason?: string } | undefined)?.reason || "";
+  // Persian wording differs by zero-width non-joiners between files written at
+  // different times, and an exact match on prose silently failed once already.
+  // Normalise the invisible character away before any text comparison.
+  const plain = message.replace(/\u200c/g, "");
 
   // Size and content limits are actionable for the teacher: they concern their own
   // upload and contain no provider detail.
@@ -53,6 +58,15 @@ export function teacherSafeError(error: unknown): TeacherSafeError {
   if (NETWORK_CODES.test(code) || /برقرار نشد|timeout|فتیله|ارتباط/.test(message)) {
     return { error: OUTAGE, retryable: true, code: code || "network" };
   }
+  // A model that cannot see the pages is a configuration mistake, and saying so is
+  // the difference between "the app is broken" and "pick a vision model".
+  if (reason === "model-without-vision") {
+    return {
+      error: "مدل انتخاب‌شدهٔ سامانه تصویر برگه را نمی‌خواند، بنابراین خواندن سؤال یا تصحیح با آن ممکن نیست. مدیر سامانه باید یک مدل تصویری انتخاب کند؛ فرستادن دوباره چیزی را عوض نمی‌کند.",
+      retryable: false,
+      code: "model-without-vision",
+    };
+  }
   // A country block is not an outage and not a credit problem: retrying is futile
   // and uselessly billed, so a teacher must be told to stop, not to wait.
   if (/User location is not supported|از نظر کشور مبدأ/.test(message)) {
@@ -60,6 +74,16 @@ export function teacherSafeError(error: unknown): TeacherSafeError {
       error: "سرویس هوش مصنوعی انتخاب‌شده درخواست این سرور را از نظر کشور مبدأ نمی‌پذیرد. با تغییر کلید یا دوباره فرستادن حل نمی‌شود؛ مدیر سامانه باید سرویس‌دهنده یا مسیر خروجی را عوض کند.",
       retryable: false,
       code: "region-blocked",
+    };
+  }
+  // The model is configured but cannot see. Telling a teacher "the service is not
+  // fully configured" is both false and useless; the sheet will never be read with
+  // this model, and only the administrator can change it.
+  if (reason === "vision-required" || /مدل انتخابشده تصویر نمیپذیرد|تصویر نمیپذیرد \(مدل متنی|مدل متنی است\)/.test(plain)) {
+    return {
+      error: "مدل هوش مصنوعی انتخاب‌شده در سامانه نمی‌تواند تصویر برگه را بخواند (مدل متنی است). ارسال دوباره کمکی نمی‌کند؛ به مدیر سامانه اطلاع دهید تا مدل بینایی انتخاب کند یا سؤال‌ها را دستی وارد کنید.",
+      retryable: false,
+      code: "vision-required",
     };
   }
   if (code === "HTTP_402" || /اعتبار/.test(message)) return { error: CREDIT, retryable: false, code: "credit" };
