@@ -1,20 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import {
-  ArrowDown,
-  ArrowUp,
-  Check,
-  ChevronLeft,
-  CircleAlert,
-  Copy,
-  GripVertical,
-  ListPlus,
-  Plus,
-  Scale,
-  Trash2,
-  WandSparkles,
-} from "lucide-react";
+import { ArrowDown, ArrowUp, Check, ChevronLeft, CircleAlert, Copy, GripVertical, ListPlus, Plus, Scale, Trash2, WandSparkles, AlertTriangle } from "lucide-react";
 import { QUESTION_TYPE_LABELS, type Question, type QuestionType } from "../../lib/types";
 import { faNumber, rubricScore, uid } from "../../lib/utils";
 import { NumberInput } from "../ui/number-input";
@@ -171,6 +158,7 @@ export function QuestionEditor({ questions, onChange }: { questions: Question[];
           <div className="form-field"><label htmlFor={`question-prompt-${active.id}`}>صورت سؤال <span>*</span></label><textarea id={`question-prompt-${active.id}`} className="textarea question-prompt-input" value={active.prompt} onChange={(event) => update({ prompt: event.target.value })} placeholder="صورت کامل سؤال را همان‌طور که در برگه آمده بنویسید…" /></div>
 
           {hasOptions && <div className="options-editor">
+            {!active.answer.trim() && <div className="notice notice-warning question-key-missing"><AlertTriangle size={16} /><div><strong>کلید این سؤال مشخص نیست</strong><p>برای این سؤال تستی هیچ گزینه‌ای به‌عنوان پاسخ صحیح علامت نخورده است. اگر برگه کلید خوانا نداشت، همین‌جا دکمهٔ کنار گزینهٔ درست را بزنید؛ لازم نیست برگه را دوباره بفرستید.</p></div></div>}
             <div className="options-editor-head"><div><span className="field-label">گزینه‌ها و کلید</span><small>{active.type === "multiple_choice" ? "گزینهٔ صحیح را انتخاب کنید." : "همهٔ گزینه‌های صحیح را انتخاب کنید."}</small></div><button className="btn btn-ghost btn-sm" onClick={() => update({ options: [...active.options, ""] })}><ListPlus size={15} />افزودن گزینه</button></div>
             <div className="option-rows">{active.options.map((option, index) => {
               const selected = active.type === "multiple_choice"

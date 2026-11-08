@@ -198,7 +198,10 @@ function questionImportResult() {
       type: "multiple_choice",
       prompt: "پایتخت فرانسه کدام است؟",
       maxScore: 2,
-      answer: "پاریس",
+      // NOMREH_STUB_MISSING_KEY=1 reproduces the operator's report: a multiple-choice
+      // question whose key was not read. The importer must keep the question, name the
+      // missing key, and still return a draft.
+      answer: process.env.NOMREH_STUB_MISSING_KEY === "1" ? "" : "پاریس",
       options: ["لندن", "پاریس", "رم"],
       acceptedAnswers: [],
       rubric: [{ label: "پاسخ درست", description: "انتخاب پاریس", points: 2 }],

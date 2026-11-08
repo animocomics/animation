@@ -204,3 +204,9 @@
   .class-list-panel,.class-tabs,.class-header-actions,.admin-tabs,.roster-toolbar,.roster-subtoolbar { display:none !important; }
   .classes-layout { display:block; }.class-main { display:block; }
 }
+
+/* A test item with no key is the one thing a teacher must not miss: it looks
+   finished in the draft but grades every student wrong. */
+.question-key-missing { margin: 0 0 12px; }
+.question-key-missing strong { display: block; margin-bottom: 2px; }
+.question-key-missing p { margin: 0; font-size: 11px; line-height: 1.9; }
