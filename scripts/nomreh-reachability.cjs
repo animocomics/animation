@@ -45,6 +45,12 @@ const TARGETS = [
   { group: "ir", label: "آپارات", host: "www.aparat.com", path: "/", note: "مرجع مقصد ایرانی" },
   { group: "foreign", label: "GitHub API", host: "api.github.com", path: "/", note: "مرجع مقصد خارجی" },
   { group: "foreign", label: "OpenAI", host: "api.openai.com", path: "/v1/models", note: "مرجع مقصد خارجی" },
+  // The Gemini country block is not a code problem, so the fix is wherever the egress
+  // is allowed. These two rows answer the question the operator actually asks after
+  // building a relay: did the request reach Google through it, or die before leaving?
+  // No key is sent, so both cost nothing: a 400 "API key not valid" is the proof we want.
+  { group: "gemini", label: "Google Gemini (مستقیم)", host: "generativelanguage.googleapis.com", path: "/v1beta/models", note: "از ایران معمولاً بلاک است" },
+  { group: "gemini", label: "Gemini relay", host: "", path: "/v1beta/models", note: "آدرس NOMREH_GEMINI_BASE_URL" },
 ];
 
 function lookup(host) {
@@ -72,14 +78,14 @@ function tcpConnect(host, port = 443) {
   });
 }
 
-function tlsHandshake(host) {
+function tlsHandshake(host, port = 443) {
   return new Promise((resolve) => {
     const started = Date.now();
     // rejectUnauthorized:false on purpose — this measures whether the handshake can
     // complete at all, not whether the certificate is valid. The real app still
     // verifies certificates normally; saying "untrusted certificate" here would
     // hide the more useful fact that something reset the connection.
-    const socket = tls.connect({ host, port: 443, servername: host, rejectUnauthorized: false });
+    const socket = tls.connect({ host, port, servername: host, rejectUnauthorized: false });
     const finish = (ok, detail) => {
       socket.removeAllListeners();
       socket.destroy();
@@ -96,11 +102,11 @@ function tlsHandshake(host) {
   });
 }
 
-function httpGet(host, path) {
+function httpGet(host, path, port = 443) {
   return new Promise((resolve) => {
     const started = Date.now();
     const request = https.request(
-      { host, port: 443, path, method: "GET", headers: { "user-agent": "nomreh-reachability/1", accept: "*/*" } },
+      { host, port, path, method: "GET", headers: { "user-agent": "nomreh-reachability/1", accept: "*/*" } },
       (response) => {
         // Drain so the socket closes and the process can exit.
         response.resume();
@@ -146,11 +152,11 @@ async function probe(target) {
   // Probe the first address we were given: a host with several A records can be
   // reachable on one and blocked on another, and that difference is worth seeing.
   const address = result.dns.addresses[0];
-  result.tcp = await tcpConnect(address);
+  result.tcp = await tcpConnect(address, target.port || 443);
   if (!result.tcp.ok) return { ...result, verdict: verdictFor(result) };
-  result.tls = await tlsHandshake(target.host);
+  result.tls = await tlsHandshake(target.host, target.port || 443);
   if (!result.tls.ok) return { ...result, verdict: verdictFor(result) };
-  result.http = await httpGet(target.host, target.path);
+  result.http = await httpGet(target.host, target.path, target.port || 443);
   return { ...result, verdict: verdictFor(result) };
 }
 
@@ -160,6 +166,29 @@ function line(ok, text) {
 
 async function main() {
   const args = process.argv.slice(2);
+
+  // The relay target has no fixed hostname: it is whatever the operator deployed.
+  // Reading it from the environment means one command checks the exact address the
+  // app will use, not a copy that can drift from it.
+  const relayBase = String(process.env.NOMREH_GEMINI_BASE_URL || "").trim();
+  const relayTarget = TARGETS.find((target) => target.group === "gemini" && target.host === "");
+  if (relayTarget) {
+    if (relayBase) {
+      try {
+        const parsed = new URL(relayBase);
+        relayTarget.host = parsed.hostname;
+        relayTarget.port = parsed.port ? Number(parsed.port) : 443;
+        relayTarget.path = `${parsed.pathname.replace(/\/+$/, "")}/v1beta/models`;
+        relayTarget.note = `همان آدرسی که برنامه استفاده می‌کند`;
+      } catch {
+        relayTarget.host = "";
+      }
+    }
+    if (!relayTarget.host) {
+      const index = TARGETS.indexOf(relayTarget);
+      if (index >= 0) TARGETS.splice(index, 1);
+    }
+  }
   const only = args.includes("--gapgpt") ? "ai-gapgpt" : args.includes("--kaya") ? "ai-kaya" : "";
   const asJson = args.includes("--json");
 

@@ -35,5 +35,5 @@ export function regionBlockWarning(provider: string, now = Date.now()): string |
   const info = blocked.get(provider);
   if (!info) return null;
   const minutes = Math.max(1, Math.round((now - info.at) / 60_000));
-  return `این سرویس‌دهنده ${minutes} دقیقه پیش درخواست این سرور را از نظر کشور مبدأ رد کرد. تا وقتی مسیر خروجی عوض نشود، هر تلاش دوباره فقط هزینه است.`;
+  return `این سرویس‌دهنده ${minutes} دقیقه پیش درخواست این سرور را از نظر کشور مبدأ رد کرد. تا وقتی مسیر خروجی عوض نشود، هر تلاش دوباره فقط هزینه است. (رفعش بدون تغییر کد: docs/gemini-relay-cloudflare-fa.md)`;
 }

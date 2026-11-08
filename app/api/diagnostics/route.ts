@@ -4,6 +4,7 @@ import { AuthError, requireAdmin } from "@/lib/server/auth";
 import { getProviderConfig } from "@/lib/server/provider-config";
 import { providerByteLimit } from "@/lib/server/provider-traits";
 import { regionBlockWarning } from "@/lib/server/region-block";
+import { checkGeminiRelay } from "@/lib/server/relay-check";
 import { textOnlyReason, visionVerdict } from "@/lib/server/vision-capability";
 
 export const runtime = "nodejs";
@@ -23,9 +24,10 @@ export const runtime = "nodejs";
  * may run, and whether the last refusal was a country block. It makes no provider
  * request, so opening it costs nothing.
  */
-export async function GET() {
+export async function GET(request: Request) {
   try {
     await requireAdmin();
+    const relayRequested = new URL(request.url).searchParams.get("relay") === "1";
     let provider: Awaited<ReturnType<typeof getProviderConfig>> | null = null;
     let providerError = "";
     try {
@@ -52,6 +54,12 @@ export async function GET() {
       // Two warnings that cost nothing and explain most "it does not work" reports:
       // a country block, and a model that cannot see the pages at all.
       warning: provider ? regionBlockWarning(provider.provider) : null,
+      // Gemini only, and only when asked (`?relay=1`): the operator's last real
+      // blocker was the country block, and after deploying a relay the useful
+      // question is whether the address they typed reaches Google or dies in
+      // Cloudflare. This GET is unauthenticated and sends no key, so it cannot be
+      // billed; it is opt-in so opening the panel stays instant.
+      relay: provider?.provider === "gemini" && relayRequested ? await checkGeminiRelay() : undefined,
       visionWarning: provider ? (() => {
         const reason = textOnlyReason(provider.model);
         return reason ? `${reason}. خواندن برگه و تصحیح با این مدل کار نمی‌کند؛ مدلی با پشتیبانی تصویر انتخاب کنید.` : null;

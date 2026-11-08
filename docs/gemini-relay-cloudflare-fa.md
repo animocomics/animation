@@ -9,6 +9,48 @@
 
 ---
 
+# ساده‌ترین راه (۴ خط، فقط همین را بخوان)
+
+۱. در پنل ادمین برنامه، provider را روی **Google Gemini** بگذار و کلید واقعی Gemini خودت را وارد کن.
+
+۲. در داشبورد Cloudflare مسیر زیر را باز کن:
+
+   **Build → Compute → Workers & Pages** → `https://dash.cloudflare.com/e0fcec9bdf90cfdcbb03a38795afa34d/workers-and-pages`
+
+۳. روی worker خودت (`gemini-relay`) بزن → **Edit code** → کل کد را پاک کن → فقط این را بگذار → **Deploy**:
+
+```js
+export default {
+  async fetch(request) {
+    const url = new URL(request.url);
+    url.host = "generativelanguage.googleapis.com";
+    const headers = new Headers(request.headers);
+    headers.delete("host");
+    return fetch(new Request(url.toString(), {
+      method: request.method, headers,
+      body: request.method === "GET" ? null : request.body,
+    }));
+  },
+};
+```
+
+۴. تمام. هیچ تنظیمی روی هاست لازم نیست، چون آدرس خودت را همه‌جا داری.
+   فقط در `.env` روی هاست این خط را اضافه کن و `npm run restart:plesk` بزن:
+
+```
+NOMREH_GEMINI_BASE_URL=https://gemini-relay.animocomicsss.workers.dev
+```
+
+**بعد یک بار تست کن:** در پنل ادمین، آدرس `/api/diagnostics?relay=1` را باز کن.
+اگر نوشت «رله کار می‌کند»، برو یک برگه آپلود کن. اگر چیز دیگری نوشت، همان جمله را برایم بفرست.
+
+> چرا `/` باز نمی‌شود و این طبیعی است: کد بالا فقط مسیرهای Gemini را قبول می‌کند. `/` و `/v1beta/models?key=test`
+> را نه. برای همین تست درست، `/api/diagnostics?relay=1` است، نه باز کردن آدرس در مرورگر.
+> (اما اگر آدرسی که برای من فرستادی همان است، از بیرون ایران جواب داد: `API key not valid` —
+> یعنی worker تو درست کار می‌کند و مشکل فقط دسترسی شبکهٔ تو به `workers.dev` است.)
+
+---
+
 ## گام ۰ — کدام منو؟
 
 در داشبورد Cloudflare: **Build → Compute → Workers & Pages**.
