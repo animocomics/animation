@@ -1,7 +1,7 @@
 "use client";
 
 import { type ChangeEvent, type DragEvent, useRef, useState } from "react";
-import { AlertTriangle, CheckCircle2, Eye, FileImage, FileText, KeyRound, LoaderCircle, ScanText, Trash2, UploadCloud } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Eye, FileImage, FileText, KeyRound, LoaderCircle, ScanText, Trash2, UploadCloud, XCircle } from "lucide-react";
 import { ACCEPTED_FILE_EXTENSIONS, ACCEPTED_FILE_LABEL, ACCEPTED_FILE_TYPES, MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_LABEL } from "../../lib/file-constraints";
 import { deleteStoredFile, getStoredFile, storeFile } from "../../lib/file-store";
 import { useApp } from "../../lib/app-context";
@@ -36,6 +36,11 @@ export function QuestionSourceImporter({ examId, sources, needsReview, imported,
   const [busy, setBusy] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [errorDetails, setErrorDetails] = useState<string[]>([]);
+  // Set once a paid read has been sent for the current file selection. It is what
+  // makes the cost visible *before* a second click, and it is cleared whenever the
+  // sources change (new evidence means a new request is genuinely needed).
+  const [lastSentAt, setLastSentAt] = useState<number | null>(null);
+  const controllerRef = useRef<AbortController | null>(null);
   const answerKeyOnly = sources.length > 0 && sources.every((source) => source.kind === "answers");
 
   const setWorking = (value: boolean) => {
@@ -44,6 +49,7 @@ export function QuestionSourceImporter({ examId, sources, needsReview, imported,
   };
 
   const updateSources = (next: QuestionSourceFile[]) => {
+    setLastSentAt(null);
     onChange({
       questionSources: next,
       // Changing evidence invalidates a previous confirmation. Removing attachments never clears an unconfirmed imported draft.
@@ -126,15 +132,26 @@ export function QuestionSourceImporter({ examId, sources, needsReview, imported,
     const keyOnly = forceKeyOnly || sources.every((source) => source.kind === "answers");
     const selectedSources = keyOnly ? sources.filter((source) => source.kind === "answers") : sources;
     if (!selectedSources.length) return;
+    // A second send of the same files is a second bill for identical work. This is
+    // a confirmation, not a block: a teacher whose first attempt failed for a reason
+    // the panel cannot see still gets to retry, but by choosing to.
+    if (lastSentAt && Date.now() - lastSentAt < 120_000) {
+      const confirmed = typeof window === "undefined" ? false : window.confirm("همین برگه‌ها کمتر از دو دقیقه پیش به مدل فرستاده شد و هزینه شد. ارسال دوباره یعنی پرداخت دوباره. فقط اگر پاسخ قبلی خطا داد دوباره بفرست. ادامه می‌دهید؟");
+      if (!confirmed) return;
+    }
     setErrorDetails([]);
     setWorking(true);
+    const controller = new AbortController();
+    controllerRef.current = controller;
     try {
       await beforeRead?.();
       const response = await fetch("/api/grading/import", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
         body: JSON.stringify({ examId, mode: keyOnly ? "answer-key-only" : "questions-and-key", sources: selectedSources.map((source) => ({ storedId: source.storedId, kind: source.kind })) }),
       });
+      setLastSentAt(Date.now());
       const payload = await response.json().catch(() => ({})) as { error?: string; issues?: string[]; questions?: Exam["questions"]; warnings?: string[] };
       if (!response.ok) {
         setErrorDetails(payload.issues ?? []);
@@ -148,8 +165,14 @@ export function QuestionSourceImporter({ examId, sources, needsReview, imported,
         variant: "success",
       });
     } catch (error) {
-      notify({ title: keyOnly ? "کلید جدا خوانده نشد" : "پیش‌نویس ساخته نشد", description: error instanceof Error ? error.message : "دوباره تلاش کنید.", variant: "error" });
+      const aborted = error instanceof DOMException && error.name === "AbortError";
+      notify({
+        title: aborted ? "درخواست لغو شد" : keyOnly ? "کلید جدا خوانده نشد" : "پیش‌نویس ساخته نشد",
+        description: aborted ? "درخواستی که لغو شد ممکن است هزینه شده باشد؛ پیش از ارسال دوباره، نتیجه یا خطای همان درخواست را ببینید." : error instanceof Error ? error.message : "دوباره تلاش کنید.",
+        variant: aborted ? "info" : "error",
+      });
     } finally {
+      controllerRef.current = null;
       setWorking(false);
     }
   };
@@ -195,9 +218,10 @@ export function QuestionSourceImporter({ examId, sources, needsReview, imported,
       {needsReview && sources.length ? <div className="question-source-review-state"><AlertTriangle size={16} /><span>پیش‌نویس هنوز تأیید نشده است؛ تصحیح تا تأیید صریح معلم انجام نمی‌شود.</span></div> : null}
 
       <div className="question-source-footer">
-        <p><CheckCircle2 size={15} />خروجی مدل فقط پیش‌نویس است. هیچ سؤال، کلید یا نمرهٔ مبهمی به‌صورت خودکار قطعی نمی‌شود؛ آن را با تصویر اصلی مقایسه کنید.</p>
+        <p><CheckCircle2 size={15} />هر بار فرستادن این برگه‌ها یک درخواست پرداختی است؛ پیش از دوباره فرستادن، خطای همان درخواست را بخوانید. خروجی مدل فقط پیش‌نویس است. هیچ سؤال، کلید یا نمرهٔ مبهمی به‌صورت خودکار قطعی نمی‌شود؛ آن را با تصویر اصلی مقایسه کنید.</p>
         <div className="question-source-read-actions">
           {!answerKeyOnly && sources.some((source) => source.kind === "answers") ? <button type="button" className="btn btn-secondary" disabled={busy || sources.length > 30} onClick={() => void readSources(true)}><KeyRound size={17} />فقط خواندن کلید</button> : null}
+          {busy ? <button type="button" className="btn btn-secondary" onClick={() => controllerRef.current?.abort()}><XCircle size={17} />لغو درخواست</button> : null}
           <button type="button" className="btn btn-primary" disabled={!sources.length || busy || sources.length > 30} onClick={() => void readSources()}>{busy ? <LoaderCircle className="spin-icon" size={17} /> : <ScanText size={17} />}{busy ? "در حال خواندن برگه‌ها…" : answerKeyOnly ? "خواندن کلید جدا" : "ساخت پیش‌نویس سؤال و کلید"}</button>
         </div>
       </div>

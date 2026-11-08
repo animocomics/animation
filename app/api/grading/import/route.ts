@@ -4,6 +4,7 @@ import { ACCEPTED_FILE_TYPES, MAX_FILE_SIZE_BYTES } from "@/lib/file-constraints
 import type { AuthUser, GradeApiRequest, ProviderId } from "@/lib/types";
 import { applyImportedAnswerKey, buildAnswerKeyImportPrompt } from "@/lib/server/answer-key-import-schema";
 import { AuthError, requireWorkspaceUser } from "@/lib/server/auth";
+import { claimPaidRequest, duplicateKey, releasePaidRequest } from "@/lib/server/duplicate-guard";
 import { readUserFile } from "@/lib/server/file-storage";
 import { prepareProviderFiles } from "@/lib/server/pdf-vision";
 import { getProviderConfig } from "@/lib/server/provider-config";
@@ -91,7 +92,24 @@ export async function POST(request: Request) {
     }
 
     const prompt = buildQuestionImportPrompt(JSON.stringify(manifest));
-    const response = await callProvider({ ...config, task: "question-import", prompt, files: providerFiles });
+    // Same exam, same files, same model, inside 90 seconds = the same paid work.
+    // A double click or a second tab must not buy it twice.
+    const claim = duplicateKey(["question-import", user.id, input.examId, config.provider, config.model, ...input.sources.map((source) => source.storedId).sort()]);
+    if (!claimPaidRequest(claim)) {
+      return NextResponse.json(
+        { error: "همین برگه چند لحظه پیش فرستاده شد و همان درخواست دوباره ارسال نشد تا دوبار هزینه نشود. نتیجهٔ همان درخواست را ببینید؛ اگر خطا داد، حدود یک دقیقه بعد دوباره بخوانید." },
+        { status: 429 },
+      );
+    }
+    let response;
+    try {
+      response = await callProvider({ ...config, task: "question-import", prompt, files: providerFiles });
+    } catch (error) {
+      // A request that never reached the model cost nothing, so it must not lock the
+      // teacher out. Only failures that may already be billed keep the claim.
+      if (error instanceof ProviderError && [400, 402].includes(error.status)) releasePaidRequest(claim);
+      throw error;
+    }
     const draft = normalizeImportedQuestions(response.result);
     // A question that was read but needs a human eye carries its own note. It is shown
     // as a warning beside that question, and stripped from the payload so the saved
