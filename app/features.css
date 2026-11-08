@@ -210,3 +210,10 @@
 .question-key-missing { margin: 0 0 12px; }
 .question-key-missing strong { display: block; margin-bottom: 2px; }
 .question-key-missing p { margin: 0; font-size: 11px; line-height: 1.9; }
+/* A sheet item whose options contain a fraction. Not an error: a nudge to look once at
+   the one thing a model is most likely to misread — a numerator over a bar over a
+   denominator at a few pixels of ink. */
+.question-fraction-hint { margin: 0 0 12px; }
+.question-fraction-hint strong { display: block; margin-bottom: 2px; }
+.question-fraction-hint p { margin: 0; font-size: 11px; line-height: 1.9; }
+.question-fraction-hint small { display: block; margin-top: 4px; font-size: 10.5px; opacity: .75; }

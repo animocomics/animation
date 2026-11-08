@@ -5,6 +5,7 @@ import { saveUserFile } from "../lib/server/file-storage";
 import {
   buildQuestionImportPrompt,
   importNotesOf,
+  QUESTION_IMPORT_SYSTEM_INSTRUCTIONS,
   normalizeImportedQuestions,
   QuestionImportValidationError,
   questionImportResultSchema,
@@ -150,4 +151,13 @@ test("a descriptive item with no key is still a real gap in the model's reading"
   assert.equal(result.questions.length, 1);
   assert.ok(importNotesOf(result.questions[0]).some((note) => /پاسخ مرجع خوانده نشد/.test(note)));
   assert.equal(result.questions[0].prompt, "توضیح بده.", "the readable part must survive");
+});
+
+test("the reader is told exactly how to write a fraction, and never to guess one", () => {
+  const text = QUESTION_IMPORT_SYSTEM_INSTRUCTIONS;
+  assert.match(text, /کسر/);
+  assert.match(text, /۳\/۴/, "the canonical form is shown, not described");
+  assert.match(text, /خط کسری/, "the stacked layout must be named");
+  assert.match(text, /کسر ناخوانا/, "an unreadable fraction must be declared, not invented");
+  assert.match(text, /نه ۲۵۴۱/, "the exact failure (digits melting together) is called out");
 });

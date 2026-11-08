@@ -5,10 +5,71 @@ import { providerNeedsPdfRaster } from "./provider-traits";
 
 const MAX_PDF_PAGES = 20;
 const MAX_TOTAL_VISION_FILES = 30;
-const MAX_PAGE_PIXELS = 12_000_000;
-const MAX_PAGE_DIMENSION = 2400;
+
+/**
+ * How large a page is rendered before it is sent to the model.
+ *
+ * This is the single biggest lever on whether a model reads the sheet or guesses at
+ * it. The operator reported answers containing fractions coming back wrong — a
+ * stacked numerator over a bar over a denominator is only a few pixels of ink, and at
+ * the old 2400 px ceiling a `۳/۴` collapsed into something that looked like `۲۵۴۱`.
+ * Raising the default to 3000 px makes the bar and the digits separable, at roughly
+ * 1.6x the image bytes of the old default.
+ *
+ * The pixel ceiling scales with the square of that, otherwise the dimension cap is
+ * quietly undone by the pixel cap and the setting appears to do nothing.
+ */
+const DEFAULT_PAGE_MAX_PX = 3000;
+const PAGE_MAX_PX_FLOOR = 1200;
+const PAGE_MAX_PX_CEILING = 4000;
+const MAX_PAGE_PIXELS = 20_000_000;
 const RENDER_SCALE = 2;
-const JPEG_QUALITY = 88;
+const DEFAULT_JPEG_QUALITY = 88;
+
+/**
+ * Reads a numeric setting, treating "not set" and "set to nothing" as the same thing.
+ *
+ * `Number("")` is 0, not NaN, so `Number(process.env.X || "")` quietly turned an
+ * empty variable into the minimum value instead of the default. That is how a page
+ * defaulting to 3000 px rendered at 1200 — the exact opposite of the detail the
+ * operator asked for — and it would have shipped looking like the setting was ignored.
+ */
+function numberSetting(raw: string | undefined, fallback: number, min: number, max: number): number {
+  const text = String(raw ?? "").trim();
+  if (!text) return fallback;
+  const value = Number(text);
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+function pageMaxPx(): number {
+  return numberSetting(process.env.NOMREH_PAGE_MAX_PX, DEFAULT_PAGE_MAX_PX, PAGE_MAX_PX_FLOOR, PAGE_MAX_PX_CEILING);
+}
+
+/**
+ * The render settings in one place, so the diagnostics panel can report the exact
+ * numbers the request path will use instead of a second copy that drifts.
+ * `estimatedPageBytes` is measured, not guessed. A dense A4 page of text at quality
+ * 88 comes out at about 106 KB at 2400 px, 147 KB at 3000 px and 158 KB at 3600 px;
+ * the curve flattens because anti-aliasing, not detail, dominates the extra pixels.
+ * The linear-in-area estimate here is deliberately conservative (it over-states at the
+ * top end) so the page-count advice errs on the side of fewer pages per request.
+ */
+export function pageRenderSettings(): { maxPx: number; jpegQuality: number; estimatedPageBytes: number } {
+  const maxPx = pageMaxPx();
+  const quality = jpegQuality();
+  const baselineKb = 147;
+  const qualityFactor = Math.max(0.7, Math.min(1.3, quality / 88));
+  return {
+    maxPx,
+    jpegQuality: quality,
+    estimatedPageBytes: Math.round(baselineKb * 1024 * (maxPx / 3000) ** 2 * qualityFactor),
+  };
+}
+
+function jpegQuality(): number {
+  return numberSetting(process.env.NOMREH_PAGE_JPEG_QUALITY, DEFAULT_JPEG_QUALITY, 60, 95);
+}
 
 type VisionFile = GradeApiRequest["files"][number];
 
@@ -61,7 +122,8 @@ export async function renderPdfToVisionFiles(file: VisionFile, availableSlots: n
     for (let pageNumber = firstPage; pageNumber <= lastPage; pageNumber += 1) {
       const page = await document.getPage(pageNumber);
       const baseViewport = page.getViewport({ scale: 1 });
-      const dimensionScale = Math.min(MAX_PAGE_DIMENSION / baseViewport.width, MAX_PAGE_DIMENSION / baseViewport.height);
+      const maxPx = pageMaxPx();
+      const dimensionScale = Math.min(maxPx / baseViewport.width, maxPx / baseViewport.height);
       const pixelScale = Math.sqrt(MAX_PAGE_PIXELS / (baseViewport.width * baseViewport.height));
       const scale = Math.min(RENDER_SCALE, dimensionScale, pixelScale);
       if (!Number.isFinite(scale) || scale < 0.25) throw new ProviderError(`ابعاد صفحهٔ ${pageNumber} PDF «${file.name}» برای پردازش امن نامعتبر است.`, 400);
@@ -72,7 +134,7 @@ export async function renderPdfToVisionFiles(file: VisionFile, availableSlots: n
       context.fillRect(0, 0, canvas.width, canvas.height);
       try {
         await page.render({ canvasContext: context as unknown as CanvasRenderingContext2D, viewport }).promise;
-        const jpeg = canvas.toBuffer("image/jpeg", JPEG_QUALITY);
+        const jpeg = canvas.toBuffer("image/jpeg", jpegQuality());
         output.push({ name: `${baseName} — صفحه ${pageNumber}.jpg`, type: "image/jpeg", data: jpeg.toString("base64") });
       } finally {
         page.cleanup();

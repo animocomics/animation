@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ArrowDown, ArrowUp, Check, ChevronLeft, CircleAlert, Copy, GripVertical, ListPlus, Plus, Scale, Trash2, WandSparkles, AlertTriangle } from "lucide-react";
+import { answerKey } from "@/lib/answer-key";
+import { ArrowDown, ArrowUp, Check, ChevronLeft, CircleAlert, Copy, GripVertical, ListPlus, Plus, Scale, Trash2, WandSparkles, AlertTriangle, Info } from "lucide-react";
 import { QUESTION_TYPE_LABELS, type Question, type QuestionType } from "../../lib/types";
 import { faNumber, rubricScore, uid } from "../../lib/utils";
 import { NumberInput } from "../ui/number-input";
@@ -159,6 +160,7 @@ export function QuestionEditor({ questions, onChange }: { questions: Question[];
 
           {hasOptions && <div className="options-editor">
             {!active.answer.trim() && <div className="notice notice-warning question-key-missing"><AlertTriangle size={16} /><div><strong>کلید این سؤال مشخص نیست</strong><p>برای این سؤال تستی هیچ گزینه‌ای به‌عنوان پاسخ صحیح علامت نخورده است. اگر برگه کلید خوانا نداشت، همین‌جا دکمهٔ کنار گزینهٔ درست را بزنید؛ لازم نیست برگه را دوباره بفرستید.</p></div></div>}
+            {active.options.some((option) => /[\/⁄]|\d+\s+\d+\s*\/\s*\d+/.test(option)) && <div className="notice notice-info question-fraction-hint"><Info size={16} /><div><strong>این سؤال کسر دارد — یک بار با دقت نگاهش کنید</strong><p>کسرها ریزترین چیزی هستند که در برگه چاپ می‌شوند و راحت‌ترین جا برای اشتباه خواندن. مطمئن شوید صورت بالای خط و مخرج پایین آن است و ارقام به هم نچسبیده‌اند؛ مثلاً «۳/۴» و نه «۳۴».</p><small>تا وقتی خودتان تأیید نکنید، این سؤال به‌عنوان کسر خوانده‌شده در نظر گرفته می‌شود.</small></div></div>}
             <div className="options-editor-head"><div><span className="field-label">گزینه‌ها و کلید</span><small>{active.type === "multiple_choice" ? "گزینهٔ صحیح را انتخاب کنید." : "همهٔ گزینه‌های صحیح را انتخاب کنید."}</small></div><button className="btn btn-ghost btn-sm" onClick={() => update({ options: [...active.options, ""] })}><ListPlus size={15} />افزودن گزینه</button></div>
             <div className="option-rows">{active.options.map((option, index) => {
               const selected = active.type === "multiple_choice"
@@ -201,5 +203,5 @@ export function QuestionEditor({ questions, onChange }: { questions: Question[];
 }
 
 function normalizeSelection(value: string): string {
-  return value.trim().replace(/\s+/g, " ");
+  return answerKey(value);
 }

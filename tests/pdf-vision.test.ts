@@ -122,3 +122,32 @@ test("page count and total vision-file limits stop oversized PDF jobs", async ()
   const twoPages = await makePdf(2);
   await assert.rejects(renderPdfToVisionFiles(twoPages, 1), (error: unknown) => error instanceof ProviderError && error.status === 413);
 });
+
+/**
+ * The render size is the operator's main lever on whether fractions and handwriting
+ * are read or guessed at, so it must obey three rules: default to the detailed size,
+ * let an explicit setting override it, and treat an empty setting as "use the default"
+ * rather than as zero.
+ */
+test("page render size defaults to 3000 px and honours an explicit or empty setting", async () => {
+  const { pageRenderSettings } = await import("../lib/server/pdf-vision");
+  const saved = { px: process.env.NOMREH_PAGE_MAX_PX, quality: process.env.NOMREH_PAGE_JPEG_QUALITY };
+  try {
+    delete process.env.NOMREH_PAGE_MAX_PX;
+    delete process.env.NOMREH_PAGE_JPEG_QUALITY;
+    assert.equal(pageRenderSettings().maxPx, 3000);
+    assert.equal(pageRenderSettings().jpegQuality, 88);
+
+    process.env.NOMREH_PAGE_MAX_PX = "";
+    assert.equal(pageRenderSettings().maxPx, 3000, "an empty value must not collapse to the floor");
+
+    process.env.NOMREH_PAGE_MAX_PX = "3600";
+    assert.equal(pageRenderSettings().maxPx, 3600);
+
+    process.env.NOMREH_PAGE_MAX_PX = "99999";
+    assert.equal(pageRenderSettings().maxPx, 4000, "the ceiling still protects memory");
+  } finally {
+    if (saved.px === undefined) delete process.env.NOMREH_PAGE_MAX_PX; else process.env.NOMREH_PAGE_MAX_PX = saved.px;
+    if (saved.quality === undefined) delete process.env.NOMREH_PAGE_JPEG_QUALITY; else process.env.NOMREH_PAGE_JPEG_QUALITY = saved.quality;
+  }
+});

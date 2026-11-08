@@ -5,6 +5,7 @@ import { getProviderConfig } from "@/lib/server/provider-config";
 import { providerByteLimit } from "@/lib/server/provider-traits";
 import { regionBlockWarning } from "@/lib/server/region-block";
 import { checkGeminiRelay } from "@/lib/server/relay-check";
+import { pageRenderSettings } from "@/lib/server/pdf-vision";
 import { textOnlyReason, visionVerdict } from "@/lib/server/vision-capability";
 
 export const runtime = "nodejs";
@@ -38,7 +39,11 @@ export async function GET(request: Request) {
 
     const configuredTimeout = Number(process.env.NOMREH_PROVIDER_TIMEOUT_MS || "");
     const timeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout >= 15_000 ? Math.min(configuredTimeout, 600_000) : 120_000;
-    const singlePageBudget = 400 * 1024; // measured: ~256 KB per A4 page at the app's render scale
+    // One page's real cost, from the same function that renders it: the operator
+    // asked for 3000 px, and the advice about how many pages fit in one request has
+    // to follow that number instead of a constant captured at an older resolution.
+    const render = pageRenderSettings();
+    const singlePageBudget = render.estimatedPageBytes;
 
     return NextResponse.json({
       ok: !providerError && Boolean(provider?.provider && provider?.model && provider?.apiKey),
@@ -49,7 +54,15 @@ export async function GET(request: Request) {
         requestBytes: providerByteLimit(provider?.provider ?? "gemini"),
         timeoutMs,
         // Above this, the page is likely to run past the proxy's patience.
-        pagesPerRequestAdvice: Math.max(1, Math.floor(providerByteLimit(provider?.provider ?? "gemini") / singlePageBudget)),
+        // Capped by the app's own page limits, not just by bytes: 25 MB of budget
+        // divided by a 147 KB page suggests 167 pages, while the pipeline refuses
+        // anything past 20 per PDF and 30 per request. Advice that contradicts the
+        // refusal it is meant to prevent is worse than no advice.
+        pagesPerRequestAdvice: Math.max(1, Math.min(20, Math.floor(providerByteLimit(provider?.provider ?? "gemini") / singlePageBudget))),
+        // Reading detail: how big each page image is now, and how much of it the
+        // model actually gets to see. Lower this if requests time out; raise it if
+        // handwriting or fractions are still being misread.
+        render: { pageMaxPx: render.maxPx, jpegQuality: render.jpegQuality, estimatedPageBytes: render.estimatedPageBytes },
       },
       // Two warnings that cost nothing and explain most "it does not work" reports:
       // a country block, and a model that cannot see the pages at all.
