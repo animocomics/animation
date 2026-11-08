@@ -19,8 +19,8 @@ test("an unset relay is reported as unset, not as a failure", async () => {
 });
 
 test("trailing slashes are stripped once, so the path is never doubled", async () => {
-  assert.equal(relayBaseUrl({ NOMREH_GEMINI_BASE_URL: "https://relay.example.workers.dev///" } as NodeJS.ProcessEnv), "https://relay.example.workers.dev");
-  assert.equal(relayBaseUrl({ NOMREH_GEMINI_BASE_URL: "  " } as NodeJS.ProcessEnv), null);
+  assert.equal(relayBaseUrl({ NOMREH_GEMINI_BASE_URL: "https://relay.example.workers.dev///" } as unknown as NodeJS.ProcessEnv), "https://relay.example.workers.dev");
+  assert.equal(relayBaseUrl({ NOMREH_GEMINI_BASE_URL: "  " } as unknown as NodeJS.ProcessEnv), null);
 });
 
 test("Google answering through the relay is success, even though the key was refused", async () => {
