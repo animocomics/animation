@@ -152,11 +152,28 @@ export function QuestionSourceImporter({ examId, sources, needsReview, imported,
         body: JSON.stringify({ examId, mode: keyOnly ? "answer-key-only" : "questions-and-key", sources: selectedSources.map((source) => ({ storedId: source.storedId, kind: source.kind })) }),
       });
       setLastSentAt(Date.now());
-      const payload = await response.json().catch(() => ({})) as { error?: string; issues?: string[]; questions?: Exam["questions"]; warnings?: string[] };
+      // The reply is not always JSON: a proxy in front of the app answers a request
+      // that ran too long with its own HTML 504 page. Reading that as an empty object
+      // produced the useless "reading the questions did not complete" sentence, which
+      // says nothing about what to do. Name the two cases that actually happen.
+      const rawText = await response.text().catch(() => "");
+      let payload: { error?: string; issues?: string[]; questions?: Exam["questions"]; warnings?: string[] } = {};
+      try {
+        payload = JSON.parse(rawText) as typeof payload;
+      } catch {
+        payload = {};
+      }
       if (!response.ok) {
         setErrorDetails(payload.issues ?? []);
-        throw new Error(payload.error || "خواندن سؤال و کلید کامل نشد.");
+        if (!payload.error) {
+          const gatewayTimeout = response.status === 502 || response.status === 503 || response.status === 504;
+          throw new Error(gatewayTimeout
+            ? `سرور تا پاسخ مدل صبر نکرد (HTTP ${response.status} از پروکسی هاست، نه از خود برنامه). برگه‌های کمتر یا یک صفحه را بفرستید و اگر تکرار شد، زمان انتظار پروکسی را در Plesk بالا ببرید.`
+            : `پاسخ سرور خوانا نبود (HTTP ${response.status}). این معمولاً از پروکسی یا تنظیمات هاست می‌آید، نه از فایل شما؛ جزئیات را برای مدیر بفرستید.`);
+        }
+        throw new Error(payload.error);
       }
+      if (!rawText.trim()) throw new Error("سرور پاسخی برنگرداند (پاسخ خالی). این نشانهٔ قطع‌شدن درخواست توسط پروکسی هاست است؛ با برگه‌های کمتر دوباره امتحان کنید.");
       if (!payload.questions?.length) throw new Error("مدل هیچ سؤال کاملی برنگرداند؛ هیچ پیش‌نویسی ذخیره نشد.");
       onChange({ questions: payload.questions, questionsImported: true, questionImportWarnings: payload.warnings ?? [], questionsNeedReview: true });
       notify({

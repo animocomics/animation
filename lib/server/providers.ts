@@ -151,7 +151,22 @@ function providerAttempts(): number {
   return Math.min(Math.floor(configured), 3);
 }
 
-async function fetchWithTimeout(url: string, init: RequestInit, local = false, timeout = 240_000): Promise<Response> {
+/**
+ * How long one provider call may take before this server gives up.
+ *
+ * It used to be a fixed 240 s, longer than the reverse proxy in front of the app
+ * usually waits. When the proxy gave up first, the operator saw a blank "reading did
+ * not complete" while the server was still working — a slow failure that looked like
+ * a broken feature. A shorter, configurable limit means the server answers with its
+ * own sentence rather than being cut off mid-flight.
+ */
+function providerTimeoutMs(): number {
+  const configured = Number(process.env.NOMREH_PROVIDER_TIMEOUT_MS || "");
+  if (Number.isFinite(configured) && configured >= 15_000) return Math.min(configured, 600_000);
+  return 120_000;
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit, local = false, timeout = providerTimeoutMs()): Promise<Response> {
   let lastError: unknown;
   const attempts = providerAttempts();
   for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -179,7 +194,7 @@ async function fetchWithTimeout(url: string, init: RequestInit, local = false, t
     }
   }
   if (lastError instanceof Error && lastError.name === "TimeoutError") {
-    throw new ProviderError("پاسخ مدل بیش از حد طول کشید. فایل‌ها را به دسته‌های کوچک‌تر تقسیم کنید و دوباره تلاش کنید.", 504);
+    throw new ProviderError("پاسخ مدل بیش از حد طول کشید و سامانه خودش درخواست را بست. یک صفحه یا برگه‌های کمتر بفرستید؛ برای تغییر سقف، NOMREH_PROVIDER_TIMEOUT_MS را روی هاست تنظیم کنید.", 504);
   }
   if (lastError instanceof ProviderNetworkError) throw new ProviderError(lastError.message, 502);
   // Surface the socket-level code: without it an unreachable host and a stalled
