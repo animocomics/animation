@@ -32,6 +32,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const PORT = Number(process.env.NOMREH_STUB_PORT || 4010);
+// NOMREH_STUB_DELAY_MS makes the stand-in answer as slowly as a real model reading a
+// sheet. Without it, a timeout bug can never be reproduced: the stub answers instantly
+// and every proxy looks patient. This is the only way to test that a sixty-second
+// proxy limit no longer loses a two-minute read.
+const DELAY_MS = Number(process.env.NOMREH_STUB_DELAY_MS || 0);
 const HOST = process.env.NOMREH_STUB_HOST || "0.0.0.0";
 // A key name, never the key: the stub accepts anything long enough to be a real
 // key and rejects the fixtures we know are placeholders.
@@ -232,6 +237,7 @@ const server = http.createServer(async (request, response) => {
   }
 
   if (request.method === "POST" && (route === "/api/chat/completions" || route === "/api/v1/chat/completions")) {
+    if (DELAY_MS > 0) await new Promise((resolve) => setTimeout(resolve, DELAY_MS));
     const authorization = String(request.headers.authorization || "");
     const key = authorization.replace(/^Bearer\s+/i, "").trim();
     if (!key) {

@@ -5,6 +5,7 @@ import type { AuthUser, GradeApiRequest, ProviderId } from "@/lib/types";
 import { applyImportedAnswerKey, buildAnswerKeyImportPrompt } from "@/lib/server/answer-key-import-schema";
 import { AuthError, requireWorkspaceUser } from "@/lib/server/auth";
 import { claimPaidRequest, duplicateKey, releasePaidRequest } from "@/lib/server/duplicate-guard";
+import { failImportJob, finishImportJob, setImportStep, startImportJob } from "@/lib/server/import-jobs";
 import { readUserFile } from "@/lib/server/file-storage";
 import { prepareProviderFiles } from "@/lib/server/pdf-vision";
 import { getProviderConfig } from "@/lib/server/provider-config";
@@ -92,37 +93,63 @@ export async function POST(request: Request) {
     }
 
     const prompt = buildQuestionImportPrompt(JSON.stringify(manifest));
-    // Same exam, same files, same model, inside 90 seconds = the same paid work.
-    // A double click or a second tab must not buy it twice.
-    const claim = duplicateKey(["question-import", user.id, input.examId, config.provider, config.model, ...input.sources.map((source) => source.storedId).sort()]);
-    if (!claimPaidRequest(claim)) {
-      return NextResponse.json(
-        { error: "همین برگه چند لحظه پیش فرستاده شد و همان درخواست دوباره ارسال نشد تا دوبار هزینه نشود. نتیجهٔ همان درخواست را ببینید؛ اگر خطا داد، حدود یک دقیقه بعد دوباره بخوانید." },
-        { status: 429 },
-      );
+    // A model that reads twenty pages takes minutes, and the proxy in front of the app
+    // gives up after sixty seconds. So the POST no longer waits for the model at all:
+    // it starts the work and answers immediately. The browser then polls a request that
+    // takes microseconds, which no proxy will ever time out, and a cut poll costs
+    // nothing because the job is not attached to the connection.
+    const jobKey = duplicateKey(["question-import", user.id, input.examId, config.provider, config.model, ...input.sources.map((source) => source.storedId).sort()]);
+    const started = startImportJob(jobKey);
+    if (!started.created) {
+      // Same exam, same pages, same model, still running: hand back the job in flight
+      // instead of buying the same work a second time.
+      return NextResponse.json({ jobId: started.job.id, status: started.job.status, step: started.job.step, reused: true }, { status: 202 });
     }
-    let response;
-    try {
-      response = await callProvider({ ...config, task: "question-import", prompt, files: providerFiles });
-    } catch (error) {
-      // A request that never reached the model cost nothing, so it must not lock the
-      // teacher out. Only failures that may already be billed keep the claim.
-      if (error instanceof ProviderError && [400, 402].includes(error.status)) releasePaidRequest(claim);
-      throw error;
+    const claimed = claimPaidRequest(jobKey);
+    if (!claimed) {
+      failImportJob(started.job.id, {
+        status: 429,
+        message: "همین برگه چند لحظه پیش خوانده شد و همان درخواست دوباره ارسال نشد تا دوبار هزینه نشود. نتیجهٔ همان خواندن را ببینید؛ اگر خطا داد، حدود یک دقیقه بعد دوباره بخوانید.",
+      });
+      return NextResponse.json({ jobId: started.job.id, status: "failed" }, { status: 429 });
     }
-    const draft = normalizeImportedQuestions(response.result);
-    // A question that was read but needs a human eye carries its own note. It is shown
-    // as a warning beside that question, and stripped from the payload so the saved
-    // exam keeps exactly the shape the rest of the app validates.
-    const questionNotes = draft.questions.flatMap((question) =>
-      importNotesOf(question).map((note) => `سؤال ${question.number}: ${note}`),
-    );
-    const questions = draft.questions.map((question) => {
-      if (!importNotesOf(question).length) return question;
-      const { importNotes: _notes, ...rest } = question as typeof question & { importNotes?: string[] };
-      return rest;
-    });
-    return NextResponse.json({ questions, warnings: [...draft.warnings, ...questionNotes].slice(0, 40), usage: response.usage });
+
+    // Deliberately not awaited: the answer to this POST is the job id, not the draft.
+    void (async () => {
+      try {
+        setImportStep(started.job.id, "در حال خواندن برگه‌ها با مدل");
+        const response = await callProvider({ ...config, task: "question-import", prompt, files: providerFiles });
+        setImportStep(started.job.id, "در حال ساخت پیش‌نویس");
+        const draft = normalizeImportedQuestions(response.result);
+        // A question that was read but needs a human eye carries its own note. It is shown
+        // as a warning beside that question, and stripped from the payload so the saved
+        // exam keeps exactly the shape the rest of the app validates.
+        const questionNotes = draft.questions.flatMap((question) =>
+          importNotesOf(question).map((note) => `سؤال ${question.number}: ${note}`),
+        );
+        const questions = draft.questions.map((question) => {
+          if (!importNotesOf(question).length) return question;
+          const { importNotes: _notes, ...rest } = question as typeof question & { importNotes?: string[] };
+          return rest;
+        });
+        finishImportJob(started.job.id, { questions, warnings: [...draft.warnings, ...questionNotes].slice(0, 40), usage: response.usage });
+      } catch (error) {
+        // A request that never reached the model cost nothing, so it must not lock the
+        // teacher out. Only failures that may already be billed keep the claim.
+        if (error instanceof ProviderError && [400, 402].includes(error.status)) releasePaidRequest(jobKey);
+        const admin = await requireWorkspaceUser().then((current) => isAdminRole(current.role)).catch(() => false);
+        if (error instanceof ProviderError) {
+          const safe = teacherSafeError(error);
+          failImportJob(started.job.id, { status: providerErrorHttpStatus(error.status), message: admin ? error.message : safe.error, code: safe.code });
+        } else if (error instanceof QuestionImportValidationError) {
+          failImportJob(started.job.id, { status: error.status, message: error.message, issues: error.issues });
+        } else {
+          failImportJob(started.job.id, { status: 500, message: error instanceof Error ? error.message : "خواندن سؤال و کلید کامل نشد." });
+        }
+      }
+    })();
+
+    return NextResponse.json({ jobId: started.job.id, status: "working", step: started.job.step }, { status: 202 });
   } catch (error) {
     if (error instanceof AuthError) return NextResponse.json({ error: error.message }, { status: error.status });
     if (error instanceof ProviderError) {

@@ -5,6 +5,7 @@ import { createId } from "@/lib/server/ids";
 import { readUserFile } from "@/lib/server/file-storage";
 import { gradeRequestSchema } from "@/lib/server/grading-schema";
 import { MAX_FILE_SIZE_BYTES } from "@/lib/file-constraints";
+import { failImportJob, finishImportJob, setImportStep, startImportJob } from "@/lib/server/import-jobs";
 import { mergeVerifiedResult, normalizeGradingResult } from "@/lib/server/normalize";
 import { prepareProviderFiles } from "@/lib/server/pdf-vision";
 import { getProviderConfig } from "@/lib/server/provider-config";
@@ -108,13 +109,31 @@ export async function POST(request: Request) {
   if (approximateFileBytes > providerByteLimit && !hasPdf) {
     return NextResponse.json({ error: "حجم کل فایل‌های این دانش‌آموز برای یک درخواست زیاد است؛ فایل را فشرده یا برگه را به دسته‌های کوچک‌تر تقسیم کنید." }, { status: 413 });
   }
+  // Grading is the longest call in the app: page preparation, one model call, and in
+  // "precise" mode a second one. Holding the browser's POST open for all of that is
+  // what made the host's proxy answer 504 before the model did. So the POST now starts
+  // a job and returns; the browser polls a millisecond request until the score exists.
+  const gradeKey = `grade:${input?.submissionId || input?.examId || ""}:${config?.provider || ""}:${config?.model || ""}`;
+  const startedGrade = startImportJob(gradeKey, Date.now(), "grade");
+  if (!startedGrade.created) {
+    // The same submission is still being graded. Hand back the running job and do not
+    // start a second one: a second run is a second bill for identical work.
+    if (user) gradingInFlight.delete(`${user.id}:${(input as GradeApiRequest).submissionId || (input as GradeApiRequest).examId}`);
+    return NextResponse.json(
+      { jobId: startedGrade.job.id, status: "working", step: startedGrade.job.step, reused: true },
+      { status: 202 },
+    );
+  }
+
   let usage = { inputTokens: 0, outputTokens: 0 };
+  void (async () => {
   try {
     const providerFiles = await prepareProviderFiles(input.files, config.provider, { convertAllPdfs: approximateFileBytes > providerByteLimit });
     const preparedBytes = providerFiles.reduce((sum, file) => sum + Math.floor(file.data.length * 0.75), 0);
     if (preparedBytes > providerByteLimit) {
       throw new ProviderError("حجم تصاویر صفحات پس از آماده‌سازی برای مدل زیاد است؛ تعداد صفحات را کمتر یا PDF را به دسته‌های کوچک‌تر تقسیم کنید.", 413);
     }
+    setImportStep(startedGrade.job.id, "در حال خواندن برگهٔ دانش‌آموز");
     const firstCall = await callProvider({ ...config, prompt: buildGradingPrompt(input), files: providerFiles });
     usage = { ...firstCall.usage };
     let normalized = normalizeGradingResult(firstCall.result, input, config.provider, config.model, usage);
@@ -127,6 +146,7 @@ export async function POST(request: Request) {
 
     if (shouldVerify) {
       try {
+        setImportStep(startedGrade.job.id, "در حال بازبینی دوم (حالت دقیق)");
         const secondCall = await callProvider({ ...config, prompt: buildGradingPrompt(input, firstCall.result), files: providerFiles });
         usage.inputTokens += secondCall.usage.inputTokens;
         usage.outputTokens += secondCall.usage.outputTokens;
@@ -151,7 +171,7 @@ export async function POST(request: Request) {
 
     await recordJob("succeeded", usage);
     if (user && input) gradingInFlight.delete(`${user.id}:${(input as GradeApiRequest).submissionId || (input as GradeApiRequest).examId}`);
-    return NextResponse.json({ result: normalized satisfies GradingResult });
+    finishImportJob(startedGrade.job.id, { result: normalized satisfies GradingResult, usage });
   } catch (error) {
     const message = error instanceof Error ? error.message : "تصحیح برگه کامل نشد.";
     if (user) gradingInFlight.delete(`${user.id}:${input?.submissionId || input?.examId || ""}`);
@@ -160,17 +180,21 @@ export async function POST(request: Request) {
       // The raw message names the vendor, the model and socket codes. It is stored
       // on the job row for the administrator and never sent to a teacher.
       const safe = teacherSafeError(error);
-      const body = isAdminRole(user?.role)
-        ? { error: error.message, teacherMessage: safe.error, code: safe.code, retryable: safe.retryable }
-        : { error: safe.error, code: safe.code, retryable: safe.retryable };
-      return NextResponse.json(body, { status: providerErrorHttpStatus(error.status) });
+      failImportJob(startedGrade.job.id, {
+        status: providerErrorHttpStatus(error.status),
+        message: isAdminRole(user?.role) ? error.message : safe.error,
+        code: safe.code,
+      });
+    } else {
+      const safe = teacherSafeError(error);
+      failImportJob(startedGrade.job.id, {
+        status: 500,
+        message: isAdminRole(user?.role) ? message : safe.error,
+        code: safe.code,
+      });
     }
-    const safe = teacherSafeError(error);
-    return NextResponse.json(
-      isAdminRole(user?.role)
-        ? { error: error instanceof Error ? error.message : safe.error, teacherMessage: safe.error, code: safe.code, retryable: safe.retryable }
-        : { error: safe.error, code: safe.code, retryable: safe.retryable },
-      { status: 500 },
-    );
   }
+  })();
+
+  return NextResponse.json({ jobId: startedGrade.job.id, status: "working", step: startedGrade.job.step, reused: !startedGrade.created }, { status: 202 });
 }

@@ -217,3 +217,9 @@
 .question-fraction-hint strong { display: block; margin-bottom: 2px; }
 .question-fraction-hint p { margin: 0; font-size: 11px; line-height: 1.9; }
 .question-fraction-hint small { display: block; margin-top: 4px; font-size: 10.5px; opacity: .75; }
+/* A reading that is still running. Shown instead of a silent spinner so a slow model
+   call looks like work in progress rather than a page that has stopped responding. */
+.question-source-progress { margin-bottom: 10px; }
+.question-source-progress strong { display: block; margin-bottom: 2px; }
+.question-source-progress p { margin: 0; font-size: 11px; line-height: 1.9; }
+.question-source-progress small { display: block; margin-top: 3px; font-size: 10.5px; opacity: .75; }

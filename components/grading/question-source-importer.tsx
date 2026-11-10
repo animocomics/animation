@@ -20,6 +20,69 @@ function fileType(file: File): string {
   return file.type;
 }
 
+type ImportJobSnapshot = {
+  status: "working" | "done" | "failed";
+  step?: string;
+  elapsedSeconds?: number;
+  questions?: Exam["questions"];
+  warnings?: string[];
+  error?: string;
+  issues?: string[];
+};
+
+const POLL_INTERVAL_MS = 1_500;
+// A reading that has not answered in this long is not going to: the provider timeout
+// is 120 s by default, and the server fails the job itself at that point, so this is
+// only a backstop for a lost network. Asking forever would look like a hang.
+const POLL_GIVE_UP_MS = 15 * 60 * 1000;
+
+/**
+ * Waits for a server-side reading job and reports the step it is on.
+ *
+ * Each request here is tiny and completes in milliseconds, which is the whole point:
+ * the host's proxy has nothing to time out, so a two-minute model call no longer
+ * arrives as a 504 with no draft.
+ */
+async function pollImportJob(
+  jobId: string,
+  onProgress: (progress: { step: string; seconds: number }) => void,
+): Promise<ImportJobSnapshot> {
+  const startedAt = Date.now();
+  let transientFailures = 0;
+  for (;;) {
+    await new Promise((resolve) => window.setTimeout(resolve, POLL_INTERVAL_MS));
+    if (Date.now() - startedAt > POLL_GIVE_UP_MS) {
+      return { status: "failed", error: "خواندن برگه بیش از حد طول کشید و رها شد. یک بار با برگه‌های کمتر بفرستید؛ اگر تکرار شد، زمان انتظار سرویس مدل را در تنظیمات ادمین ببینید." };
+    }
+    let snapshot: ImportJobSnapshot | null = null;
+    try {
+      const response = await fetch(`/api/grading/import/${encodeURIComponent(jobId)}`, { cache: "no-store" });
+      if (response.ok) {
+        snapshot = (await response.json()) as ImportJobSnapshot;
+      } else if (response.status >= 500 || response.status === 429) {
+        transientFailures += 1;
+        if (transientFailures < 5) continue;
+        return { status: "failed", error: `وضعیت خواندن برگه از سرور خوانده نشد (HTTP ${response.status}). نتیجه را از پیش‌نویس بررسی کنید و در صورت نیاز دوباره بفرستید.` };
+      } else {
+        const payload = await response.json().catch(() => ({} as { error?: string }));
+        return { status: "failed", error: payload.error ?? `وضعیت خواندن برگه خوانده نشد (HTTP ${response.status}).` };
+      }
+    } catch {
+      // A dropped poll is not a dropped job: the server keeps working, so retry.
+      transientFailures += 1;
+      if (transientFailures < 5) continue;
+      return { status: "failed", error: "ارتباط با سرور در میانهٔ خواندن قطع شد. نتیجه ممکن است کامل شده باشد؛ یک بار وضعیت را ببینید و در صورت نیاز دوباره بفرستید." };
+    }
+    transientFailures = 0;
+    if (!snapshot) continue;
+    if (snapshot.status === "working") {
+      onProgress({ step: snapshot.step ?? "در حال خواندن برگه‌ها", seconds: snapshot.elapsedSeconds ?? 0 });
+      continue;
+    }
+    return snapshot;
+  }
+}
+
 export function QuestionSourceImporter({ examId, sources, needsReview, imported, warnings, onChange, onBusyChange, beforeRead }: {
   examId: string;
   sources: QuestionSourceFile[];
@@ -40,6 +103,10 @@ export function QuestionSourceImporter({ examId, sources, needsReview, imported,
   // makes the cost visible *before* a second click, and it is cleared whenever the
   // sources change (new evidence means a new request is genuinely needed).
   const [lastSentAt, setLastSentAt] = useState<number | null>(null);
+  // The reading runs as a job on the server, and this is its progress shown to the
+  // teacher: which step it is on and how long it has been running. Silence for a
+  // minute is what made a slow read look like a hang.
+  const [jobProgress, setJobProgress] = useState<{ step: string; seconds: number } | null>(null);
   const controllerRef = useRef<AbortController | null>(null);
   const answerKeyOnly = sources.length > 0 && sources.every((source) => source.kind === "answers");
 
@@ -141,6 +208,7 @@ export function QuestionSourceImporter({ examId, sources, needsReview, imported,
     }
     setErrorDetails([]);
     setWorking(true);
+    setJobProgress({ step: "در حال ارسال برگه‌ها", seconds: 0 });
     const controller = new AbortController();
     controllerRef.current = controller;
     try {
@@ -152,10 +220,35 @@ export function QuestionSourceImporter({ examId, sources, needsReview, imported,
         body: JSON.stringify({ examId, mode: keyOnly ? "answer-key-only" : "questions-and-key", sources: selectedSources.map((source) => ({ storedId: source.storedId, kind: source.kind })) }),
       });
       setLastSentAt(Date.now());
+
+      // Reading a sheet is a job now, not a page load. The POST answers in
+      // milliseconds with a job id; the work continues on the server no matter what
+      // happens to this connection, which is exactly what stops the host's proxy from
+      // cutting a slow model call off at one minute and reporting a 504.
+      if (response.status === 202) {
+        const started = await response.json().catch(() => ({} as { jobId?: string }));
+        if (!started.jobId) throw new Error("سرور خواندن برگه را شروع نکرد؛ یک بار دیگر بفرستید.");
+        const finished = await pollImportJob(started.jobId, (progress) => {
+          setJobProgress(progress);
+        });
+        if (finished.status === "failed") {
+          setErrorDetails(finished.issues ?? []);
+          throw new Error(finished.error ?? "خواندن برگه کامل نشد.");
+        }
+        if (!finished.questions?.length) throw new Error("مدل هیچ سؤال کاملی برنگرداند؛ هیچ پیش‌نویسی ذخیره نشد.");
+        onChange({ questions: finished.questions, questionsImported: true, questionImportWarnings: finished.warnings ?? [], questionsNeedReview: true });
+        notify({
+          title: keyOnly ? "کلید جدا روی سؤال‌ها نشست" : "پیش‌نویس سؤال‌ها ساخته شد",
+          description: keyOnly ? "صورت، نمره و بارم تغییر نکرد؛ کلیدها را با پاسخ‌نامه مقایسه و تأیید کنید." : "همهٔ صورت‌ها، کلیدها و نمره‌ها را با برگهٔ اصلی مقایسه و سپس تأیید کنید.",
+          variant: "success",
+        });
+        return;
+      }
       // The reply is not always JSON: a proxy in front of the app answers a request
-      // that ran too long with its own HTML 504 page. Reading that as an empty object
-      // produced the useless "reading the questions did not complete" sentence, which
-      // says nothing about what to do. Name the two cases that actually happen.
+      // that ran too long with its own HTML 504 page. This POST now returns in
+      // milliseconds, so a 504 here means the proxy cut even that — not that the sheet
+      // was too big. The old sentence ("send fewer pages") sent the teacher to shrink a
+      // sheet that was never the problem, so it now names the real cause.
       const rawText = await response.text().catch(() => "");
       let payload: { error?: string; issues?: string[]; questions?: Exam["questions"]; warnings?: string[] } = {};
       try {
@@ -168,12 +261,12 @@ export function QuestionSourceImporter({ examId, sources, needsReview, imported,
         if (!payload.error) {
           const gatewayTimeout = response.status === 502 || response.status === 503 || response.status === 504;
           throw new Error(gatewayTimeout
-            ? `سرور تا پاسخ مدل صبر نکرد (HTTP ${response.status} از پروکسی هاست، نه از خود برنامه). برگه‌های کمتر یا یک صفحه را بفرستید و اگر تکرار شد، زمان انتظار پروکسی را در Plesk بالا ببرید.`
+            ? `پروکسی هاست حتی درخواست شروع خواندن را هم قطع کرد (HTTP ${response.status}). این دیگر به اندازهٔ برگه ربطی ندارد؛ خواندن برگه در همین نسخه بلافاصله جواب می‌دهد. یک بار دیگر بزنید و اگر تکرار شد، همین جمله را برای مدیر بفرستید.`
             : `پاسخ سرور خوانا نبود (HTTP ${response.status}). این معمولاً از پروکسی یا تنظیمات هاست می‌آید، نه از فایل شما؛ جزئیات را برای مدیر بفرستید.`);
         }
         throw new Error(payload.error);
       }
-      if (!rawText.trim()) throw new Error("سرور پاسخی برنگرداند (پاسخ خالی). این نشانهٔ قطع‌شدن درخواست توسط پروکسی هاست است؛ با برگه‌های کمتر دوباره امتحان کنید.");
+      if (!rawText.trim()) throw new Error("سرور پاسخی برنگرداند (پاسخ خالی)؛ درخواست پیش از رسیدن به برنامه قطع شده است. یک بار دیگر بزنید.");
       if (!payload.questions?.length) throw new Error("مدل هیچ سؤال کاملی برنگرداند؛ هیچ پیش‌نویسی ذخیره نشد.");
       onChange({ questions: payload.questions, questionsImported: true, questionImportWarnings: payload.warnings ?? [], questionsNeedReview: true });
       notify({
@@ -190,6 +283,7 @@ export function QuestionSourceImporter({ examId, sources, needsReview, imported,
       });
     } finally {
       controllerRef.current = null;
+      setJobProgress(null);
       setWorking(false);
     }
   };
@@ -230,6 +324,7 @@ export function QuestionSourceImporter({ examId, sources, needsReview, imported,
       </div> : <p className="question-source-empty">می‌توانید سؤال‌ها را دستی وارد کنید و بعد فقط عکس کلید را اضافه کنید؛ لازم نیست همه‌چیز را از نو بسازید.</p>}
 
       {answerKeyOnly ? <div className="notice notice-info question-key-only-state"><KeyRound size={18} /><div><strong>حالت کلید جدا، خودکار</strong><p>فقط پاسخ‌های سؤال‌های موجود خوانده می‌شود؛ صورت سؤال، گزینه‌ها، نمره و بارم دست نمی‌خورد. در تستی‌ها گزینهٔ سیاه/علامت‌خورده خوانده می‌شود و علامت مبهم یا چندگانه پذیرفته نمی‌شود.</p></div></div> : null}
+      {busy && jobProgress ? <div className="notice notice-info question-source-progress"><LoaderCircle className="spin-icon" size={16} /><div><strong>{jobProgress.step}…</strong><p>خواندن برگه ممکن است تا دو دقیقه طول بکشد. کار در سرور ادامه دارد، پس بستن این صفحه آن را متوقف نمی‌کند؛ ولی نتیجه فقط همین‌جا نشان داده می‌شود. تا وقتی همین پیام را می‌بینید، دوباره نفرستید.</p><small>{faNumber(jobProgress.seconds)} ثانیه گذشته</small></div></div> : null}
       {lastSentAt && !busy ? <div className="notice notice-info question-source-cost"><Info size={16} /><div><strong>این برگه‌ها همین حالا خوانده شدند</strong><p>اگر نتیجه نیامد، پیام خطای بالا را بخوانید؛ بعضی خطاها (مدل بدون پشتیبانی تصویر، کشور مبدأ، کلید) با فرستادن دوباره درست نمی‌شوند.</p></div></div> : null}
       {errorDetails.length ? <div className="notice notice-warning question-source-errors"><AlertTriangle size={18} /><div><strong>موارد نیازمند اصلاح در خواندن</strong><ul>{errorDetails.map((detail, index) => <li key={`${index}-${detail}`}>{detail}</li>)}</ul></div></div> : null}
       {warnings?.length ? <div className="notice notice-warning question-source-warnings"><AlertTriangle size={18} /><div><strong>هشدارهای پیش‌نویس</strong><ul>{warnings.map((warning, index) => <li key={`${index}-${warning}`}>{warning}</li>)}</ul></div></div> : null}

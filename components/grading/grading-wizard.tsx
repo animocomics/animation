@@ -74,6 +74,45 @@ function resultNeedsReview(result: GradingResult): boolean {
   return result.flags.some((flag) => flag.severity !== "info") || result.questions.some((question) => question.needsReview);
 }
 
+type GradingJobSnapshot = { status: "working" | "done" | "failed"; step?: string; result?: GradingResult; error?: string };
+
+const GRADE_POLL_MS = 2_000;
+const GRADE_GIVE_UP_MS = 20 * 60 * 1000;
+
+/**
+ * Waits for one student's grading job.
+ *
+ * Each poll is a tiny request that no reverse proxy can time out, so a slow model no
+ * longer arrives as a proxy error page. A dropped poll is retried: the job lives on
+ * the server, not on this connection.
+ */
+async function pollGradingJob(jobId: string): Promise<GradingJobSnapshot> {
+  const startedAt = Date.now();
+  let failures = 0;
+  for (;;) {
+    await new Promise((resolve) => window.setTimeout(resolve, GRADE_POLL_MS));
+    if (Date.now() - startedAt > GRADE_GIVE_UP_MS) {
+      return { status: "failed", error: "تصحیح بیش از حد طول کشید و رها شد؛ دوباره و با برگه‌های کمتر بفرستید." };
+    }
+    try {
+      const response = await fetch(`/api/grading/import/${encodeURIComponent(jobId)}`, { cache: "no-store" });
+      if (!response.ok) {
+        failures += 1;
+        if (failures < 5) continue;
+        return { status: "failed", error: `وضعیت تصحیح از سرور خوانده نشد (HTTP ${response.status}).` };
+      }
+      failures = 0;
+      const snapshot = await response.json() as GradingJobSnapshot;
+      if (snapshot.status === "working") continue;
+      return snapshot;
+    } catch {
+      failures += 1;
+      if (failures < 5) continue;
+      return { status: "failed", error: "ارتباط با سرور در میانهٔ تصحیح قطع شد." };
+    }
+  }
+}
+
 export function GradingWizard() {
   const { exams, classes, settings: workspaceSettings, providerStatus, user, saveExam, updateSubmission, syncWorkspace, notify, storageReady } = useApp();
   const searchParams = useSearchParams();
@@ -322,9 +361,14 @@ export function GradingWizard() {
               files,
             }),
           });
-          const payload = await response.json() as { result?: GradingResult; error?: string };
-          if (!response.ok || !payload.result) throw new Error(payload.error || "نتیجهٔ معتبر از سرور دریافت نشد.");
-          const result = payload.result;
+          // The POST starts the grading job and returns at once; the score arrives on a
+          // poll. Waiting on the POST itself was what let a one-minute proxy limit turn
+          // a two-minute grading run into "504" with no result at all.
+          const started = await response.json() as { jobId?: string; error?: string };
+          if (!response.ok || !started.jobId) throw new Error(started.error || "نتیجهٔ معتبر از سرور دریافت نشد.");
+          const finished = await pollGradingJob(started.jobId);
+          if (finished.status === "failed" || !finished.result) throw new Error(finished.error || "نتیجهٔ معتبر از سرور دریافت نشد.");
+          const result = finished.result;
           const schoolClass = classes.find((item) => item.id === draft.classId);
           const identityPatched = applyIdentityMatch(submission, result, schoolClass);
           applyUpdate(submission.id, {
