@@ -237,9 +237,16 @@ export function QuestionSourceImporter({ examId, sources, needsReview, imported,
         }
         if (!finished.questions?.length) throw new Error("مدل هیچ سؤال کاملی برنگرداند؛ هیچ پیش‌نویسی ذخیره نشد.");
         onChange({ questions: finished.questions, questionsImported: true, questionImportWarnings: finished.warnings ?? [], questionsNeedReview: true });
+        // How many questions the sheet actually has is something only the teacher can
+        // see. Saying the number back makes a missing row obvious immediately, instead
+        // of being discovered later when a student's answer has nowhere to go.
         notify({
-          title: keyOnly ? "کلید جدا روی سؤال‌ها نشست" : "پیش‌نویس سؤال‌ها ساخته شد",
-          description: keyOnly ? "صورت، نمره و بارم تغییر نکرد؛ کلیدها را با پاسخ‌نامه مقایسه و تأیید کنید." : "همهٔ صورت‌ها، کلیدها و نمره‌ها را با برگهٔ اصلی مقایسه و سپس تأیید کنید.",
+          title: keyOnly
+            ? `کلید جدا روی ${faNumber(finished.questions.length)} سؤال نشست`
+            : `${faNumber(finished.questions.length)} سؤال خوانده شد`,
+          description: keyOnly
+            ? "صورت، نمره و بارم تغییر نکرد؛ کلیدها را با پاسخ‌نامه مقایسه و تأیید کنید."
+            : "شمار سؤال‌های برگه را با این عدد مقایسه کنید؛ اگر کمتر است، همان برگه را تک‌صفحه بفرستید تا کل صفحه با جزئیات خوانده شود.",
           variant: "success",
         });
         return;

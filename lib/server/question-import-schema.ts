@@ -162,6 +162,8 @@ export const QUESTION_IMPORT_SYSTEM_INSTRUCTIONS = `تو «خوانندهٔ سؤ
 - اگر یک برگه هم متن چاپی سؤال دارد و هم دست‌خط کلید، هر دو را از همان برگه بخوان؛ «سؤال از یک فایل، کلید از فایل دیگر» فرض نکن.
 - کسرها را دقیق رونویسی کن و هرگز ارقامشان را به هم نچسبان. کسری که «صورت» بالای «خط کسری» و «مخرج» پایین آن است با یک خط مورب بنویس: ۳/۴ (نه ۳۴، نه ۴۳، نه ۲۵۴۱). عدد مخلوط را «۱ ۱/۲» بنویس، نسبت را «۲:۳»، و اعشار را فقط اگر در برگه اعشار نوشته شده باشد. گزینه‌هایی مثل «۴/۶» را با همان خط نگه دار و هرگز به عدد اعشاری تبدیل نکن.
 - اگر خط کسری، صورت یا مخرج خوانا نیست، هیچ ترکیبی از ارقام را حدس نزن: آن سؤال را complete=false بگذار و در issues بنویس «کسر ناخوانا». یک کسر اشتباه بدتر از یک کسر ناخوانده است، چون در تصحیح به‌عنوان کلید معتبر به کار می‌رود.
+- هیچ سؤالی را جا نینداز. اگر برگه شماره‌های ۱ تا ۵ دارد، خروجی باید هر پنج سؤال را داشته باشد؛ اگر یکی خوانا نیست، همان را با نوع unknown یا complete=false و issues بیاور تا معلم ببیند، نه اینکه حذفش کنی. سؤالِ حذف‌شده از سؤالِ ناخوانا بدتر است، چون هیچ‌کس نمی‌فهمد گم شده است.
+- اگر شمارهٔ سؤال روی برگه تکراری یا ناخوانا بود، همان ترتیب محل سؤال در صفحه را به‌عنوان number بنویس و در issues بگو شماره خوانا نبود؛ به‌خاطر شماره، سؤال را حذف نکن.
 - برای شکل و نمودار فقط نوع diagram را هنگامی انتخاب کن که ساختار روشن باشد؛ جزئیات ناخوانای شکل را با توصیف احتمالی جایگزین نکن و complete=false بگذار.
 - سؤال و کلید را فقط با شمارهٔ صریح و تطبیق روشن به هم وصل کن. اگر تطبیق روشن نیست، complete=false بگذار و در issues بنویس؛ پاسخ احتمالی انتخاب نکن.
 - complete=true فقط زمانی مجاز است که صورت سؤال، نوع از روی ساختار روشن، نمرهٔ صریح و پاسخ مرجع خوانا باشد. اگر هر کدام ناخوانا، مبهم، بریده یا غایب است complete=false بگذار و فیلد نامشخص را خالی یا صفر بگذار؛ آن را با مقدار ساختگی پر نکن.
@@ -212,11 +214,26 @@ export function normalizeImportedQuestions(result: QuestionImportResult):
   const warnings = result.warnings.map((warning) => warning.trim()).filter(Boolean).slice(0, 30);
   const dropped: Array<{ number: number; reasons: string[] }> = [];
   const missingKeys: number[] = [];
-  const numbers = new Set<number>();
   const sorted = [...result.questions].sort((left, right) => left.number - right.number);
 
   type Kept = { draft: QuestionImportResult["questions"][number]; questions: string[]; rubric: Array<{ label: string; description: string; points: number }> };
   const kept: Kept[] = [];
+  const duplicateNumbers: number[] = [];
+
+  // Two questions must never collapse into one because of how they were numbered.
+  //
+  // The operator photographed a sheet with two questions and got a draft with one.
+  // The cause was here: a repeated or missing number (`1, 1` — which is what a slate
+  // that labels both rows "1)" produces) was treated as a reason to throw the second
+  // question away. Its wording, its options and its key had all been read; only the
+  // label the model transcribed was wrong. Numbering is a label, and the app
+  // renumbers every draft sequentially anyway, so the second question keeps its
+  // position and says which number was ambiguous instead of vanishing.
+  const seenNumbers = new Set<number>();
+  for (const question of sorted) {
+    if (question.number && seenNumbers.has(question.number)) duplicateNumbers.push(question.number);
+    if (question.number) seenNumbers.add(question.number);
+  }
 
   for (const [index, question] of sorted.entries()) {
     const number = question.number || index + 1;
@@ -224,16 +241,25 @@ export function normalizeImportedQuestions(result: QuestionImportResult):
     const reasons: string[] = [];
     const notes: string[] = [];
 
-    if (!question.number || numbers.has(question.number)) reasons.push("شمارهٔ سؤال صفر یا تکراری است و تطبیق با کلید امن نیست");
-    numbers.add(question.number);
+    // A missing number is not a reason to drop a question either: a question with
+    // readable wording and a readable key is worth having whatever its label says.
+    if (!question.number) notes.push("شمارهٔ این سؤال روی برگه خوانده نشد؛ شمارهٔ نمایشی به‌ترتیب تعیین شد");
+    else if (duplicateNumbers.includes(question.number)) notes.push(`شمارهٔ ${question.number} در برگه تکراری بود؛ ترتیب نمایش بر اساس محل سؤال در برگه تعیین شد — شماره را با برگهٔ اصلی مقایسه کنید`);
     if (!question.prompt.trim()) reasons.push("صورت سؤال خوانده نشده است");
     if (question.type === "unknown") reasons.push("نوع سؤال از روی برگه روشن نیست");
     if (!(question.maxScore > 0)) reasons.push("نمرهٔ صریح و مثبت ندارد");
     if (["multiple_choice", "multiple_response", "true_false"].includes(question.type) && question.options.filter((option) => option.trim()).length < 2) {
       reasons.push("کمتر از دو گزینهٔ خوانا دارد");
     }
-    const extractedText = [question.prompt, question.answer, ...question.options, ...question.acceptedAnswers, ...question.rubric.flatMap((criterion) => [criterion.label, criterion.description])];
-    if (extractedText.some(hasUnreadableMarker)) reasons.push("در متن یا گزینه‌ها نشانهٔ ناخوانایی هست");
+    // A phrase like "ناخوانا" is the model being honest about one word — usually the last
+  // line of a sheet or a smudged digit — not a reason to delete a whole question whose
+  // wording, options and key were all read. The question is kept and the phrase becomes
+  // a visible note for the teacher ("this line needs a look"), which is what the model
+  // was asking for in the first place. Dropping it is what makes a two-question sheet
+  // arrive as one question.
+  const extractedText = [question.prompt, question.answer, ...question.options, ...question.acceptedAnswers, ...question.rubric.flatMap((criterion) => [criterion.label, criterion.description])];
+    const unreadableField = extractedText.find(hasUnreadableMarker);
+    if (unreadableField) notes.push(`بخشی از این سؤال در برگه ناخوانا بود («${unreadableField.trim().slice(0, 80)}»)؛ همان بخش را با برگهٔ اصلی مقابله کنید`);
 
     // A reference answer is what a teacher grades against. Its absence cannot be
     // guessed, but an empty key on a sheet that was read fine is a gap to fill in by
@@ -279,6 +305,9 @@ export function normalizeImportedQuestions(result: QuestionImportResult):
     ].slice(0, 12));
   }
 
+  if (duplicateNumbers.length) {
+    warnings.push(`شمارهٔ ${[...new Set(duplicateNumbers)].join("، ")} در برگه بیش از یک بار آمده بود؛ سؤال‌ها دور ریخته نشدند و به‌ترتیب محلشان شماره‌گذاری شدند. شماره‌ها را یک بار با برگهٔ اصلی مقایسه کنید.`);
+  }
   if (missingKeys.length) {
     warnings.push(`کلید سؤال‌های ${missingKeys.join("، ")} در برگه خوانده نشد؛ پیش‌نویس ساخته شد ولی باید پاسخ مرجع (یا گزینهٔ درست در تستی) را دستی مشخص کنید.`);
   }

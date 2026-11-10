@@ -209,7 +209,10 @@ test("Gemini legacy model IDs keep a compatible config without Gemini 3 thinking
   await mockFetch((url, init) => {
     assert.match(url, /gemini-2\.5-flash:generateContent$/);
     const body = JSON.parse(String(init.body));
-    assert.equal(body.generationConfig.thinkingConfig, undefined);
+    // 2.5 uses thinkingBudget (tokens), not the 3.x thinkingLevel — and no media
+    // resolution field, which older models reject outright.
+    assert.deepEqual(body.generationConfig.thinkingConfig, { thinkingBudget: 0 });
+    assert.equal(body.generationConfig.mediaResolution, undefined);
     assert.equal(body.generationConfig.responseJsonSchema.type, "object");
     return Response.json({ candidates: [{ content: { parts: [{ text: JSON.stringify(modelResult) }] } }] });
   }, async () => {

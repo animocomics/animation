@@ -800,6 +800,46 @@ async function callInkling(input: ProviderCallInput): Promise<ProviderCallResult
  */
 const GEMINI_BASE_URL = process.env.NOMREH_GEMINI_BASE_URL || "https://generativelanguage.googleapis.com";
 
+/**
+ * How many tokens of detail Gemini is allowed to take from each page image.
+ *
+ * This is the other half of "it reads the sheet badly", and it is not the same knob as
+ * the render size. The API tokenises an image into a fixed budget: on Gemini 3+ the
+ * default for images is about 1120 tokens. A 3000-pixel scan downscaled into that
+ * budget loses exactly the thing being asked about — a fraction bar, a subscript, a
+ * tick beside an option. Raising the media resolution is what makes the finer image
+ * actually reach the model, at roughly twice the input tokens for that page.
+ *
+ *   NOMREH_GEMINI_MEDIA_RESOLUTION=high       (default: what OCR of a sheet needs)
+ *   NOMREH_GEMINI_MEDIA_RESOLUTION=ultra_high (dense handwriting, ~2x cost)
+ *   NOMREH_GEMINI_MEDIA_RESOLUTION=medium     (cheapest; fine print will be guessed)
+ */
+export function geminiMediaResolution(model: string): string | null {
+  const configured = String(process.env.NOMREH_GEMINI_MEDIA_RESOLUTION || "").trim().toLowerCase();
+  const allowed = new Set(["low", "medium", "high", "ultra_high"]);
+  const level = allowed.has(configured) ? configured : "high";
+  // The field exists on Gemini 3 and later; older models reject unknown fields rather
+  // than ignoring them, so it is only sent where it is understood.
+  if (!/^(?:models\/)?gemini-(?:3|4)(?:[.-]|$)/.test(model)) return null;
+  return `MEDIA_RESOLUTION_${level.toUpperCase()}`;
+}
+
+/**
+ * Thinking budget. Reading a form is transcription, not reasoning: a low budget is
+ * both faster and cheaper, and on Gemini 2.5 the knob is `thinkingBudget` (tokens)
+ * rather than the `thinkingLevel` used on 3+. The operator asked for speed, and the
+ * default dynamic thinking on a vision call can spend more time thinking than reading.
+ */
+export function geminiThinkingConfig(model: string): Record<string, unknown> | null {
+  const configured = String(process.env.NOMREH_GEMINI_THINKING || "").trim().toLowerCase();
+  if (configured === "off" || configured === "none") return null;
+  const isV3Plus = /^(?:models\/)?gemini-(?:3|4)(?:[.-]|$)/.test(model);
+  const is25 = /^(?:models\/)?gemini-2\.5/.test(model);
+  if (isV3Plus) return { thinkingLevel: configured === "high" ? "high" : "low" };
+  if (is25) return { thinkingBudget: configured === "high" ? 2048 : 0 };
+  return null;
+}
+
 async function callGemini(input: ProviderCallInput): Promise<ProviderCallResult> {
   const parts: Array<Record<string, unknown>> = [{ text: input.prompt }];
   for (const [index, file] of input.files.entries()) {
@@ -820,9 +860,11 @@ async function callGemini(input: ProviderCallInput): Promise<ProviderCallResult>
           // additionalProperties. responseJsonSchema accepts the JSON Schema
           // used by the application, including nullable unions and bounds.
           responseJsonSchema: schemaForTask(input.task),
-          // Gemini 3/4 otherwise default to medium dynamic thinking. A low
-          // level keeps interactive grading below the shared-host proxy timeout.
-          ...(/^(?:models\/)?gemini-(?:3|4)(?:[.-]|$)/.test(input.model) ? { thinkingConfig: { thinkingLevel: "low" } } : {}),
+          // Reading a form is transcription, not reasoning. A high thinking budget
+          // spends seconds before it looks at the page, which the operator experiences
+          // as "slow" without any gain in accuracy.
+          ...(geminiThinkingConfig(input.model) ? { thinkingConfig: geminiThinkingConfig(input.model) } : {}),
+          ...(geminiMediaResolution(input.model) ? { mediaResolution: { level: geminiMediaResolution(input.model) } } : {}),
           maxOutputTokens: 32768,
           temperature: 0.1,
         },

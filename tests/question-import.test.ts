@@ -63,11 +63,15 @@ test("contradictory extraction is dropped by number and the sound questions surv
     warnings: [],
   });
   const result = normalizeImportedQuestions(mixed);
-  assert.deepEqual(result.questions.map((question) => question.prompt), ["تعریف سلول"]);
-  assert.deepEqual(result.dropped.map((item) => item.number), [2, 3]);
+  // A rubric total that contradicts the score is still a hard drop: the numbers are
+  // contradictory and a grader cannot be built on them. An option the model marked
+  // unreadable is no longer a drop — it is kept with a note, because deleting it is
+  // how a readable question disappears from a two-question sheet.
+  assert.deepEqual(result.questions.map((question) => question.prompt), ["تعریف سلول", "گزینهٔ ناخوانا"]);
+  assert.deepEqual(result.dropped.map((item) => item.number), [2]);
   assert.match(result.dropped[0].reasons[0], /جمع بارم/);
-  assert.match(result.dropped[1].reasons[0], /ناخوانایی/);
-  assert.ok(result.warnings.some((warning) => warning.includes("سؤال‌های 2، 3")));
+  assert.ok(result.warnings.some((warning) => warning.includes("سؤال‌های 2")));
+  assert.ok(importNotesOf(result.questions[1]).some((note) => note.includes("ناخوانا")), "the unreadable option is named as a note");
 });
 
 test("when nothing is usable the error names each rejected question instead of a generic sentence", () => {

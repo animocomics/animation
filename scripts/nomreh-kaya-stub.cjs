@@ -207,6 +207,10 @@ function questionImportResult() {
       // question whose key was not read. The importer must keep the question, name the
       // missing key, and still return a draft.
       answer: process.env.NOMREH_STUB_MISSING_KEY === "1" ? "" : "پاریس",
+      // NOMREH_STUB_DUPLICATE_NUMBER=1 reproduces "two questions on the sheet, one in
+      // the draft": the model transcribes the same printed number twice, which used to
+      // make the second question disappear in normalisation.
+      number: process.env.NOMREH_STUB_DUPLICATE_NUMBER === "1" ? 1 : 2,
       options: ["لندن", "پاریس", "رم"],
       acceptedAnswers: [],
       rubric: [{ label: "پاسخ درست", description: "انتخاب پاریس", points: 2 }],
