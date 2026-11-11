@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { AuthError, requireAdmin, requireUser } from "@/lib/server/auth";
-import { getProviderStatus, saveProviderConfig } from "@/lib/server/provider-config";
+import { getProviderConfig, getProviderStatus, openRouterHostWarning, saveProviderConfig } from "@/lib/server/provider-config";
 import { PROVIDER_IDS } from "@/lib/provider-catalog";
 import { regionBlockWarning } from "@/lib/server/region-block";
 import { textOnlyReason } from "@/lib/server/vision-capability";
@@ -18,7 +18,18 @@ export async function GET() {
     const status = await getProviderStatus(user.role === "admin");
     // The same provider that already refused this server is flagged in the panel, so
     // choosing it again is a deliberate act rather than another billed surprise.
-    const warning = user.role === "admin" ? regionBlockWarning(status.provider) : null;
+    const regionWarning = user.role === "admin" ? regionBlockWarning(status.provider) : null;
+    // A host override meant for Kaya must never quietly redirect OpenRouter traffic.
+    let hostWarning: string | null = null;
+    if (user.role === "admin" && status.configured) {
+      try {
+        const config = await getProviderConfig();
+        hostWarning = openRouterHostWarning(config.provider, config.egress);
+      } catch {
+        // No readable config is not a warning; the connection card already says that.
+      }
+    }
+    const warning = [hostWarning, regionWarning].filter(Boolean).join(" ") || null;
     return NextResponse.json({ status, warning }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     const status = error instanceof AuthError ? error.status : 500;

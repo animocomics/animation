@@ -21,6 +21,7 @@ export const PROVIDER_LABELS: Record<ProviderId, string> = {
   mistral: "Mistral AI",
   kaya: "Kaya AI",
   gapgpt: "GapGPT",
+  openrouter: "OpenRouter",
 };
 
 export type ProviderTask = "grading" | "question-import" | "answer-key-import";
@@ -523,12 +524,46 @@ const KAYA_BASE_URL = "https://kayaai.ir/api";
  */
 const GAPGPT_BASE_URL = "https://api.gapgpt.app/v1";
 
-export function gapgptBaseUrl(egress: KayaEgressConfig | undefined): string {
+function gatewayBaseUrl(defaultUrl: string, egress: KayaEgressConfig | undefined): string {
   const host = (egress?.host || "").trim();
-  if (!host) return GAPGPT_BASE_URL;
+  if (!host) return defaultUrl;
   const trimmed = host.replace(/\/+$/, "");
   return /^https?:\/\//.test(trimmed) ? trimmed : `https://${trimmed}/v1`;
 }
+
+/**
+ * The egress setting is the *operator's* egress for the local gateways: Kaya, GapGPT and
+ * OpenRouter are all reached through it when it is set. GapGPT documents two hosts for the
+ * same gateway, which is what the setting was built for.
+ */
+export function gapgptBaseUrl(egress: KayaEgressConfig | undefined): string {
+  return gatewayBaseUrl(GAPGPT_BASE_URL, egress);
+}
+
+/**
+ * OpenRouter: one key, one endpoint, the whole catalogue behind it.
+ *
+ * It is an OpenAI-compatible router, so it is reached through the same Chat Completions
+ * path as Kaya and GapGPT rather than through a third copy of the request code. The host
+ * is configurable for the same reason as GapGPT's: an operator behind a filtered network
+ * may need a mirror, and switching hosts should not need a new release.
+ *
+ * Two headers are optional on OpenRouter and worth sending, because they are how the
+ * account's own activity page shows which app spent the credit: HTTP-Referer and
+ * X-Title. They carry no privacy — the sheet is not in them — and they make the
+ * operator's bill readable.
+ */
+const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+
+export function openrouterBaseUrl(egress: KayaEgressConfig | undefined): string {
+  return gatewayBaseUrl(OPENROUTER_BASE_URL, egress);
+}
+
+/** The attribution headers OpenRouter reads (optional, never required). */
+export const OPENROUTER_HEADERS: Record<string, string> = {
+  "HTTP-Referer": "https://nomreh.local",
+  "X-Title": "Nomreh AI Grading",
+};
 
 /**
  * Ordered substitutes used only when the selected model is unavailable.
@@ -573,7 +608,23 @@ async function callGapGpt(input: ProviderCallInput): Promise<ProviderCallResult>
 }
 
 /**
- * Builds the Chat Completions body for the two providers that use that contract.
+ * OpenRouter. Same contract, same body, one difference that matters for cost.
+ *
+ * A routed model may be served by several upstream providers with different prices, and
+ * OpenRouter's default is to pick one by availability. The operator's standing rule is
+ * that money must not go missing, so the request asks for the cheapest provider that
+ * supports the model's parameters (`provider.sort = "price"`). If a model only exists on
+ * one upstream, the field is simply ignored.
+ */
+async function callOpenRouter(input: ProviderCallInput): Promise<ProviderCallResult> {
+  if (input.files.some((file) => file.type === "application/pdf")) {
+    throw new ProviderError("PDF برای OpenRouter باید پیش از ارسال، داخل سامانه به تصویر صفحه تبدیل شود.", 400);
+  }
+  return callKayaModel(input, input.model, false);
+}
+
+/**
+ * Builds the Chat Completions body for the providers that use that contract.
  *
  * `max_tokens` is the one number that matters here. It used to be a fixed 32768:
  * a gateway that caps completion tokens lower rejects the request before producing
@@ -643,12 +694,20 @@ async function callKayaModel(
   // name the service that actually failed — otherwise a GapGPT error would tell the
   // operator to check their Kaya panel.
   const serviceName = PROVIDER_LABELS[input.provider] || "سرویس‌دهنده";
-  const baseUrl = input.provider === "gapgpt" ? gapgptBaseUrl(input.egress) : kayaBaseUrl(input.egress) || KAYA_BASE_URL;
+  const baseUrl = input.provider === "gapgpt"
+    ? gapgptBaseUrl(input.egress)
+    : input.provider === "openrouter"
+      ? openrouterBaseUrl(input.egress)
+      : kayaBaseUrl(input.egress) || KAYA_BASE_URL;
   const egressAgent = kayaAgent(input.egress);
   try {
     response = await fetchWithTimeout(`${baseUrl}/chat/completions`, {
       method: "POST",
-      headers: { Authorization: `Bearer ${input.apiKey}`, "Content-Type": "application/json" },
+      headers: {
+        Authorization: `Bearer ${input.apiKey}`,
+        "Content-Type": "application/json",
+        ...(input.provider === "openrouter" ? OPENROUTER_HEADERS : {}),
+      },
       body: JSON.stringify(chatCompletionBody(input, model)),
       ...(egressAgent ? { dispatcher: egressAgent } : {}),
     } as RequestInit, isLocalKayaHost(input.egress));
@@ -676,7 +735,11 @@ async function callKayaModel(
     if (isParameterRejection(status, detail)) {
       const retried = await fetchWithTimeout(`${baseUrl}/chat/completions`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${input.apiKey}`, "Content-Type": "application/json" },
+        headers: {
+          Authorization: `Bearer ${input.apiKey}`,
+          "Content-Type": "application/json",
+          ...(input.provider === "openrouter" ? OPENROUTER_HEADERS : {}),
+        },
         body: JSON.stringify(plainChatCompletionBody(input, model)),
         ...(egressAgent ? { dispatcher: egressAgent } : {}),
       } as RequestInit, isLocalKayaHost(input.egress)).catch(() => null);
@@ -925,6 +988,7 @@ export function callProvider(input: ProviderCallInput): Promise<ProviderCallResu
   if (input.provider === "mistral") return callMistral(input);
   if (input.provider === "kaya") return callKaya(input);
   if (input.provider === "gapgpt") return callGapGpt(input);
+  if (input.provider === "openrouter") return callOpenRouter(input);
   return callOpenAI(input);
 }
 

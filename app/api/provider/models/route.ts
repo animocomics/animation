@@ -30,7 +30,7 @@ export async function POST(request: Request) {
     // Both host-driven providers must receive the configured host, or discovery
     // reads a hard-coded default while grading uses the operator's setting — so the
     // model list would come from a different place than the grading request.
-    const hostDriven = input.provider === "kaya" || input.provider === "gapgpt";
+    const hostDriven = input.provider === "kaya" || input.provider === "gapgpt" || input.provider === "openrouter";
     const models = await discoverProviderModels({ provider: input.provider, apiKey, egress: hostDriven ? stored.egress : undefined });
     return NextResponse.json({ models }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {

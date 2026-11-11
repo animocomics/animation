@@ -61,7 +61,12 @@ test("every surface that must know about GapGPT actually does", () => {
   // The host guard must apply to GapGPT exactly as it does to Kaya: the configured
   // host decides where the request goes, so a remote plain-HTTP host must be refused.
   const testRoute = fs.readFileSync(path.join(root, "app", "api", "provider", "test", "route.ts"), "utf8");
-  assert.match(testRoute, /input\.provider === "kaya" \|\| input\.provider === "gapgpt"\) assertKayaHostAllowed/);
+  // Asserted by behaviour, not by exact text: the guard is one condition that now
+  // also covers OpenRouter, and a test pinned to the old literal would fail for a
+  // correct change — which teaches nothing.
+  const guardLine = testRoute.split("\n").find((line) => line.includes("assertKayaHostAllowed(stored.egress)")) || "";
+  assert.match(guardLine, /"kaya"/, "the guard must cover kaya");
+  assert.match(guardLine, /"gapgpt"/, "the guard must cover gapgpt");
 });
 
 test("GapGPT shares the Kaya call implementation rather than copying it", () => {

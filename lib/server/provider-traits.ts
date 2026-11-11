@@ -34,6 +34,10 @@ export const PROVIDER_TRAITS: Record<ProviderId, ProviderTraits> = {
   // GapGPT is an OpenAI-compatible gateway: one key, one endpoint, many vendors.
   // It does not accept a raw PDF on the chat path, so pages are rasterised first.
   gapgpt: { chatOnly: true, convertsPdf: true, byteLimit: 24 * MB },
+  // OpenRouter is an OpenAI-compatible router over hundreds of models. It accepts the
+  // Chat Completions contract, and a raw PDF only on providers that support it, so pages
+  // are rasterised first — the same rule as every other gateway here.
+  openrouter: { chatOnly: true, convertsPdf: true, byteLimit: 24 * MB },
 };
 
 /** True when the provider is reached over Chat Completions rather than Responses. */

@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, CheckCircle2, Eye, EyeOff, KeyRound, LoaderCircle, LockKeyhole, RefreshCw, ShieldCheck, Sparkles, TriangleAlert, Zap, BrainCircuit, ScanText, Cpu, AudioLines, Layers, Globe } from "lucide-react";
+import { Check, CheckCircle2, Eye, EyeOff, KeyRound, LoaderCircle, LockKeyhole, RefreshCw, ShieldCheck, Sparkles, TriangleAlert, Zap, BrainCircuit, ScanText, Cpu, AudioLines, Layers, Globe, Network,
+} from "lucide-react";
 import { useApp } from "../lib/app-context";
 import { readJsonResponse } from "../lib/http-response";
 import { FALLBACK_MODEL_OPTIONS, mergeModelOptions, RECOMMENDED_MODELS, SUPPORTS_ACCOUNT_MODEL_DISCOVERY } from "../lib/provider-catalog";
@@ -18,6 +19,7 @@ const PROVIDERS = {
   mistral: { label: "Mistral Large 4", hint: "Reasoning High · Public Preview · تصویر و PDF", icon: Layers },
   kaya: { label: "Kaya AI (ایران · بدون تحریم)", hint: "سازگار با OpenAI · بدون نیاز به شکن · تصویر و PDF با تبدیل خودکار", icon: Globe },
   gapgpt: { label: "GapGPT (ایران · چند مدل)", hint: "GPT · Claude · Gemini با یک کلید · پرداخت ریالی · تصویر و PDF با تبدیل خودکار", icon: Layers },
+  openrouter: { label: "OpenRouter (همهٔ مدل‌ها)", hint: "GPT · Claude · Gemini · Qwen با یک کلید · فهرست کامل مدل‌ها از حساب خودتان · تصویر و PDF با تبدیل خودکار", icon: Network },
 } as const;
 
 export function ApiConnection() {

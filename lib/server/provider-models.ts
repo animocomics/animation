@@ -2,7 +2,7 @@ import type { ProviderId } from "../types";
 import { FALLBACK_MODEL_OPTIONS, mergeModelOptions, SUPPORTS_ACCOUNT_MODEL_DISCOVERY } from "../provider-catalog";
 import { providerFetch } from "./provider-network";
 import { kayaBaseUrl, type KayaEgressConfig } from "./kaya-egress";
-import { gapgptBaseUrl } from "./providers";
+import { gapgptBaseUrl, openrouterBaseUrl } from "./providers";
 import { ProviderError } from "./providers";
 import { isJsonParserErrorMessage } from "../error-message";
 
@@ -21,6 +21,14 @@ interface ProviderModelRecord {
   input_modalities?: string[];
   output_modalities?: string[];
   capabilities?: { vision?: boolean; completion_chat?: boolean };
+  /**
+   * OpenRouter publishes modalities here rather than at the top level:
+   * `{ architecture: { input_modalities: ["text", "image"] } }`. Reading only the
+   * top-level field made every model look undeclared, and an undeclared model is
+   * deliberately kept — so the picker would have offered text-only models, which is
+   * exactly the mistake that costs a sheet (a blind model invents one).
+   */
+  architecture?: { input_modalities?: string[]; output_modalities?: string[] };
 }
 
 const DISCOVERY_URLS: Partial<Record<ProviderId, string>> = {
@@ -33,12 +41,15 @@ const DISCOVERY_URLS: Partial<Record<ProviderId, string>> = {
   kaya: "https://kayaai.ir/api/chat/completions",
   // Standard OpenAI catalogue endpoint.
   gapgpt: "https://api.gapgpt.app/v1/models",
+  // Public catalogue: no key needed, and it carries modalities and price per model.
+  openrouter: "https://openrouter.ai/api/v1/models",
 };
 
 /** Providers whose discovery URL depends on the operator's configured host. */
 const HOST_DRIVEN_DISCOVERY: Partial<Record<ProviderId, (egress: KayaEgressConfig | undefined) => string>> = {
   kaya: (egress) => `${kayaBaseUrl(egress)}/chat/completions`,
   gapgpt: (egress) => `${gapgptBaseUrl(egress)}/models`,
+  openrouter: (egress) => `${openrouterBaseUrl(egress)}/models`,
 };
 
 function safeProviderDetail(rawMessage: string, apiKey: string): string {
@@ -90,6 +101,28 @@ function modelId(record: ProviderModelRecord, provider: ProviderId): string {
   return provider === "gemini" ? raw.replace(/^models\//, "") : raw;
 }
 
+/**
+ * The models from a catalogue that can actually grade a photographed sheet.
+ *
+ * Exported because this is the decision that costs money when it is wrong: a text-only
+ * model does not fail loudly on a vision task, it invents a page. The tests feed it a
+ * fake catalogue that contains exactly the traps — a text-only Llama, an image
+ * generator, an embedding model — so the filter is proven rather than assumed.
+ */
+export function filterGradingCandidates(provider: ProviderId, records: ProviderModelRecord[]): string[] {
+  return records.map(flattenArchitecture).filter((record) => isGradingCandidate(provider, record)).map((record) => modelId(record, provider));
+}
+
+/** Copies the `architecture` modalities onto the plain fields the filter reads. */
+function flattenArchitecture(record: ProviderModelRecord): ProviderModelRecord {
+  if (!record.architecture) return record;
+  return {
+    ...record,
+    input_modalities: record.input_modalities ?? record.architecture.input_modalities,
+    output_modalities: record.output_modalities ?? record.architecture.output_modalities,
+  };
+}
+
 function isGradingCandidate(provider: ProviderId, record: ProviderModelRecord): boolean {
   const id = modelId(record, provider);
   if (!id || id.length > 120 || /[\s\u0000-\u001f]/.test(id)) return false;
@@ -107,6 +140,17 @@ function isGradingCandidate(provider: ProviderId, record: ProviderModelRecord): 
     // Kaya catalogue ids are "<owner>/<model>" or a short Claude alias.
     if (record.output_modalities?.length && !record.output_modalities.includes("text")) return false;
     return /^[a-z0-9][a-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(id) || /^claude-/.test(id);
+  }
+  if (provider === "openrouter") {
+    // One catalogue covers every vendor, so ids are "owner/model" and carry no shared
+    // prefix. Only two things disqualify a model here: it cannot emit text, or it does
+    // not declare image input. The second is the one that costs money — a text-only model
+    // "reads" a sheet by inventing it — so a declared-modality list without "image" is a
+    // refusal, exactly as on GapGPT.
+    if (record.output_modalities?.length && !record.output_modalities.includes("text")) return false;
+    if (record.input_modalities?.length && !record.input_modalities.includes("image")) return false;
+    if (record.capabilities?.vision === false) return false;
+    return !/(?:image|imagen|embed|whisper|tts|audio|video|veo|kling|sora|midjourney|rerank|moderation)/i.test(id);
   }
   if (provider === "gapgpt") {
     // One catalogue covers many vendors, so the ids carry no shared prefix. Drop
@@ -199,7 +243,7 @@ export async function discoverProviderModels(input: ProviderModelRequest): Promi
     const verified = FALLBACK_MODEL_OPTIONS.kaya.filter((id) => !discovered.includes(id));
     return [...verified, ...discovered];
   }
-  const models = records.filter((record) => isGradingCandidate(input.provider, record)).map((record) => modelId(record, input.provider));
+  const models = filterGradingCandidates(input.provider, records);
   if (!models.length) throw new ProviderError("سرویس‌دهنده مدل چندوجهی قابل‌استفاده‌ای برای این حساب برنگرداند. می‌توانید نام مدل را دستی وارد و آزمایش کنید.", 400);
   return mergeModelOptions(input.provider, models);
 }

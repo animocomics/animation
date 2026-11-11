@@ -1,4 +1,4 @@
-export type ProviderId = "openai" | "gemini" | "deepseek" | "zai" | "minimax" | "inkling" | "mistral" | "kaya" | "gapgpt";
+export type ProviderId = "openai" | "gemini" | "deepseek" | "zai" | "minimax" | "inkling" | "mistral" | "kaya" | "gapgpt" | "openrouter";
 export type UserRole = "admin" | "teacher" | "reviewer";
 
 export interface AuthUser {

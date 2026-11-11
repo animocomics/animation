@@ -48,6 +48,26 @@ export async function getProviderConfig(): Promise<{
   return { provider: row.provider, model: row.model, apiKey: await decryptSecret(row.encrypted_api_key, PROVIDER_SECRET_PURPOSE), egress };
 }
 
+/**
+ * A host override that would send OpenRouter traffic somewhere else.
+ *
+ * The stored host was built for the Iranian gateways: Kaya's mirror and GapGPT's two
+ * documented hosts. If it is left set and the operator switches to OpenRouter, that host
+ * is still where the request goes — possibly the Kaya mirror, i.e. a different company
+ * and a different bill, or a legitimate OpenRouter mirror the operator chose on purpose.
+ * The app cannot tell those apart, so it honours the setting (an explicit choice is the
+ * operator's) and says so in the panel, instead of silently redirecting or silently
+ * ignoring. `NOMREH_ALLOW_OPENROUTER_HOST_MISMATCH` is not needed: this is a warning,
+ * never a block.
+ */
+export function openRouterHostWarning(provider: ProviderId, egress: KayaEgressConfig): string | null {
+  if (provider !== "openrouter") return null;
+  const host = (egress.host || "").trim();
+  if (!host) return null;
+  if (/openrouter\.ai/i.test(host) || /^(?:https?:\/\/)?(?:127\.0\.0\.1|localhost)(?::|\/|$)/i.test(host)) return null;
+  return `درخواست‌های OpenRouter به «${host}» فرستاده می‌شوند، نه به openrouter.ai. اگر این آدرس را برای کایا یا GapGPT تنظیم کرده‌اید، پاکش کنید؛ وگرنه برگه‌ها به سرور دیگری می‌روند و هزینه هم جای دیگری حساب می‌شود.`;
+}
+
 export async function disconnectProviderConfig(): Promise<ProviderPublicStatus> {
   (await import("./db")).getDb().prepare("DELETE FROM provider_settings WHERE id = 1").run();
   return getProviderStatus(true);

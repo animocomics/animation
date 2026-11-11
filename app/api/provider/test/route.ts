@@ -6,7 +6,7 @@ import { kayaBaseUrl, assertKayaHostAllowed } from "@/lib/server/kaya-egress";
 import { isChatCompletionsProvider } from "@/lib/server/provider-traits";
 import { providerFetch, ProviderNetworkError } from "@/lib/server/provider-network";
 import { providerResponseError } from "@/lib/server/provider-models";
-import { gapgptBaseUrl, ProviderError } from "@/lib/server/providers";
+import { gapgptBaseUrl, openrouterBaseUrl, OPENROUTER_HEADERS, ProviderError } from "@/lib/server/providers";
 import { invalidProviderJsonMessage, isJsonParserErrorMessage, providerErrorHttpStatus } from "@/lib/error-message";
 import { PROVIDER_IDS } from "@/lib/provider-catalog";
 
@@ -45,6 +45,9 @@ export async function POST(request: Request) {
               ? `https://api.openai.com/v1/models/${encodeURIComponent(input.model)}`
               : input.provider === "deepseek"
                 ? "https://api.deepseek.com/models"
+                : input.provider === "openrouter"
+                  // Same rule as every gateway: test the host grading will use.
+                  ? `${openrouterBaseUrl(stored.egress)}/chat/completions`
                 : input.provider === "gapgpt"
                   // Same rule as Kaya: test the host the grading request will use,
                   // not a hard-coded default, or a green test proves nothing.
@@ -87,7 +90,7 @@ export async function POST(request: Request) {
                 max_tokens: 8,
                 stream: false,
               }
-            : input.provider === "kaya" || input.provider === "gapgpt"
+            : input.provider === "kaya" || input.provider === "gapgpt" || input.provider === "openrouter"
               ? {
                   // Exercise the same Chat Completions path grading uses, so a
                   // green test means the key and this exact model really work.
@@ -99,13 +102,13 @@ export async function POST(request: Request) {
               : undefined;
     // The configured host decides where this test is sent, so it passes exactly the
     // same guard grading does: a remote plain-HTTP host is refused either way.
-    if (input.provider === "kaya" || input.provider === "gapgpt") assertKayaHostAllowed(stored.egress);
+    if (input.provider === "kaya" || input.provider === "gapgpt" || input.provider === "openrouter") assertKayaHostAllowed(stored.egress);
     const response = await providerFetch(url, {
       method: isChat || isInkling ? "POST" : "GET",
       headers: isInkling
         ? { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "Content-Type": "application/json" }
         : isChat
-          ? { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", ...(input.provider === "zai" ? { "Accept-Language": "en-US,en" } : {}) }
+          ? { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", ...(input.provider === "zai" ? { "Accept-Language": "en-US,en" } : {}), ...(input.provider === "openrouter" ? OPENROUTER_HEADERS : {}) }
           : input.provider === "gemini" ? { "x-goog-api-key": apiKey } : { Authorization: `Bearer ${apiKey}` },
       body: testBody ? JSON.stringify(testBody) : undefined,
       signal: AbortSignal.timeout(20_000),
@@ -117,7 +120,7 @@ export async function POST(request: Request) {
       if (!payload.data?.some((item) => item.id === input.model)) {
         return NextResponse.json({ error: "کلید معتبر است اما این مدل در فهرست مدل‌های حساب DeepSeek دیده نمی‌شود." }, { status: 400 });
       }
-    } else if (input.provider === "kaya" || input.provider === "gapgpt") {
+    } else if (input.provider === "kaya" || input.provider === "gapgpt" || input.provider === "openrouter") {
       const payload = await response.json() as { choices?: Array<{ message?: { content?: unknown } }> };
       const content = payload.choices?.[0]?.message?.content;
       const text = typeof content === "string" ? content : Array.isArray(content) ? content.map((part) => (part && typeof part === "object" && "text" in part ? String((part as { text?: unknown }).text ?? "") : "")).join("") : "";

@@ -37,6 +37,9 @@ const TARGETS = [
   // The address that must open for GapGPT is the API host, not the website: the
   // marketing domain answering says nothing about the gateway being reachable.
   { label: "GapGPT API", url: "https://api.gapgpt.app/v1/models" },
+  // OpenRouter is the one provider here that a filtered network may block even when
+  // every other gateway opens, so it gets its own line in the same report.
+  { label: "OpenRouter API", url: "https://openrouter.ai/api/v1/models" },
   { label: "GitHub API", url: "https://api.github.com" },
 ];
 

@@ -53,6 +53,15 @@ export const FALLBACK_MODEL_OPTIONS: Record<ProviderId, string[]> = {
     "claude-3.7-sonnet",
     "deepseek-chat",
   ],
+  openrouter: [
+    "google/gemini-2.5-flash",
+    "google/gemini-2.5-pro",
+    "anthropic/claude-sonnet-4.5",
+    "openai/gpt-4o",
+    "openai/gpt-4.1-mini",
+    "qwen/qwen2.5-vl-72b-instruct",
+    "mistralai/mistral-large",
+  ],
   kaya: [
     "deepseek/deepseek-v4.1-flash",
     "deepseek/deepseek-v4-flash",
@@ -86,6 +95,9 @@ export const RECOMMENDED_MODELS: Record<ProviderId, string> = {
   // A general vision model that is reliable on Persian handwriting; the operator
   // can switch to a cheaper Flash model from the same page once grading is proven.
   gapgpt: "gemini-2.5-pro",
+  // Vision-capable and cheap enough to use on every sheet; the whole catalogue is one
+  // call away in the panel, so this is only the starting point.
+  openrouter: "google/gemini-2.5-flash",
 };
 
 export const SUPPORTS_ACCOUNT_MODEL_DISCOVERY: Record<ProviderId, boolean> = {
@@ -100,6 +112,9 @@ export const SUPPORTS_ACCOUNT_MODEL_DISCOVERY: Record<ProviderId, boolean> = {
   kaya: true,
   // GET /v1/models is part of the OpenAI contract this gateway implements.
   gapgpt: true,
+  // GET https://openrouter.ai/api/v1/models is public and lists every model with its
+  // modalities and its price, which is exactly what the panel needs.
+  openrouter: true,
 };
 
 export function mergeModelOptions(provider: ProviderId, ...groups: string[][]): string[] {

@@ -6,6 +6,7 @@
 //
 //   npm run reach
 //   npm run reach -- --gapgpt     # only the GapGPT checks
+//   npm run reach -- --openrouter # only the OpenRouter checks
 //   npm run reach -- --json       # machine-readable, for pasting into a ticket
 //
 // Why this exists next to `npm run diagnose`: that one answers "is anything on
@@ -41,6 +42,11 @@ const TARGETS = [
   { group: "ai", label: "Kaya AI", host: "kayaai.ir", path: "/api/models", note: "سرویس فعلی" },
   { group: "ai", label: "GapGPT API", host: "api.gapgpt.app", path: "/v1/models", note: "درگاه چندمدلی" },
   { group: "ai", label: "GapGPT (سایت)", host: "gapgpt.app", path: "/", note: "فقط وب‌سایت؛ باز بودنش درگاه را ثابت نمی‌کند" },
+  // OpenRouter's catalogue is public, so this check needs no key and spends nothing.
+  // It matters because OpenRouter is reached through its own domain: a host that can
+  // reach the Iranian gateways may still be unable to open this one.
+  { group: "ai", label: "OpenRouter API", host: "openrouter.ai", path: "/api/v1/models", note: "درگاه همهٔ مدل‌ها" },
+  { group: "ai", label: "OpenRouter (سایت)", host: "openrouter.ai", path: "/", note: "فقط وب‌سایت" },
   { group: "ir", label: "دیجی‌کالا", host: "www.digikala.com", path: "/", note: "مرجع مقصد ایرانی" },
   { group: "ir", label: "آپارات", host: "www.aparat.com", path: "/", note: "مرجع مقصد ایرانی" },
   { group: "foreign", label: "GitHub API", host: "api.github.com", path: "/", note: "مرجع مقصد خارجی" },
@@ -189,12 +195,18 @@ async function main() {
       if (index >= 0) TARGETS.splice(index, 1);
     }
   }
-  const only = args.includes("--gapgpt") ? "ai-gapgpt" : args.includes("--kaya") ? "ai-kaya" : "";
+  // A one-service check, because the operator usually needs to know about one provider
+  // at the moment it fails, not about all of them.
+  const only = args.includes("--openrouter") ? "ai-openrouter"
+    : args.includes("--gapgpt") ? "ai-gapgpt"
+      : args.includes("--kaya") ? "ai-kaya"
+        : "";
   const asJson = args.includes("--json");
 
   const selected = TARGETS.filter((target) => {
     if (only === "ai-gapgpt") return target.host.includes("gapgpt");
     if (only === "ai-kaya") return target.host.includes("kaya");
+    if (only === "ai-openrouter") return target.host.includes("openrouter");
     return true;
   });
 
