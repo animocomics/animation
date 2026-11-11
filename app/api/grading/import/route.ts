@@ -8,6 +8,7 @@ import { claimPaidRequest, duplicateKey, releasePaidRequest } from "@/lib/server
 import { failImportJob, finishImportJob, findRunningImportJobByPrefix, setImportStep, startImportJob } from "@/lib/server/import-jobs";
 import { readUserFile } from "@/lib/server/file-storage";
 import { enhancePhoto, prepareProviderFiles, splitLargeImages } from "@/lib/server/pdf-vision";
+import { geminiSheetTokenEstimate } from "@/lib/provider-catalog";
 import { getProviderConfig } from "@/lib/server/provider-config";
 import { providerByteLimit } from "@/lib/server/provider-traits";
 import { callProvider, ProviderError } from "@/lib/server/providers";
@@ -167,7 +168,16 @@ export async function POST(request: Request) {
     // Deliberately not awaited: the answer to this POST is the job id, not the draft.
     void (async () => {
       try {
-        setImportStep(started.job.id, "در حال خواندن برگه‌ها با مدل");
+        // Say the size of the bill before it is paid. On a free tier the number that hurts is
+        // input tokens: every line part is a separate image the model tokenises, so a single
+        // handwritten sheet is on the order of 19,000 tokens. The operator spent 300,000
+        // "tokens" without ever seeing that figure, and found out only when they ran out.
+        if (config.provider === "gemini") {
+          const estimate = geminiSheetTokenEstimate(providerFiles.length);
+          setImportStep(started.job.id, `در حال خواندن برگه‌ها با مدل (${providerFiles.length} تصویر، حدود ${estimate.toLocaleString("fa-IR")} توکن ورودی)`);
+        } else {
+          setImportStep(started.job.id, "در حال خواندن برگه‌ها با مدل");
+        }
         const response = await callProvider({ ...config, task: "question-import", prompt, files: providerFiles });
         setImportStep(started.job.id, "در حال ساخت پیش‌نویس");
         const draft = normalizeImportedQuestions(response.result);

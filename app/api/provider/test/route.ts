@@ -6,7 +6,7 @@ import { kayaBaseUrl, assertKayaHostAllowed } from "@/lib/server/kaya-egress";
 import { isChatCompletionsProvider } from "@/lib/server/provider-traits";
 import { providerFetch, ProviderNetworkError } from "@/lib/server/provider-network";
 import { providerResponseError } from "@/lib/server/provider-models";
-import { gapgptBaseUrl, openrouterBaseUrl, OPENROUTER_HEADERS, ProviderError } from "@/lib/server/providers";
+import { gapgptBaseUrl, geminiBaseUrl, openrouterBaseUrl, OPENROUTER_HEADERS, ProviderError } from "@/lib/server/providers";
 import { invalidProviderJsonMessage, isJsonParserErrorMessage, providerErrorHttpStatus } from "@/lib/error-message";
 import { PROVIDER_IDS } from "@/lib/provider-catalog";
 
@@ -66,7 +66,7 @@ export async function POST(request: Request) {
                     // app at a local stand-in for validation, the test must reach the
                     // same place a real grading request would.
                     ? `${kayaBaseUrl(stored.egress)}/chat/completions`
-                  : `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(input.model)}`;
+                  : `${geminiBaseUrl()}/v1beta/models/${encodeURIComponent(input.model)}`;
     const testBody = isInkling
       ? {
           model: input.model,

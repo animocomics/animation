@@ -276,3 +276,39 @@ test("an empty free-model answer is retried on another free model, not blamed on
   // The retry list is the same one used for an upstream 429, and it stays free.
   assert.ok(openRouterFallbacksFor("nvidia/nemotron-3-ultra-550b-a55b:free").length > 0);
 });
+
+test("a Gemini quota 429 says the key is fine and which limit it was", async () => {
+  const { geminiRefusal } = await import("../lib/server/providers");
+  const day = geminiRefusal(429, "Quota exceeded for quota metric 'generate_content_free_tier_requests' and limit 'GenerateRequestsPerDayPerProjectPerModel-FreeTier'.");
+  assert.equal(day.status, 429);
+  assert.equal(day.reason, "gemini-quota");
+  assert.match(day.message, /روزانه/, "a per-day quota must say so");
+  assert.match(day.message, /کلید شما سالم است/, "and must not implicate the key");
+  const minute = geminiRefusal(429, "generate_requests_per_minute");
+  assert.match(minute.message, /دقیقه‌ای/, "a per-minute quota must say so");
+});
+
+test("Gemini's country block and a bad key are told apart", async () => {
+  const { geminiRefusal } = await import("../lib/server/providers");
+  assert.equal(geminiRefusal(400, "User location is not supported for the API use.").reason, "region-blocked");
+  assert.equal(geminiRefusal(403, "API key not valid. Please pass a valid API key.").reason, "auth");
+  assert.equal(geminiRefusal(404, "models/gemini-9 is not found").reason, "model-not-found");
+});
+
+test("the relay host is used for reading, for the model list and for the connection test", async () => {
+  // A relay that only the grading call honours is worse than none: the model list and the
+  // test button would still hit Google directly and disagree with the read.
+  const providers = readFileSync(new URL("../lib/server/providers.ts", import.meta.url), "utf8");
+  const models = readFileSync(new URL("../lib/server/provider-models.ts", import.meta.url), "utf8");
+  const testRoute = readFileSync(new URL("../app/api/provider/test/route.ts", import.meta.url), "utf8");
+  assert.match(providers, /export function geminiBaseUrl/, "one owner for the Gemini host");
+  assert.match(models, /gemini: \(\) => `\$\{geminiBaseUrl\(\)\}/, "discovery must follow the relay");
+  assert.match(testRoute, /geminiBaseUrl\(\)/, "the test button must follow the relay");
+});
+
+test("one sheet's real token cost is stated, so a free tier can be planned", async () => {
+  const { geminiSheetTokenEstimate } = await import("../lib/provider-catalog");
+  // Measured on the operator's own sheet: 15 line parts at ~1,120 tokens each.
+  assert.equal(geminiSheetTokenEstimate(15), 15 * 1120 + 2500);
+  assert.ok(geminiSheetTokenEstimate(15) > 15_000, "a sheet is tens of thousands of input tokens, not hundreds");
+});

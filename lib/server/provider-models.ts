@@ -2,7 +2,7 @@ import type { ProviderId } from "../types";
 import { FALLBACK_MODEL_OPTIONS, mergeModelOptions, SUPPORTS_ACCOUNT_MODEL_DISCOVERY } from "../provider-catalog";
 import { providerFetch } from "./provider-network";
 import { kayaBaseUrl, type KayaEgressConfig } from "./kaya-egress";
-import { gapgptBaseUrl, openRouterErrorDetail, openrouterBaseUrl, providerHttpRefusal } from "./providers";
+import { gapgptBaseUrl, geminiBaseUrl, openRouterErrorDetail, openrouterBaseUrl, providerHttpRefusal } from "./providers";
 import { ProviderError } from "./providers";
 import { isJsonParserErrorMessage } from "../error-message";
 
@@ -33,6 +33,9 @@ interface ProviderModelRecord {
 
 const DISCOVERY_URLS: Partial<Record<ProviderId, string>> = {
   openai: "https://api.openai.com/v1/models",
+  // Filled by HOST_DRIVEN_DISCOVERY so a relay (NOMREH_GEMINI_BASE_URL) is honoured here
+  // too: a model list fetched straight from Google while grading goes through the relay
+  // would describe a different account's reachability.
   gemini: "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000",
   deepseek: "https://api.deepseek.com/models",
   minimax: "https://api.minimax.io/v1/models",
@@ -50,6 +53,7 @@ const HOST_DRIVEN_DISCOVERY: Partial<Record<ProviderId, (egress: KayaEgressConfi
   kaya: (egress) => `${kayaBaseUrl(egress)}/chat/completions`,
   gapgpt: (egress) => `${gapgptBaseUrl(egress)}/models`,
   openrouter: (egress) => `${openrouterBaseUrl(egress)}/models`,
+  gemini: () => `${geminiBaseUrl()}/v1beta/models?pageSize=1000`,
 };
 
 /**

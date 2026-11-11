@@ -166,3 +166,43 @@ export function openRouterFallbacksFor(model: string): string[] {
   const chosen = String(model || "").trim();
   return OPENROUTER_FREE_FALLBACKS.filter((id) => id !== chosen).slice(0, 3);
 }
+
+/**
+ * What Gemini's free tier actually gives, and what one read of this app costs.
+ *
+ * The operator was paying per token while the same key has a no-card free tier — and the
+ * reason it "used up all 300,000 tokens" on a single sheet is arithmetic, not bad luck:
+ * this app sends a handwritten page as up to 24 line parts, and every part is a separate
+ * image the model tokenises at roughly 1,120 input tokens. A single sheet therefore costs
+ * on the order of 15,000–20,000 input tokens before one word of output, and a second
+ * "precise" verification pass doubles it.
+ *
+ * These numbers are here so the panel can say them out loud instead of the operator
+ * discovering them on a bill. `RPD` differs between published sources (500 vs 1,500);
+ * the honest figure is the one in the AI Studio console for that project, so this is
+ * labelled approximate in the UI.
+ */
+export const GEMINI_FREE_TIER = {
+  rpm: 15,
+  /** Requests per day, approximate: Google no longer publishes a single number. */
+  rpd: 1_500,
+  tpm: 1_000_000,
+  resets: "نیمه‌شب به وقت اقیانوس آرام — نزدیک ساعت ۱۱ صبح تهران",
+  noCard: true,
+} as const;
+
+/** Input tokens one page costs after the line splitter has cut it into parts. */
+export function geminiSheetTokenEstimate(parts: number, tokensPerPart = 1120, promptTokens = 2_500): number {
+  return Math.max(1, parts) * tokensPerPart + promptTokens;
+}
+
+/**
+ * How many sheets a free-tier *minute* allows: the per-minute token ceiling divided by the
+ * measured cost of one sheet. The daily limit is a request count, not a token count, so the
+ * honest answer to "how many sheets today" is "the requests number, minus the second pass
+ * each sheet spends" — and that number is only visible in the operator's own console.
+ */
+export function sheetsPerFreeMinute(partsPerSheet = 15, tokensPerPart = 1120): number {
+  const perSheet = geminiSheetTokenEstimate(partsPerSheet, tokensPerPart);
+  return Math.max(1, Math.floor(GEMINI_FREE_TIER.tpm / perSheet));
+}

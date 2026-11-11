@@ -152,6 +152,61 @@ export function openRouterLimitSource(detail: string): "account-day" | "account-
   return "unknown";
 }
 
+/**
+ * Gemini's own refusals, read from its own words.
+ *
+ * Google answers 429 with `RESOURCE_EXHAUSTED` and a `QuotaFailure` block that names the
+ * exact metric: `generate_content_free_tier_requests` (the account's free requests per day
+ * or minute) or `generate_content_requests` (a paid quota). Without reading that, a busy
+ * free tier and an exhausted paid account look identical — and telling someone who has
+ * spent nothing that they are "out of credit" is the same class of mistake as blaming a
+ * valid key. 400 `User location is not supported` is a country block, not a bad request.
+ */
+export function geminiRefusal(status: number, serviceDetail = ""): ProviderError {
+  const detail = String(serviceDetail || "").replace(/\s+/g, " ").trim().slice(0, 260);
+  const lower = detail.toLowerCase();
+  if (isRegionBlocked(status, detail)) {
+    return new ProviderError(REGION_BLOCKED_MESSAGE, 400, "region-blocked");
+  }
+  if (status === 429 || /resource_exhausted|quota|rate limit/.test(lower)) {
+    const freeTier = /free_tier|free-tier/.test(lower);
+    const perDay = /per[_ ]day|perday|daily/.test(lower);
+    const perMinute = /per[_ ]minute|perminute|per minute/.test(lower);
+    const when = perDay
+      ? "این سهمیهٔ روزانه است و نیمه‌شب به وقت اقیانوس آرام (نزدیک ۱۱ صبح تهران) از نو پر می‌شود."
+      : perMinute
+        ? "این سهمیهٔ دقیقه‌ای است؛ حدود یک دقیقه صبر کنید و دوباره بخوانید."
+        : "سهمیهٔ درخواست یا محدودیت سرعت فعال شده است؛ کمی بعد دوباره تلاش کنید.";
+    return new ProviderError(
+      `Google Gemini الان درخواست را نپذیرفت (${status}). ${when} کلید شما سالم است — سهمیهٔ رایگانِ حساب تمام شده، نه اعتبار خریداری‌شده.${freeTier ? " (سرویس خودش گفته «free tier».)" : ""}${detail ? ` پیام سرویس: ${detail}` : ""}`,
+      429,
+      "gemini-quota",
+    );
+  }
+  if (status === 401 || status === 403) {
+    return new ProviderError(
+      `Google Gemini کلید را نپذیرفت (${status}). کلید Gemini با AIza شروع می‌شود و باید از AI Studio ساخته شده باشد.${detail ? ` پیام سرویس: ${detail}` : ""}`,
+      400,
+      "auth",
+    );
+  }
+  if (status === 404 || /not found|is not supported for|does not exist/.test(lower)) {
+    return new ProviderError(
+      `Google Gemini این مدل را برای این کلید نمی‌شناسد (${status}). نام مدل را از فهرست مدل‌های همان حساب بردارید.${detail ? ` پیام سرویس: ${detail}` : ""}`,
+      400,
+      "model-not-found",
+    );
+  }
+  if (status === 400 || status === 413) {
+    return new ProviderError(
+      `Google Gemini درخواست را نپذیرفت (${status}).${detail ? ` پیام سرویس: ${detail}` : " مدل، نوع فایل و حجم برگه را بررسی کنید."}`,
+      400,
+      "bad-request",
+    );
+  }
+  return new ProviderError(`سرویس Google Gemini موقتاً پاسخ نداد (${status}).${detail ? ` پیام سرویس: ${detail}` : ""}`, 502);
+}
+
 export function providerHttpRefusal(provider: ProviderId, status: number, serviceDetail = "", model = ""): ProviderError {
   const freeTier = provider === "openrouter" && isFreeModel(model);
   const label = PROVIDER_LABELS[provider] || "سرویس‌دهنده";
@@ -1103,7 +1158,11 @@ async function callInkling(input: ProviderCallInput): Promise<ProviderCallResult
  * egress (a domain-limited local proxy) instead of directly. Without the variable
  * this is exactly the documented Google endpoint, so nothing changes by default.
  */
-const GEMINI_BASE_URL = process.env.NOMREH_GEMINI_BASE_URL || "https://generativelanguage.googleapis.com";
+export function geminiBaseUrl(): string {
+  return String(process.env.NOMREH_GEMINI_BASE_URL || "https://generativelanguage.googleapis.com").replace(/\/+$/, "");
+}
+
+const GEMINI_BASE_URL = geminiBaseUrl();
 
 /**
  * How many tokens of detail Gemini is allowed to take from each page image.
@@ -1152,7 +1211,7 @@ async function callGemini(input: ProviderCallInput): Promise<ProviderCallResult>
     parts.push({ inline_data: { mime_type: file.type, data: file.data } });
   }
   const response = await fetchWithTimeout(
-    `${GEMINI_BASE_URL.replace(/\/+$/, "")}/v1beta/models/${encodeURIComponent(input.model)}:generateContent`,
+    `${geminiBaseUrl()}/v1beta/models/${encodeURIComponent(input.model)}:generateContent`,
     {
       method: "POST",
       headers: { "x-goog-api-key": input.apiKey, "Content-Type": "application/json" },
@@ -1186,11 +1245,8 @@ async function callGemini(input: ProviderCallInput): Promise<ProviderCallResult>
     } catch {
       // A non-JSON body is still worth matching against the same words.
     }
-    if (isRegionBlocked(response.status, detail)) {
-      markRegionBlocked("gemini", detail.slice(0, 200));
-      throw new ProviderError(REGION_BLOCKED_MESSAGE, 400, "region-blocked");
-    }
-    throw friendlyProviderError(response.status, "Google Gemini", detail.slice(0, 220) || undefined);
+    if (isRegionBlocked(response.status, detail)) markRegionBlocked("gemini", detail.slice(0, 200));
+    throw geminiRefusal(response.status, detail.slice(0, 260));
   }
   const payload = await responseJson(response, "Gemini");
   const candidates = payload.candidates as Array<{
