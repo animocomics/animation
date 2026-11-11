@@ -107,6 +107,10 @@ export async function POST(request: Request) {
     // request may carry. So the six-band budget is shared across the sources instead of
     // multiplied by them: six photos become six bands each, thirty photos become one.
     const maxPartsPerSource = Math.max(1, Math.min(6, Math.floor(36 / Math.max(1, files.length))));
+    // Cutting a photographed page by lines needs more parts than the six bands needed: one
+    // part per line or three. The allowances are shared across the sources so the provider's
+    // attachment ceiling is never crossed: one sheet may use 24 parts, six sheets 6 each.
+    const linePartsPerSource = Math.max(1, Math.min(24, Math.floor(36 / Math.max(1, files.length))));
     for (const [sourceIndex, file] of files.entries()) {
       // Rasterise first (a PDF page becomes an image), then cut an oversized result
       // into bands. Doing it in this order means a photo and a scanned PDF page are
@@ -116,7 +120,7 @@ export async function POST(request: Request) {
       // before splitting means each band is already legible, and a printed scan — which
       // does not match the ink-on-paper signature — is left exactly as it arrived.
       const prepared = await enhancePhoto((await prepareProviderFiles([file], config.provider, { convertAllPdfs: true }))[0]);
-      const converted = await splitLargeImages([prepared], undefined, maxPartsPerSource);
+      const converted = await splitLargeImages([prepared], undefined, maxPartsPerSource, linePartsPerSource);
       for (const providerFile of converted) {
         providerFiles.push(providerFile);
         manifest.push({ file: providerFiles.length, sourceFile: sourceIndex + 1, name: providerFile.name, role: roleLabels[input.sources[sourceIndex].kind] });

@@ -1,6 +1,7 @@
 import path from "path";
 import type { GradeApiRequest, ProviderId } from "../types";
 import { planImageParts } from "./image-parts";
+import { detectLineBoxes, planLineParts } from "./line-parts";
 import { ProviderError } from "./providers";
 import { providerNeedsPdfRaster } from "./provider-traits";
 
@@ -258,7 +259,83 @@ export async function enhancePhoto(file: VisionFile): Promise<VisionFile> {
   }
 }
 
-export async function splitLargeImages(files: VisionFile[], budgetPx?: number, maxParts = 6): Promise<VisionFile[]> {
+/**
+ * Which parts to send for one image: by whole lines when the page is handwriting, by equal
+ * bands otherwise.
+ *
+ * The line splitter is only safe when it actually finds lines. A blank page, a page that
+ * is one dark photograph, or a page whose rows are all ink would produce a single part (or
+ * a nonsense one), so the band splitter — which cannot fail, it only loses detail — stays
+ * as the fallback. Printed sheets keep their bands: their text is already crisp, and the
+ * extra parts would cost tokens for nothing.
+ */
+function planPartsFor(
+  canvasModule: typeof import("@napi-rs/canvas"),
+  image: Awaited<ReturnType<typeof import("@napi-rs/canvas")["loadImage"]>>,
+  width: number,
+  height: number,
+  options: { budgetPx?: number; maxParts?: number; linePartsMax?: number },
+): Array<{ y0: number; height: number; index: number; total: number; lines?: number }> {
+  const bands = planImageParts(width, height, options);
+  if (bands.length === 1) return bands;
+  try {
+    const canvas = canvasModule.createCanvas(width, height);
+    const context = canvas.getContext("2d");
+    context.drawImage(image, 0, 0);
+    const data = context.getImageData(0, 0, width, height).data;
+    const luminance = new Uint8Array(width * height);
+    for (let index = 0, offset = 0; index < luminance.length; index += 1, offset += 4) {
+      luminance[index] = Math.round(0.299 * data[offset] + 0.587 * data[offset + 1] + 0.114 * data[offset + 2]);
+    }
+    const lineBoxes = detectLineBoxes(luminance, width, height);
+    // A handful of "lines" is more likely ruled paper or a torn edge than handwriting; below
+    // this the band splitter has the better odds.
+    if (lineBoxes.length < 4) return bands;
+    canvas.width = 1;
+    canvas.height = 1;
+    // Build each part to fit the model's own image budget, so the model does not have to
+    // shrink it further. A part that arrives over budget is resized down by the API, and
+    // that resize is exactly what made a 100 px handwritten line arrive 44 px tall.
+    const lineParts = planLineParts(lineBoxes, { width, height }, { budgetPx: linePartBudgetPx(), maxParts: Math.max(options.maxParts ?? 0, options.linePartsMax ?? MAX_LINE_PARTS) });
+    return lineParts.length > 0 ? lineParts : bands;
+  } catch {
+    return bands;
+  }
+}
+
+/**
+ * The most detail the model keeps from a single image: about 0.84 MP at the "high" media
+ * resolution Gemini 3 uses by default. A part built to this size is not resized on the way
+ * in, so its pixels all reach the model.
+ *
+ * This is the number that decides how many parts a page needs. Six parts of this photo
+ * carry 6 x 0.84 = 5 MP of a 9 MP page: two fifths of the sheet is thrown away no matter
+ * how the cuts are placed. Eleven parts carry all of it, and each handwritten line then
+ * arrives at its captured resolution instead of half of it.
+ */
+const MODEL_IMAGE_BUDGET_PX = 840_000;
+
+/**
+ * How much a single part may hold. Overridable because the budget belongs to the model:
+ * Gemini 3's ultra_high level is twice this, and a 2.5 model tiles images instead of
+ * applying one flat budget. Raising it here is only honest when the matching
+ * NOMREH_GEMINI_MEDIA_RESOLUTION is set too.
+ */
+function linePartBudgetPx(): number {
+  const level = String(process.env.NOMREH_GEMINI_MEDIA_RESOLUTION || "high").trim().toLowerCase();
+  const base = level === "ultra_high" ? MODEL_IMAGE_BUDGET_PX * 2 : level === "medium" ? MODEL_IMAGE_BUDGET_PX / 2 : level === "low" ? MODEL_IMAGE_BUDGET_PX / 4 : MODEL_IMAGE_BUDGET_PX;
+  const explicit = Number(process.env.NOMREH_IMAGE_PART_BUDGET_PX || "");
+  return Number.isFinite(explicit) && explicit > 100_000 ? Math.min(3_000_000, Math.round(explicit)) : base;
+}
+
+/**
+ * Line parts are small but they are not free: each one is an image the model tokenises.
+ * A page of this phone photo needs eleven of them; the cap keeps a scanned sixty-question
+ * booklet from turning one import into sixty images.
+ */
+const MAX_LINE_PARTS = 24;
+
+export async function splitLargeImages(files: VisionFile[], budgetPx?: number, maxParts = 6, linePartsMax = MAX_LINE_PARTS): Promise<VisionFile[]> {
   const output: VisionFile[] = [];
   for (const file of files) {
     if (!/^image\/(jpeg|png|webp)$/.test(file.type)) {
@@ -274,18 +351,29 @@ export async function splitLargeImages(files: VisionFile[], budgetPx?: number, m
       const image = await canvasModule.loadImage(buffer);
       width = image.width;
       height = image.height;
-      const parts = planImageParts(width, height, { budgetPx, maxParts });
+      const baseName = file.name.replace(/\.(jpe?g|png|webp)$/i, "").slice(0, 200) || "برگه";
+      const parts = planPartsFor(canvasModule, image, width, height, { budgetPx, maxParts, linePartsMax });
       if (parts.length === 1) {
         output.push(file);
         continue;
       }
-      const baseName = file.name.replace(/\.(jpe?g|png|webp)$/i, "").slice(0, 200) || "برگه";
       for (const part of parts) {
-        const canvas = canvasModule.createCanvas(width, part.height);
+        // Upscaling a line part to the model's full image budget is not padding: the model
+        // resamples every image to that budget anyway, so sending a smaller part just means
+        // the resample has fewer source pixels. Sending it already at budget size means the
+        // strokes arrive with the detail they were captured with.
+        const lines = part.lines ?? 0;
+        const fit = Math.sqrt(linePartBudgetPx() / (width * part.height));
+        const grow = lines > 0 ? Math.min(2, Math.max(0.75, fit)) : 1;
+        const outWidth = Math.max(1, Math.round(width * grow));
+        const outHeight = Math.max(1, Math.round(part.height * grow));
+        const canvas = canvasModule.createCanvas(outWidth, outHeight);
         const context = canvas.getContext("2d");
+        context.imageSmoothingEnabled = true;
+        context.imageSmoothingQuality = "high";
         context.fillStyle = "#ffffff";
-        context.fillRect(0, 0, width, part.height);
-        context.drawImage(image, 0, part.y0, width, part.height, 0, 0, width, part.height);
+        context.fillRect(0, 0, outWidth, outHeight);
+        context.drawImage(image, 0, part.y0, width, part.height, 0, 0, outWidth, outHeight);
         const jpeg = canvas.toBuffer("image/jpeg", jpegQuality());
         output.push({
           name: `${baseName} — بخش ${part.index} از ${part.total}.jpg`,
