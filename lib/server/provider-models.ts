@@ -2,7 +2,7 @@ import type { ProviderId } from "../types";
 import { FALLBACK_MODEL_OPTIONS, mergeModelOptions, SUPPORTS_ACCOUNT_MODEL_DISCOVERY } from "../provider-catalog";
 import { providerFetch } from "./provider-network";
 import { kayaBaseUrl, type KayaEgressConfig } from "./kaya-egress";
-import { gapgptBaseUrl, openrouterBaseUrl } from "./providers";
+import { gapgptBaseUrl, openrouterBaseUrl, providerHttpRefusal } from "./providers";
 import { ProviderError } from "./providers";
 import { isJsonParserErrorMessage } from "../error-message";
 
@@ -52,6 +52,12 @@ const HOST_DRIVEN_DISCOVERY: Partial<Record<ProviderId, (egress: KayaEgressConfi
   openrouter: (egress) => `${openrouterBaseUrl(egress)}/models`,
 };
 
+/**
+ * `providerHttpRefusal` lives in providers.ts with the rest of the provider table; this
+ * thin wrapper keeps the import graph one-way (provider-models already imports providers).
+ */
+
+
 function safeProviderDetail(rawMessage: string, apiKey: string): string {
   let message = rawMessage.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
   if (apiKey) message = message.split(apiKey).join("[کلید]");
@@ -59,7 +65,7 @@ function safeProviderDetail(rawMessage: string, apiKey: string): string {
   return message.slice(0, 240);
 }
 
-export async function providerResponseError(response: Response, provider: ProviderId, apiKey: string): Promise<ProviderError> {
+export async function providerResponseError(response: Response, provider: ProviderId, apiKey: string, model = ""): Promise<ProviderError> {
   const text = await response.text();
   let rawMessage = "";
   try {
@@ -78,6 +84,10 @@ export async function providerResponseError(response: Response, provider: Provid
   if ((response.status === 400 || response.status === 401 || response.status === 403) && /api[ _-]?key|key.*valid|invalid.*key/.test(lower)) {
     return new ProviderError("کلید API پذیرفته نشد. کلید را کامل و بدون فاصله کپی کنید. برای Gemini، کلید باید از نوع Auth یا Standardِ محدودشده به Gemini API باشد؛ رایگان‌بودن کلید مانع ذخیره نیست.", 400);
   }
+  // OpenRouter first, and through the shared table: this is the exact line that told the
+  // operator "the key is not valid" for a key that had just listed 274 models. OpenRouter
+  // uses 403 for a content-policy refusal and for some key-scope limits; a bad key is 401.
+  if (provider === "openrouter") return providerHttpRefusal("openrouter", response.status, rawMessage, model);
   if (response.status === 401 || response.status === 403) {
     if (provider === "gemini" && /country|region|location|territor|permission_denied/.test(lower)) {
       return new ProviderError("Google دسترسی از مسیر فعلی سرور را نمی‌پذیرد. شکن را در همین صفحه آزمایش و فعال کنید و سپس اتصال را دوباره بسنجید.", 400);

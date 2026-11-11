@@ -123,3 +123,61 @@ test("reach checks OpenRouter as its own destination, and needs no key to do it"
   assert.match(script, /label: "OpenRouter API", host: "openrouter\.ai", path: "\/api\/v1\/models"/);
   assert.match(script, /--openrouter/);
 });
+
+test("a 403 is never reported as an invalid key — the key that listed 274 models proved itself", async () => {
+  // This is the operator's exact report: the panel read 274 models from the account and
+  // then said "the key is not valid" for the same key. OpenRouter uses 401 for a bad key
+  // and 403 for a policy/scope refusal, so the two must not share a sentence.
+  const { providerHttpRefusal } = await import("../lib/server/providers");
+  const forbidden = providerHttpRefusal("openrouter", 403, "Provider returned error: content policy", "google/gemini-2.5-flash");
+  assert.equal(forbidden.status, 400);
+  assert.equal(forbidden.reason, "forbidden");
+  assert.doesNotMatch(forbidden.message, /کلید معتبر نیست/, "a 403 must never claim the key is invalid");
+  assert.match(forbidden.message, /کلید معتبر است|معتبر است/, "it must say the key itself is fine");
+  assert.match(forbidden.message, /content policy/, "the service's own words must reach the operator");
+
+  const unauthorized = providerHttpRefusal("openrouter", 401, "Invalid API key", "google/gemini-2.5-flash");
+  assert.match(unauthorized.message, /401/);
+  assert.match(unauthorized.message, /sk-or-/, "the fix must be concrete: what an OpenRouter key looks like");
+});
+
+test("a free model's limits are named as the model's, not the key's", async () => {
+  const { providerHttpRefusal, isFreeModel } = await import("../lib/server/providers");
+  assert.equal(isFreeModel("meta-llama/llama-3.3-70b-instruct:free"), true);
+  assert.equal(isFreeModel("google/gemini-2.5-flash"), false);
+
+  const limited = providerHttpRefusal("openrouter", 429, "Rate limit exceeded: free-models-per-day", "meta-llama/llama-3.3-70b-instruct:free");
+  assert.equal(limited.status, 429);
+  assert.match(limited.message, /رایگان/, "the free tier must be named");
+  assert.match(limited.message, /خرید اعتبار این محدودیت را برنمی‌دارد|برنمی‌دارد/, "paying must not be offered as the fix for a free-tier cap");
+  assert.doesNotMatch(limited.message, /کلید معتبر نیست/);
+
+  const credit = providerHttpRefusal("openrouter", 402, "Insufficient credits", "meta-llama/llama-3.3-70b-instruct:free");
+  assert.equal(credit.status, 402);
+  assert.match(credit.message, /برداشته شده|رایگان/, "a free model that suddenly wants credit must be explained");
+});
+
+test("the connection test and the sheet read the same refusal table", async () => {
+  const fs = await import("node:fs");
+  const models = fs.readFileSync(path.join(root, "lib", "server", "provider-models.ts"), "utf8");
+  const providers = fs.readFileSync(path.join(root, "lib", "server", "providers.ts"), "utf8");
+  assert.match(models, /providerHttpRefusal\("openrouter", response\.status, rawMessage, model\)/, "the test button must use the shared table with the model");
+  assert.match(providers, /providerHttpRefusal\("openrouter", status, detail \|\| safe, model\)/, "the sheet path must use it with the model");
+  const testRoute = fs.readFileSync(path.join(root, "app", "api", "provider", "test", "route.ts"), "utf8");
+  assert.match(testRoute, /providerResponseError\(response, input\.provider, apiKey, input\.model\)/, "the test route must pass the model so a free-tier cap is named");
+});
+
+test("the connection test sends a picture, so a blind model cannot pass it", async () => {
+  const fs = await import("node:fs");
+  const route = fs.readFileSync(path.join(root, "app", "api", "provider", "test", "route.ts"), "utf8");
+  assert.match(route, /VISION_TEST_IMAGE/, "the test must include an image");
+  assert.match(route, /image_url/, "it must use the multimodal content shape");
+  assert.match(route, /!\s*\/7\|هفت\/\.test\(text\)/, "the answer must be checked, not just the status");
+  // The embedded PNG must be a real PNG: an invented base64 string is a decoder crash
+  // waiting to happen (it was one), so the signature is asserted on the decoded bytes.
+  const match = route.match(/data:image\/png;base64,([A-Za-z0-9+/=]+)/);
+  assert.ok(match, "a base64 PNG must be embedded");
+  const bytes = Buffer.from(match[1], "base64");
+  assert.deepEqual([...bytes.subarray(0, 8)], [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], "the embedded image must be a real PNG");
+  assert.ok(bytes.length > 200, "a real PNG, not a placeholder");
+});

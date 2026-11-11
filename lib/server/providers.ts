@@ -105,6 +105,80 @@ function friendlyProviderError(status: number, provider: string, rawMessage?: st
   return new ProviderError(`سرویس ${provider} موقتاً پاسخ نداد. برگه ذخیره شده و می‌توانید دوباره تلاش کنید.`, 502);
 }
 
+/**
+ * One owner for "the service refused this request", so two screens cannot disagree.
+ *
+ * The connection test and a real sheet each used to have their own table for 401/403/429.
+ * That is how the operator got «کلید معتبر نیست» for a key that had just listed 274 models:
+ * the test button answered 403 with a sentence about an invalid key, while the actual read
+ * path had a dozen special cases. OpenRouter answers 403 for a *content policy* refusal and
+ * for some key-scope limits, not only for a bad key — so a 403 here must show the service's
+ * own words and must never claim the key is wrong.
+ *
+ * `serviceDetail` is the provider's message, already stripped of secrets by the caller.
+ */
+export function providerHttpRefusal(provider: ProviderId, status: number, serviceDetail = "", model = ""): ProviderError {
+  const freeTier = provider === "openrouter" && isFreeModel(model);
+  const label = PROVIDER_LABELS[provider] || "سرویس‌دهنده";
+  const detail = serviceDetail.replace(/\s+/g, " ").trim().slice(0, 200);
+
+  if (provider === "openrouter") {
+    // OpenRouter's own error taxonomy, in the order it matters to a teacher.
+    const lower = serviceDetail.toLowerCase();
+
+    if (/insufficient|credit|balance|402/.test(lower) || status === 402) {
+      const note = freeTier
+        ? "این مدل «رایگان» بود ولی سرویس برایش اعتبار می‌خواهد؛ یعنی نسخهٔ رایگانش برداشته شده. مدل رایگان دیگری انتخاب کنید."
+        : "اعتبار حساب کافی نیست یا این مدل پول‌کی است. یک مدل رایگان (با پسوند :free) انتخاب کنید یا اعتبار اضافه کنید.";
+      return new ProviderError(`${label}: ${note}${detail ? ` پیام سرویس: ${detail}` : ""}`, 402, "credit");
+    }
+    if (/rate.?limit|too many requests|quota/.test(lower) || status === 429) {
+      // The model decides what the fix is, not the status code. A free model hits a daily
+      // cap and a shared rate limit; telling that operator "wait a moment" invites the
+      // retry that spends the rest of the allowance, and telling them to add credit buys
+      // something credit cannot lift.
+      const freeNote = freeTier
+        ? "این مدل رایگان است: سهمیهٔ روزانه‌اش تمام شده یا محدودیت سرعتش فعال است. خرید اعتبار این محدودیت را برنمی‌دارد؛ یا تا فردا صبر کنید، یا یک مدل رایگان تصویری دیگر انتخاب کنید."
+        : "سهمیهٔ درخواست یا محدودیت سرعت فعال است. این کلید سالم است؛ چند دقیقه صبر کنید یا مدل دیگری بردارید.";
+      return new ProviderError(`${label} (${status}): ${freeNote}${detail ? ` پیام سرویس: ${detail}` : ""}`, 429, "rate-limited");
+    }
+    if (status === 401) {
+      return new ProviderError(`${label} کلید را نپذیرفت (401). کلید OpenRouter با sk-or- شروع می‌شود؛ مطمئن شوید کامل کپی شده و از همان حساب است.${detail ? ` پیام سرویس: ${detail}` : ""}`, 400, "auth");
+    }
+    if (status === 403) {
+      return new ProviderError(`${label} درخواست را رد کرد (403). این کلید معتبر است — کلید نامعتبر 401 می‌گیرد — پس مشکل از مجوز یا محتوای درخواست است، نه از کلید.${detail ? ` پیام سرویس: ${detail}` : " اگر سرویس پیامی نفرستاد، در پنل OpenRouter بخش Activity را ببینید."}`, 400, "forbidden");
+    }
+    if (status === 404) {
+      return new ProviderError(`${label} این مدل را نشناخت (404). نام مدل باید «سازنده/مدل» باشد، مثل google/gemini-2.5-flash یا meta-llama/llama-3.3-70b-instruct:free.`, 400, "model-not-found");
+    }
+    if (status === 400) {
+      return new ProviderError(`${label} درخواست را نپذیرفت (400)؛ معمولاً یعنی این مدل تصویر نمی‌پذیرد یا نام فیلدها برایش ناآشناست. یک مدل تصویری انتخاب کنید.${detail ? ` پیام سرویس: ${detail}` : ""}`, 400, "bad-request");
+    }
+    return new ProviderError(`${label} پاسخ معتبر نداد (${status}).${detail ? ` پیام سرویس: ${detail}` : ""}`, status >= 500 ? 502 : status);
+  }
+
+  if (status === 401 || status === 403) {
+    return new ProviderError(`${label}: کلید یا دسترسی پذیرفته نشد (${status}). نوع کلید و دسترسی پروژه را بررسی کنید.${detail ? ` پیام سرویس: ${detail}` : ""}`, 400);
+  }
+  if (status === 429) {
+    return new ProviderError(`${label}: سهمیه یا محدودیت سرعت فعال است (429). کلید نامعتبر نیست؛ کمی بعد دوباره تلاش کنید.${detail ? ` پیام سرویس: ${detail}` : ""}`, 429);
+  }
+  return friendlyProviderError(status, label, detail || undefined);
+}
+
+/**
+ * A model served without charge.
+ *
+ * This is not cosmetic. On a free model OpenRouter applies a daily cap and a shared rate
+ * limit, and the answer to exceeding them is a 429 — which a generic handler reports as
+ * "wait and retry", and every retry spends the remaining allowance. Naming the free tier
+ * in the panel, and saying plainly that its limit is the model's and not the key's, is
+ * what keeps an operator from buying credit to fix a limit that credit cannot lift.
+ */
+export function isFreeModel(model: string): boolean {
+  return /(?:^|[/:])free$/i.test(String(model || "").trim()) || /:free$/i.test(String(model || "").trim());
+}
+
 /** True when the configured Kaya host is on this machine (a validation stand-in). */
 function isLocalKayaHost(egress: KayaEgressConfig | undefined): boolean {
   const host = (egress?.host || "").trim();
@@ -764,8 +838,12 @@ async function callKayaModel(
       markRegionBlocked(input.provider, detail.slice(0, 200));
       throw new ProviderError(REGION_BLOCKED_MESSAGE, 400, "region-blocked");
     }
+    // One table for every refusal, shared with the connection test. The old inline
+    // sentences drifted from the test button's, and the two disagreed in front of the
+    // operator about the same 403 (see providerHttpRefusal).
+    if (input.provider === "openrouter") throw providerHttpRefusal("openrouter", status, detail || safe, model);
     if (status === 401) {
-      throw new ProviderError(`کلید ${serviceName} پذیرفته نشد؛ کلید را در پنل ${serviceName} بررسی یا کلید تازه بسازید.`, 400);
+      throw new ProviderError(`کلید ${serviceName} پذیرفته نشد؛ کلید را در پنل ${serviceName} بررسی یا کلید تازه بسازید.${safe ? ` پیام سرویس: ${safe}` : ""}`, 400, "auth");
     }
     if (status === 402) {
       // Retryable: another catalogue model may be covered by the same balance.
