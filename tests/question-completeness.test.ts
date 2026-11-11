@@ -71,3 +71,36 @@ test("a question whose last line is marked unreadable is kept, with a note", () 
 test("a question with no wording at all is still refused before normalisation", () => {
   assert.throws(() => normalize([question({ number: 1, prompt: "خوانا" }), question({ number: 2, prompt: "" })]));
 });
+
+test("a draft that is shorter than the page says so, with the real numbers", () => {
+  const draft = normalizeImportedQuestions(questionImportResultSchema.parse({
+    questions: [question({ number: 1, prompt: "سؤال اول" })],
+    warnings: [],
+    expectedQuestionCount: 7,
+  }));
+  assert.equal(draft.questions.length, 1);
+  assert.ok(draft.warnings.some((warning) => warning.includes("۷ سؤال") || warning.includes("7 سؤال")), "the count must be named");
+  assert.ok(draft.warnings.some((warning) => warning.includes("6 سؤال")), "the gap must be named");
+});
+
+test("a complete draft is not nagged", () => {
+  const draft = normalizeImportedQuestions(questionImportResultSchema.parse({
+    questions: [question({ number: 1, prompt: "الف" }), question({ number: 2, prompt: "ب" })],
+    warnings: [],
+    expectedQuestionCount: 2,
+  }));
+  assert.equal(draft.questions.length, 2);
+  assert.ok(!draft.warnings.some((warning) => warning.includes("برنگرداند")));
+});
+
+test("an absent or nonsense count is ignored rather than treated as zero", () => {
+  for (const expectedQuestionCount of [undefined, "", null, "x"]) {
+    const draft = normalizeImportedQuestions(questionImportResultSchema.parse({
+      questions: [question({ prompt: "الف" })],
+      warnings: [],
+      expectedQuestionCount,
+    }));
+    assert.equal(draft.questions.length, 1);
+    assert.ok(!draft.warnings.some((warning) => warning.includes("برنگرداند")));
+  }
+});

@@ -218,6 +218,39 @@ function questionImportResult() {
       issues: [],
     },
   ];
+  // NOMREH_STUB_OVERLAP=1 reproduces exactly what overlapping bands produce: the same
+  // question returned twice, once with its key cut off by the seam. The draft must end
+  // up with one copy, and the copy that keeps the key.
+  if (process.env.NOMREH_STUB_OVERLAP === "1") {
+    base.push({
+      number: 2,
+      type: "multiple_choice",
+      prompt: "پایتخت فرانسه  کدام است؟",
+      maxScore: 2,
+      answer: "",
+      options: ["لندن", "پاریس", "رم"],
+      acceptedAnswers: [],
+      rubric: [{ label: "پاسخ درست", description: "انتخاب پاریس", points: 2 }],
+      complete: true,
+      issues: [],
+    });
+  }
+  // A genuinely different third question, so a dedupe that is too eager is caught by
+  // losing it rather than by a passing test.
+  if (process.env.NOMREH_STUB_THIRD_QUESTION === "1") {
+    base.push({
+      number: 3,
+      type: "short_answer",
+      prompt: "قواعد کلاسیک قضاوت چیست؟",
+      maxScore: 1,
+      answer: "برابری و بی‌طرفی",
+      options: [],
+      acceptedAnswers: [],
+      rubric: [],
+      complete: true,
+      issues: [],
+    });
+  }
   if (process.env.NOMREH_STUB_BAD_IMPORT === "1") {
     base.push({ number: 3, type: "not-a-real-type", prompt: "سؤال سه", maxScore: 1, answer: "", options: [], acceptedAnswers: [], rubric: [], complete: true, issues: [] });
   }

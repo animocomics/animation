@@ -1,6 +1,6 @@
 "use client";
 
-import { type ChangeEvent, type DragEvent, useRef, useState } from "react";
+import { type ChangeEvent, type DragEvent, useEffect, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, Eye, FileImage, FileText, Info, KeyRound, LoaderCircle, ScanText, Trash2, UploadCloud, XCircle } from "lucide-react";
 import { ACCEPTED_FILE_EXTENSIONS, ACCEPTED_FILE_LABEL, ACCEPTED_FILE_TYPES, MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_LABEL } from "../../lib/file-constraints";
 import { deleteStoredFile, getStoredFile, storeFile } from "../../lib/file-store";
@@ -109,6 +109,47 @@ export function QuestionSourceImporter({ examId, sources, needsReview, imported,
   const [jobProgress, setJobProgress] = useState<{ step: string; seconds: number } | null>(null);
   const controllerRef = useRef<AbortController | null>(null);
   const answerKeyOnly = sources.length > 0 && sources.every((source) => source.kind === "answers");
+
+  // A reload during a two-minute read used to lose the work that had already been paid
+  // for, and the only visible option was to send it again. On mount, ask the server
+  // whether a read for this exam is still running and, if so, pick the polling back up.
+  useEffect(() => {
+    if (!examId || busy) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await fetch(`/api/grading/import?examId=${encodeURIComponent(examId)}`, { cache: "no-store" });
+        if (!response.ok) return;
+        const state = (await response.json()) as { jobId?: string; status?: string };
+        if (cancelled || !state.jobId || state.status !== "working") return;
+        setWorking(true);
+        setJobProgress({ step: "ادامهٔ خواندن قبلی", seconds: 0 });
+        const finished = await pollImportJob(state.jobId, setJobProgress);
+        if (cancelled) return;
+        if (finished.status === "failed") {
+          setErrorDetails(finished.issues ?? []);
+          notify({ title: "پیش‌نویس ساخته نشد", description: finished.error ?? "خواندن برگه کامل نشد.", variant: "error" });
+        } else if (finished.questions?.length) {
+          onChange({ questions: finished.questions, questionsImported: true, questionImportWarnings: finished.warnings ?? [], questionsNeedReview: true });
+          notify({ title: `${faNumber(finished.questions.length)} سؤال خوانده شد`, description: "نتیجهٔ خواندن قبلی بازیابی شد؛ لازم نبود دوباره بفرستید.", variant: "success" });
+        }
+      } catch {
+        // No resumable work, or the network is still down. Saying nothing is right:
+        // this is a background check, not an action the teacher asked for.
+      } finally {
+        if (!cancelled) {
+          setJobProgress(null);
+          setWorking(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Deliberately only on exam change: re-running this on every render would re-attach
+    // to the same job repeatedly.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [examId]);
 
   const setWorking = (value: boolean) => {
     setBusy(value);

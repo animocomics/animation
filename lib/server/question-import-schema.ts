@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Question, QuestionType } from "../types";
 import { createId } from "./ids";
+import { dedupeQuestions } from "./question-dedupe";
 
 const questionTypes = ["multiple_choice", "multiple_response", "true_false", "fill_blank", "short_answer", "essay", "math", "diagram", "matching", "ordering"] as const;
 
@@ -64,6 +65,23 @@ const importedQuestionSchema = z.object({
 export const questionImportResultSchema = z.object({
   questions: z.array(importedQuestionSchema).max(200),
   warnings: list(text(1500), 100),
+  /**
+   * How many questions the page actually shows, as the reader counts them.
+   *
+   * This is the only self-check that can catch a question the model never returned:
+   * everything else in this file can only rescue what came back. A missing number is
+   * treated as "not stated", never as zero, so an older model that ignores the field
+   * behaves exactly as before.
+   */
+  expectedQuestionCount: z.preprocess((value) => {
+    if (value === null || value === undefined || value === "") return undefined;
+    if (typeof value === "string") {
+      const normalised = value.replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d))).replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d))).trim();
+      const parsed = Number(normalised);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    }
+    return value;
+  }, z.number().int().min(0).max(200).optional()),
 });
 
 export type QuestionImportResult = z.infer<typeof questionImportResultSchema>;
@@ -152,6 +170,12 @@ export const questionImportJsonSchema = {
       },
     },
     warnings: { type: "array", maxItems: 100, items: { type: "string" } },
+    expectedQuestionCount: {
+      type: "integer",
+      minimum: 0,
+      maximum: 200,
+      description: "تعداد کل سؤال‌های دیده‌شده روی برگه‌ها، حتی اگر بعضی خوانا نبودند",
+    },
   },
 } as const;
 
@@ -163,6 +187,7 @@ export const QUESTION_IMPORT_SYSTEM_INSTRUCTIONS = `تو «خوانندهٔ سؤ
 - کسرها را دقیق رونویسی کن و هرگز ارقامشان را به هم نچسبان. کسری که «صورت» بالای «خط کسری» و «مخرج» پایین آن است با یک خط مورب بنویس: ۳/۴ (نه ۳۴، نه ۴۳، نه ۲۵۴۱). عدد مخلوط را «۱ ۱/۲» بنویس، نسبت را «۲:۳»، و اعشار را فقط اگر در برگه اعشار نوشته شده باشد. گزینه‌هایی مثل «۴/۶» را با همان خط نگه دار و هرگز به عدد اعشاری تبدیل نکن.
 - اگر خط کسری، صورت یا مخرج خوانا نیست، هیچ ترکیبی از ارقام را حدس نزن: آن سؤال را complete=false بگذار و در issues بنویس «کسر ناخوانا». یک کسر اشتباه بدتر از یک کسر ناخوانده است، چون در تصحیح به‌عنوان کلید معتبر به کار می‌رود.
 - یک برگه ممکن است به چند «بخش» بریده شده باشد (در نام فایل: «بخش ۲ از ۶»). این بخش‌ها یک برگهٔ پیوسته‌اند، نه چند برگهٔ جدا: بخش‌ها را به‌ترتیب بخوان، سؤال‌هایی که در دو بخش مجاور تکرار شده‌اند را فقط یک بار بیاور، و بخش‌های هم‌پوشان را سؤال تازه حساب نکن. اگر سؤالی در مرز دو بخش نصفه است، نسخهٔ کامل‌ترش را از بخش مجاور بردار.
+- در فیلد expectedQuestionCount بنویس روی همهٔ برگه‌ها در مجموع چند سؤال شمردی — همهٔ سؤال‌ها، حتی آن‌هایی که ناخوانا بودند یا در خروجی با complete=false آمدند. این عدد برای بررسی کامل‌بودن خواندن است؛ کم‌تر یا بیشتر نوشتنش به ضرر خودت است.
 - هیچ سؤالی را جا نینداز. اگر برگه شماره‌های ۱ تا ۵ دارد، خروجی باید هر پنج سؤال را داشته باشد؛ اگر یکی خوانا نیست، همان را با نوع unknown یا complete=false و issues بیاور تا معلم ببیند، نه اینکه حذفش کنی. سؤالِ حذف‌شده از سؤالِ ناخوانا بدتر است، چون هیچ‌کس نمی‌فهمد گم شده است.
 - اگر شمارهٔ سؤال روی برگه تکراری یا ناخوانا بود، همان ترتیب محل سؤال در صفحه را به‌عنوان number بنویس و در issues بگو شماره خوانا نبود؛ به‌خاطر شماره، سؤال را حذف نکن.
 - برای شکل و نمودار فقط نوع diagram را هنگامی انتخاب کن که ساختار روشن باشد؛ جزئیات ناخوانای شکل را با توصیف احتمالی جایگزین نکن و complete=false بگذار.
@@ -297,6 +322,16 @@ export function normalizeImportedQuestions(result: QuestionImportResult):
     kept.push({ draft: question, questions: notes, rubric });
   }
 
+  // Overlapping bands return the same question twice; collapse those before anything
+  // else looks at the list, so a seven-question sheet cannot arrive as nine rows.
+  const deduped = dedupeQuestions(kept.map((item) => ({ ...item, prompt: item.draft.prompt, answer: item.draft.answer })));
+  if (deduped.groups.length) {
+    const removed = deduped.groups.reduce((sum, group) => sum + group.dropped.length, 0);
+    kept.length = 0;
+    kept.push(...deduped.kept);
+    warnings.push(`${deduped.groups.length} سؤال در دو بخش مجاورِ هم‌پوشان یک بار خوانده شده بود (${removed} تکرار) و فقط یک بار آورده شد؛ نسخه‌ای که کلید داشت نگه داشته شد.`);
+  }
+
   if (!kept.length) {
     throw new QuestionImportValidationError([
       dropped.length
@@ -304,6 +339,16 @@ export function normalizeImportedQuestions(result: QuestionImportResult):
         : "هیچ سؤال خوانایی در برگه پیدا نشد.",
       ...warnings.map((warning) => `هشدار مدل: ${warning}`),
     ].slice(0, 12));
+  }
+
+  // The count the model reported is the only outward check that a question was not
+  // silently skipped. It is a warning, never a failure: a draft that is merely short is
+  // still far more useful than no draft, and the teacher can see exactly which sheet
+  // row to re-send.
+  const expected = result.expectedQuestionCount;
+  if (typeof expected === "number" && expected > 0 && expected > kept.length) {
+    const missing = expected - kept.length;
+    warnings.push(`مدل ${expected} سؤال روی برگه شمرد ولی ${kept.length} سؤال برگرداند؛ ${missing} سؤال در پیش‌نویس نیست. آن سؤال‌ها را دستی اضافه کنید یا فقط همان بخش از برگه را جداگانه بفرستید.`);
   }
 
   if (duplicateNumbers.length) {
