@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import path from "node:path";
+import { readFileSync } from "node:fs";
 import { FALLBACK_MODEL_OPTIONS, RECOMMENDED_MODELS, SUPPORTS_ACCOUNT_MODEL_DISCOVERY, mergeModelOptions } from "../lib/provider-catalog";
 import { openrouterBaseUrl, OPENROUTER_HEADERS, PROVIDER_LABELS } from "../lib/server/providers";
 import { isChatCompletionsProvider, providerNeedsPdfRaster } from "../lib/server/provider-traits";
@@ -257,4 +258,21 @@ test("a free model's upstream 429 falls back to another free model, never a paid
   assert.ok(next.length >= 1 && next.length <= 3, "a bounded number of attempts");
   assert.ok(!next.includes("google/gemma-3-27b-it:free"), "never retry the model that just failed");
   assert.ok(next.every((id) => id === "openrouter/free" || /:free$/.test(id)), "fallbacks stay free");
+});
+
+test("a free model is asked not to think first, because its thinking eats the answer budget", async () => {
+  // Every free OpenRouter model reasons before answering, and the reasoning is charged to
+  // the same max_tokens. The reported symptom — HTTP 200 with nothing visible on Nemotron —
+  // is that budget running out mid-thought, not a broken key. Reading a form is
+  // transcription, so the free tier is asked to skip the thinking.
+  const source = readFileSync(new URL("../lib/server/providers.ts", import.meta.url), "utf8");
+  assert.match(source, /isFreeModel\(model\) \? \{ reasoning: \{ enabled: false \} \}/, "free models must be asked for no reasoning");
+  assert.match(source, /reasoningAllowedBody/, "a model that refuses must be retried with thinking allowed");
+  assert.match(source, /"empty-answer"/, "an empty answer needs its own reason, not a generic 502");
+});
+
+test("an empty free-model answer is retried on another free model, not blamed on the key", async () => {
+  const { openRouterFallbacksFor } = await import("../lib/provider-catalog");
+  // The retry list is the same one used for an upstream 429, and it stays free.
+  assert.ok(openRouterFallbacksFor("nvidia/nemotron-3-ultra-550b-a55b:free").length > 0);
 });

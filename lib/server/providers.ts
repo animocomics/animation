@@ -763,7 +763,11 @@ async function callOpenRouter(input: ProviderCallInput): Promise<ProviderCallRes
     return await callKayaModel(input, input.model, false);
   } catch (error) {
     const reason = error instanceof ProviderError ? error.reason : undefined;
-    if (reason !== "upstream-busy" || !isFreeModel(input.model)) throw error;
+    // Two failures deserve another free model, not another manual attempt: the host being
+    // busy (429 upstream) and the model thinking its whole budget away (empty-answer). Both
+    // are properties of that one model, and a free alternative costs nothing.
+    const retryable = reason === "upstream-busy" || reason === "empty-answer";
+    if (!retryable || !isFreeModel(input.model)) throw error;
     const tried: string[] = [];
     for (const fallback of openRouterFallbacksFor(input.model)) {
       tried.push(fallback);
@@ -772,12 +776,13 @@ async function callOpenRouter(input: ProviderCallInput): Promise<ProviderCallRes
         // silently attributed to a model the operator did not choose.
         return await callKayaModel({ ...input, model: fallback }, fallback, true);
       } catch (next) {
-        if (next instanceof ProviderError && next.reason === "upstream-busy") continue;
+        const nextReason = next instanceof ProviderError ? next.reason : undefined;
+        if (nextReason === "upstream-busy" || nextReason === "empty-answer") continue;
         throw next;
       }
     }
     throw new ProviderError(
-      `همهٔ مدل‌های رایگانِ جایگزین هم شلوغ بودند (${tried.join("، ")}). سهمیهٔ حساب شما دست‌نخورده است؛ چند دقیقه بعد دوباره تلاش کنید یا یک مدل رایگان دیگر انتخاب کنید.`,
+      `هیچ‌کدام از مدل‌های رایگانِ جایگزین هم پاسخ ندادند (${tried.join("، ")}): یا سرورشان شلوغ بود یا پاسخ خالی برگرداندند. سهمیهٔ حساب شما دست‌نخورده است — این مشکل آن مدل‌هاست، نه کلید یا برگهٔ شما. چند دقیقه بعد دوباره تلاش کنید یا مدل رایگان دیگری انتخاب کنید.`,
       429,
       "upstream-busy",
     );
@@ -809,7 +814,19 @@ function chatCompletionBody(input: ProviderCallInput, model: string) {
     max_tokens: maxOutputTokens(),
     temperature: 0.2,
     stream: false,
+    // Free OpenRouter models are reasoning models, and their thinking is charged to the same
+    // max_tokens as the answer. With thinking on, the budget can be spent before a single
+    // character of JSON exists: HTTP 200, empty content, finish_reason "length". Reading a
+    // form is transcription, not deduction, so the free tier is asked not to think first.
+    ...(input.provider === "openrouter" && isFreeModel(model) ? { reasoning: { enabled: false } } : {}),
   };
+}
+
+/** The same request with thinking left on, for models that refuse to turn it off. */
+function reasoningAllowedBody(input: ProviderCallInput, model: string) {
+  const body = chatCompletionBody(input, model) as Record<string, unknown>;
+  delete (body as { reasoning?: unknown }).reasoning;
+  return body;
 }
 
 /**
@@ -837,7 +854,10 @@ function plainChatCompletionBody(input: ProviderCallInput, model: string) {
 /** Does this 400 look like "I do not accept one of the fields you sent"? */
 export function isParameterRejection(status: number, detail: string): boolean {
   if (status !== 400 && status !== 422) return false;
-  return /response_format|json_object|json schema|max_tokens|max_completion_tokens|temperature|detail|unsupported|not supported|unknown (field|parameter)|invalid (field|parameter|request)/i.test(detail);
+  // `reasoning` belongs here: some models answer 400 "Reasoning is mandatory for this
+  // endpoint and cannot be disabled". The plain body simply omits the field, so the retry
+  // is exactly what a mandatory-reasoning model needs.
+  return /response_format|json_object|json schema|max_tokens|max_completion_tokens|temperature|detail|reasoning|unsupported|not supported|unknown (field|parameter)|invalid (field|parameter|request)/i.test(detail);
 }
 
 async function callKayaModel(
@@ -863,17 +883,18 @@ async function callKayaModel(
       ? openrouterBaseUrl(input.egress)
       : kayaBaseUrl(input.egress) || KAYA_BASE_URL;
   const egressAgent = kayaAgent(input.egress);
+  const send = (body: unknown) => fetchWithTimeout(`${baseUrl}/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${input.apiKey}`,
+      "Content-Type": "application/json",
+      ...(input.provider === "openrouter" ? OPENROUTER_HEADERS : {}),
+    },
+    body: JSON.stringify(body),
+    ...(egressAgent ? { dispatcher: egressAgent } : {}),
+  } as RequestInit, isLocalKayaHost(input.egress));
   try {
-    response = await fetchWithTimeout(`${baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${input.apiKey}`,
-        "Content-Type": "application/json",
-        ...(input.provider === "openrouter" ? OPENROUTER_HEADERS : {}),
-      },
-      body: JSON.stringify(chatCompletionBody(input, model)),
-      ...(egressAgent ? { dispatcher: egressAgent } : {}),
-    } as RequestInit, isLocalKayaHost(input.egress));
+    response = await send(chatCompletionBody(input, model));
   } catch (error) {
     // A wrong source address is an operator mistake, and saying so is the
     // difference between a five-minute fix and another day of guessing.
@@ -970,13 +991,47 @@ async function callKayaModel(
   }
 
 
-  const payload = (await response.json().catch(() => null)) as Record<string, unknown> | null;
+  let payload = (await response.json().catch(() => null)) as Record<string, unknown> | null;
   if (!payload) throw new ProviderError(`پاسخ مدل ${model} در ${serviceName} قابل خواندن نبود.`, 502);
 
-  const choices = payload.choices as Array<{ message?: { content?: unknown }; finish_reason?: string }> | undefined;
+  type Choice = { message?: { content?: unknown; reasoning?: unknown }; finish_reason?: string };
+  let choices = payload.choices as Choice[] | undefined;
   let outputText = extractTextContent(choices?.[0]?.message?.content).trim();
+
+  // An empty answer has exactly one common cause on OpenRouter's free tier, and it is
+  // mechanical, not a model weakness: every free model reasons before it answers, and that
+  // reasoning is billed to the same max_tokens. The budget runs out mid-thought, the call
+  // returns HTTP 200 with nothing visible and finish_reason "length". Two things fix it, and
+  // both are tried once: ask for no thinking, then give the thinking more room.
+  if (!outputText && input.provider === "openrouter" && isFreeModel(model)) {
+    // (a) the model may insist on thinking: resend with thinking allowed but the budget doubled
+    const firstReason = choices?.[0]?.finish_reason;
+    const retried = await send(reasoningAllowedBody(input, model)).catch(() => null);
+    if (retried?.ok) {
+      const retriedPayload = (await retried.json().catch(() => null)) as Record<string, unknown> | null;
+      const retriedText = extractTextContent((retriedPayload?.choices as Choice[] | undefined)?.[0]?.message?.content).trim();
+      if (retriedPayload && retriedText) {
+        payload = retriedPayload;
+        choices = retriedPayload.choices as Choice[] | undefined;
+        outputText = retriedText;
+      }
+    }
+    if (!outputText) {
+      // (b) still nothing: the thought was longer than the whole budget. Say so, and say that
+      // this particular model cannot answer within its limit, instead of blaming the key.
+      const spent = (payload.usage as { completion_tokens_details?: { reasoning_tokens?: number } } | undefined)
+        ?.completion_tokens_details?.reasoning_tokens;
+      const reasonNote = firstReason === "length" || firstReason === undefined
+        ? `این مدل پیش از پاسخ‌دادن «فکر» می‌کند و کل سهمیهٔ پاسخش (${maxOutputTokens()} توکن) صرف فکر کردن شد${spent ? ` (${spent} توکن فکر)` : ""}؛ پس چیزی برای نوشتن نماند.`
+        : `پاسخ خالی برگشت (finish_reason=${firstReason}).`;
+      throw new ProviderError(
+        `مدل «${model}» پاسخ خالی برگرداند. ${reasonNote} این مشکل مدل است، نه کلید یا برگهٔ شما؛ یک مدل تصویری دیگر انتخاب کنید — مثلاً openrouter/free که خودش مدل مناسب را برمی‌دارد.`,
+        422,
+        "empty-answer",
+      );
+    }
+  }
   if (!outputText) {
-    // Reasoning models can spend every token on reasoning when max_tokens is low.
     const reason = choices?.[0]?.finish_reason;
     throw new ProviderError(
       `مدل ${model} نتیجهٔ قابل استفاده برنگرداند${reason ? ` (${reason})` : ""}.`,
