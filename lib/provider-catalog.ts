@@ -54,6 +54,15 @@ export const FALLBACK_MODEL_OPTIONS: Record<ProviderId, string[]> = {
     "deepseek-chat",
   ],
   openrouter: [
+    // Free vision models first: the operator's standing rule is that money must not go
+    // missing while a problem is still being found. Each is served by a different upstream
+    // host, which is the point — a 429 on a free model is usually that one host being full,
+    // so the next entry is often free while the first is not.
+    "google/gemma-3-27b-it:free",
+    "meta-llama/llama-4-scout:free",
+    "qwen/qwen2.5-vl-72b-instruct:free",
+    "mistralai/mistral-small-3.2-24b-instruct:free",
+    // Paid, for when a model has to be reliable rather than free.
     "google/gemini-2.5-flash",
     "google/gemini-2.5-pro",
     "anthropic/claude-sonnet-4.5",
@@ -61,6 +70,9 @@ export const FALLBACK_MODEL_OPTIONS: Record<ProviderId, string[]> = {
     "openai/gpt-4.1-mini",
     "qwen/qwen2.5-vl-72b-instruct",
     "mistralai/mistral-large",
+    // The router's own free slot: OpenRouter picks whichever free model is available, so it
+    // always answers something and never has a single saturated host.
+    "openrouter/free",
   ],
   kaya: [
     "deepseek/deepseek-v4.1-flash",
@@ -130,4 +142,27 @@ export function mergeModelOptions(provider: ProviderId, ...groups: string[][]): 
     }
     return left.localeCompare(right);
   });
+}
+
+/**
+ * The free OpenRouter models to try, in order, when the chosen one's host is busy.
+ *
+ * A 429 on a free model is usually one upstream host being full, and the operator's own
+ * quota is untouched — the message even says so. Making them do that manually, model by
+ * model, is exactly the work a machine should do: the sheet is already paid for in time.
+ * Only *free* entries and the router's own slot are used, so a fallback can never spend
+ * money the operator did not choose to spend.
+ */
+export const OPENROUTER_FREE_FALLBACKS: string[] = [
+  "openrouter/free",
+  "google/gemma-3-27b-it:free",
+  "meta-llama/llama-4-scout:free",
+  "qwen/qwen2.5-vl-72b-instruct:free",
+  "mistralai/mistral-small-3.2-24b-instruct:free",
+];
+
+/** Which free models to try after `model`, never including `model` itself. */
+export function openRouterFallbacksFor(model: string): string[] {
+  const chosen = String(model || "").trim();
+  return OPENROUTER_FREE_FALLBACKS.filter((id) => id !== chosen).slice(0, 3);
 }

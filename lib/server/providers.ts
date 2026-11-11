@@ -2,7 +2,7 @@ import { gradingJsonSchema, modelResultSchema, type ModelResult } from "./gradin
 import { ANSWER_KEY_IMPORT_SYSTEM_INSTRUCTIONS, answerKeyImportJsonSchema, answerKeyImportResultSchema, type AnswerKeyImportResult } from "./answer-key-import-schema";
 import { QUESTION_IMPORT_SYSTEM_INSTRUCTIONS, questionImportJsonSchema, questionImportResultSchema, salvageQuestionImport, type QuestionImportResult } from "./question-import-schema";
 import type { GradeApiRequest, ProviderId } from "../types";
-import { RECOMMENDED_MODELS } from "../provider-catalog";
+import { openRouterFallbacksFor, RECOMMENDED_MODELS } from "../provider-catalog";
 import { providerFetch, ProviderNetworkError } from "./provider-network";
 import { assertKayaHostAllowed, describeEgressFailure, kayaAgent, kayaBaseUrl, type KayaEgressConfig } from "./kaya-egress";
 import { clearRegionBlocked, markRegionBlocked } from "./region-block";
@@ -117,6 +117,41 @@ function friendlyProviderError(status: number, provider: string, rawMessage?: st
  *
  * `serviceDetail` is the provider's message, already stripped of secrets by the caller.
  */
+/**
+ * The sentence inside an OpenRouter error, not the one on its surface.
+ *
+ * A 429 from OpenRouter almost always says "Provider returned error" — the same two words
+ * whether the account's daily quota ran out or the upstream host serving one model is busy.
+ * The difference decides the advice completely: the first means wait until midnight UTC, the
+ * second means switch model now and waiting is pointless. The real sentence lives in
+ * `error.metadata.raw`, and the machine-readable cause in `metadata.limit_source`.
+ */
+export function openRouterErrorDetail(body: unknown): string {
+  const error = (body as { error?: unknown } | null)?.error;
+  if (!error) return "";
+  if (typeof error === "string") return error;
+  const record = error as { message?: unknown; metadata?: { raw?: unknown; limit_source?: unknown; provider_name?: unknown; error_type?: unknown } };
+  const parts: string[] = [];
+  if (typeof record.message === "string" && record.message) parts.push(record.message);
+  const meta = record.metadata;
+  if (meta) {
+    if (typeof meta.raw === "string" && meta.raw) parts.push(meta.raw);
+    if (typeof meta.limit_source === "string" && meta.limit_source) parts.push(`limit_source=${meta.limit_source}`);
+    if (typeof meta.provider_name === "string" && meta.provider_name) parts.push(`provider=${meta.provider_name}`);
+    if (typeof meta.error_type === "string" && meta.error_type) parts.push(`error_type=${meta.error_type}`);
+  }
+  return parts.join(" · ");
+}
+
+/** Which limit a 429 hit, from OpenRouter's own words; "unknown" claims nothing. */
+export function openRouterLimitSource(detail: string): "account-day" | "account-minute" | "upstream" | "unknown" {
+  const text = String(detail || "").toLowerCase();
+  if (/free-models-per-day|free_models_per_day|per_day|daily/.test(text)) return "account-day";
+  if (/free-models-per-minute|per_minute|per-minute/.test(text)) return "account-minute";
+  if (/upstream|provider_overloaded|shared_pool|temporarily rate-limited|provider returned error/.test(text)) return "upstream";
+  return "unknown";
+}
+
 export function providerHttpRefusal(provider: ProviderId, status: number, serviceDetail = "", model = ""): ProviderError {
   const freeTier = provider === "openrouter" && isFreeModel(model);
   const label = PROVIDER_LABELS[provider] || "سرویس‌دهنده";
@@ -132,15 +167,35 @@ export function providerHttpRefusal(provider: ProviderId, status: number, servic
         : "اعتبار حساب کافی نیست یا این مدل پول‌کی است. یک مدل رایگان (با پسوند :free) انتخاب کنید یا اعتبار اضافه کنید.";
       return new ProviderError(`${label}: ${note}${detail ? ` پیام سرویس: ${detail}` : ""}`, 402, "credit");
     }
-    if (/rate.?limit|too many requests|quota/.test(lower) || status === 429) {
-      // The model decides what the fix is, not the status code. A free model hits a daily
-      // cap and a shared rate limit; telling that operator "wait a moment" invites the
-      // retry that spends the rest of the allowance, and telling them to add credit buys
-      // something credit cannot lift.
-      const freeNote = freeTier
-        ? "این مدل رایگان است: سهمیهٔ روزانه‌اش تمام شده یا محدودیت سرعتش فعال است. خرید اعتبار این محدودیت را برنمی‌دارد؛ یا تا فردا صبر کنید، یا یک مدل رایگان تصویری دیگر انتخاب کنید."
-        : "سهمیهٔ درخواست یا محدودیت سرعت فعال است. این کلید سالم است؛ چند دقیقه صبر کنید یا مدل دیگری بردارید.";
-      return new ProviderError(`${label} (${status}): ${freeNote}${detail ? ` پیام سرویس: ${detail}` : ""}`, 429, "rate-limited");
+    if (status === 429 || /\brate.?limit|too many requests|free-models-per|upstream/.test(lower)) {
+      // The *cause* decides the advice, not the status code and not the price tag.
+      const source = openRouterLimitSource(serviceDetail);
+      if (source === "upstream") {
+        return new ProviderError(
+          `${label} (${status}): خودِ OpenRouter قطع نشده — سروری که این مدل را سرو می‌کند شلوغ است (rate-limited upstream). سهمیهٔ حساب شما دست‌نخورده است؛ صبر کردن فایده ندارد، همین حالا مدل دیگری انتخاب کنید.${detail ? ` پیام سرویس: ${detail}` : ""}`,
+          429,
+          "upstream-busy",
+        );
+      }
+      if (source === "account-day") {
+        return new ProviderError(
+          `${label} (${status}): سهمیهٔ روزانهٔ مدل‌های رایگان حساب شما تمام شده است. تا ۰۰:۰۰ UTC (ساعت ۳:۳۰ بامداد تهران) صبر کنید؛ خرید اعتبار این سقف را تا ۱٬۰۰۰ در روز بالا می‌برد.${detail ? ` پیام سرویس: ${detail}` : ""}`,
+          429,
+          "free-daily-cap",
+        );
+      }
+      if (source === "account-minute") {
+        return new ProviderError(
+          `${label} (${status}): محدودیت ۲۰ درخواست در دقیقه برای مدل‌های رایگان فعال شده است. یک دقیقه صبر کنید؛ سهمیهٔ روزانه دست‌نخورده است.${detail ? ` پیام سرویس: ${detail}` : ""}`,
+          429,
+          "free-minute-cap",
+        );
+      }
+      return new ProviderError(
+        `${label} (${status}): سرویس توضیح نداد کدام محدودیت فعال شده است. سهمیهٔ حساب شما لزوماً تمام نیست — این پیام معمولاً از شلوغی سرور مدل است. مدل دیگری انتخاب کنید یا چند دقیقه صبر کنید.${detail ? ` پیام سرویس: ${detail}` : ""}`,
+        429,
+        "rate-limited",
+      );
     }
     if (status === 401) {
       return new ProviderError(`${label} کلید را نپذیرفت (401). کلید OpenRouter با sk-or- شروع می‌شود؛ مطمئن شوید کامل کپی شده و از همان حساب است.${detail ? ` پیام سرویس: ${detail}` : ""}`, 400, "auth");
@@ -690,11 +745,43 @@ async function callGapGpt(input: ProviderCallInput): Promise<ProviderCallResult>
  * supports the model's parameters (`provider.sort = "price"`). If a model only exists on
  * one upstream, the field is simply ignored.
  */
+/**
+ * OpenRouter, with a bounded retry when the chosen free model's host is busy.
+ *
+ * The failure this exists for is specific: a `:free` model answers 429 with "temporarily
+ * rate-limited upstream", which says the operator's own quota is fine and the host serving
+ * that one model is full. Waiting is the wrong advice, and asking a teacher to try model
+ * names by hand is not a fix. A *free* model therefore falls back to another free model —
+ * never to a paid one, because that would spend money nobody chose to spend — at most three
+ * times, so a bad day upstream cannot become a loop of billed requests.
+ */
 async function callOpenRouter(input: ProviderCallInput): Promise<ProviderCallResult> {
   if (input.files.some((file) => file.type === "application/pdf")) {
     throw new ProviderError("PDF برای OpenRouter باید پیش از ارسال، داخل سامانه به تصویر صفحه تبدیل شود.", 400);
   }
-  return callKayaModel(input, input.model, false);
+  try {
+    return await callKayaModel(input, input.model, false);
+  } catch (error) {
+    const reason = error instanceof ProviderError ? error.reason : undefined;
+    if (reason !== "upstream-busy" || !isFreeModel(input.model)) throw error;
+    const tried: string[] = [];
+    for (const fallback of openRouterFallbacksFor(input.model)) {
+      tried.push(fallback);
+      try {
+        // usedFallback=true records the substitution in the result, so a grade is never
+        // silently attributed to a model the operator did not choose.
+        return await callKayaModel({ ...input, model: fallback }, fallback, true);
+      } catch (next) {
+        if (next instanceof ProviderError && next.reason === "upstream-busy") continue;
+        throw next;
+      }
+    }
+    throw new ProviderError(
+      `همهٔ مدل‌های رایگانِ جایگزین هم شلوغ بودند (${tried.join("، ")}). سهمیهٔ حساب شما دست‌نخورده است؛ چند دقیقه بعد دوباره تلاش کنید یا یک مدل رایگان دیگر انتخاب کنید.`,
+      429,
+      "upstream-busy",
+    );
+  }
 }
 
 /**
@@ -759,6 +846,8 @@ async function callKayaModel(
   usedFallback: boolean,
 ): Promise<ProviderCallResult> {
   let response: Response;
+  /** The refusal body, read once; a Response body cannot be read twice. */
+  let refusalText = "";
   // The egress setting picks the source address Kaya sees, which is the only
   // lever we have when Kaya drops this server's default egress address.
   // A custom host is checked first: a plain-HTTP address off this machine is
@@ -796,13 +885,21 @@ async function callKayaModel(
 
   if (!response.ok) {
     const status = response.status;
-    let detail = "";
+    // Read the body exactly once and KEEP THE TEXT. A Response body can be consumed only
+    // once, and the old code read it here and again below, so the second parse always threw
+    // and was swallowed by the surrounding catch — which is exactly how the real cause
+    // inside OpenRouter's metadata.raw was lost, and how every 429 became "your daily quota
+    // is finished" even on a request that had never been made before.
+    refusalText = await response.text().catch(() => "");
+    let refusalPayload: { error?: { message?: string } | string } | null = null;
     try {
-      const payload = JSON.parse(await response.text()) as { error?: { message?: string } | string };
-      detail = typeof payload.error === "string" ? payload.error : payload.error?.message || "";
+      refusalPayload = JSON.parse(refusalText) as { error?: { message?: string } | string };
     } catch {
-      // Keep the status code; the body may be empty or non-JSON.
+      refusalPayload = null;
     }
+    const detail = refusalPayload
+      ? (typeof refusalPayload.error === "string" ? refusalPayload.error : refusalPayload.error?.message || "")
+      : "";
     // The gateway refused a field, not the work. Re-send once with the plainest body:
     // the page images are already uploaded, and a second call that finally succeeds is
     // cheaper than the operator retrying the whole sheet blind.
@@ -817,20 +914,32 @@ async function callKayaModel(
         body: JSON.stringify(plainChatCompletionBody(input, model)),
         ...(egressAgent ? { dispatcher: egressAgent } : {}),
       } as RequestInit, isLocalKayaHost(input.egress)).catch(() => null);
-      if (retried) response = retried;
+      if (retried) {
+        response = retried;
+        refusalText = "";
+      }
     }
   }
 
+
   if (!response.ok) {
     const status = response.status;
-    let detail = "";
+    if (!refusalText) refusalText = await response.text().catch(() => "");
+    let failurePayload: { error?: unknown } | null = null;
     try {
-      const payload = JSON.parse(await response.text()) as { error?: { message?: string } | string };
-      detail = typeof payload.error === "string" ? payload.error : payload.error?.message || "";
+      failurePayload = JSON.parse(refusalText) as { error?: unknown };
     } catch {
-      // Keep the status code; the body may be empty or non-JSON.
+      failurePayload = null;
     }
-    const safe = detail.replace(/sk-[A-Za-z0-9_\-]{6,}/g, "[کلید]").replace(/\s+/g, " ").slice(0, 180);
+    const errorField = failurePayload?.error;
+    const detail = errorField === undefined
+      ? ""
+      : typeof errorField === "string"
+        ? errorField
+        : ((errorField as { message?: string })?.message || "");
+    // OpenRouter hides the real cause in metadata.raw; without it a 429 is unreadable.
+    const openRouterDetail = input.provider === "openrouter" ? openRouterErrorDetail(failurePayload) : "";
+    const safe = (openRouterDetail || detail).replace(/sk-[A-Za-z0-9_\-]{6,}/g, "[کلید]").replace(/\s+/g, " ").slice(0, 300);
     if (isVisionRejection(status, detail)) {
       throw new ProviderError(VISION_REJECTION_MESSAGE, 400, "vision-required");
     }
@@ -838,10 +947,9 @@ async function callKayaModel(
       markRegionBlocked(input.provider, detail.slice(0, 200));
       throw new ProviderError(REGION_BLOCKED_MESSAGE, 400, "region-blocked");
     }
-    // One table for every refusal, shared with the connection test. The old inline
-    // sentences drifted from the test button's, and the two disagreed in front of the
-    // operator about the same 403 (see providerHttpRefusal).
-    if (input.provider === "openrouter") throw providerHttpRefusal("openrouter", status, detail || safe, model);
+    // One table for every refusal, shared with the connection test, and it receives the
+    // real cause rather than the surface sentence.
+    if (input.provider === "openrouter") throw providerHttpRefusal("openrouter", status, openRouterDetail || detail || safe, model);
     if (status === 401) {
       throw new ProviderError(`کلید ${serviceName} پذیرفته نشد؛ کلید را در پنل ${serviceName} بررسی یا کلید تازه بسازید.${safe ? ` پیام سرویس: ${safe}` : ""}`, 400, "auth");
     }
@@ -860,6 +968,7 @@ async function callKayaModel(
     }
     throw new ProviderError(`${serviceName} درخواست را نپذیرفت (HTTP ${status})${safe ? `: ${safe}` : "."}`, status >= 500 ? 502 : status);
   }
+
 
   const payload = (await response.json().catch(() => null)) as Record<string, unknown> | null;
   if (!payload) throw new ProviderError(`پاسخ مدل ${model} در ${serviceName} قابل خواندن نبود.`, 502);

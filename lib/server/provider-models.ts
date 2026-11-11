@@ -2,7 +2,7 @@ import type { ProviderId } from "../types";
 import { FALLBACK_MODEL_OPTIONS, mergeModelOptions, SUPPORTS_ACCOUNT_MODEL_DISCOVERY } from "../provider-catalog";
 import { providerFetch } from "./provider-network";
 import { kayaBaseUrl, type KayaEgressConfig } from "./kaya-egress";
-import { gapgptBaseUrl, openrouterBaseUrl, providerHttpRefusal } from "./providers";
+import { gapgptBaseUrl, openRouterErrorDetail, openrouterBaseUrl, providerHttpRefusal } from "./providers";
 import { ProviderError } from "./providers";
 import { isJsonParserErrorMessage } from "../error-message";
 
@@ -71,6 +71,9 @@ export async function providerResponseError(response: Response, provider: Provid
   try {
     const payload = JSON.parse(text) as { error?: { message?: string } | string; message?: string; base_resp?: { status_msg?: string } };
     rawMessage = typeof payload.error === "string" ? payload.error : payload.error?.message || payload.message || payload.base_resp?.status_msg || "";
+    // The surface message of an OpenRouter error is "Provider returned error" for almost
+    // every cause; metadata.raw is the only place that says which.
+    if (provider === "openrouter") rawMessage = openRouterErrorDetail(payload) || rawMessage;
   } catch {
     // Provider proxies can return HTML or an empty response; do not expose it.
   }
@@ -160,6 +163,10 @@ function isGradingCandidate(provider: ProviderId, record: ProviderModelRecord): 
     if (record.output_modalities?.length && !record.output_modalities.includes("text")) return false;
     if (record.input_modalities?.length && !record.input_modalities.includes("image")) return false;
     if (record.capabilities?.vision === false) return false;
+    // "openrouter/free" is the router's own slot: OpenRouter picks an available free model.
+    // It declares no modalities because it is not one model, so it is admitted by name
+    // rather than dropped for saying nothing.
+    if (id === "openrouter/free") return true;
     return !/(?:image|imagen|embed|whisper|tts|audio|video|veo|kling|sora|midjourney|rerank|moderation)/i.test(id);
   }
   if (provider === "gapgpt") {

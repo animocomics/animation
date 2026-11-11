@@ -149,7 +149,9 @@ test("a free model's limits are named as the model's, not the key's", async () =
   const limited = providerHttpRefusal("openrouter", 429, "Rate limit exceeded: free-models-per-day", "meta-llama/llama-3.3-70b-instruct:free");
   assert.equal(limited.status, 429);
   assert.match(limited.message, /رایگان/, "the free tier must be named");
-  assert.match(limited.message, /خرید اعتبار این محدودیت را برنمی‌دارد|برنمی‌دارد/, "paying must not be offered as the fix for a free-tier cap");
+  // A daily free-tier cap is not lifted by a small top-up, so the message must say what the
+  // real reset is (midnight UTC) instead of advising a purchase as the fix.
+  assert.match(limited.message, /۰۰:۰۰ UTC/, "the real reset time must be named");
   assert.doesNotMatch(limited.message, /کلید معتبر نیست/);
 
   const credit = providerHttpRefusal("openrouter", 402, "Insufficient credits", "meta-llama/llama-3.3-70b-instruct:free");
@@ -162,7 +164,7 @@ test("the connection test and the sheet read the same refusal table", async () =
   const models = fs.readFileSync(path.join(root, "lib", "server", "provider-models.ts"), "utf8");
   const providers = fs.readFileSync(path.join(root, "lib", "server", "providers.ts"), "utf8");
   assert.match(models, /providerHttpRefusal\("openrouter", response\.status, rawMessage, model\)/, "the test button must use the shared table with the model");
-  assert.match(providers, /providerHttpRefusal\("openrouter", status, detail \|\| safe, model\)/, "the sheet path must use it with the model");
+  assert.match(providers, /providerHttpRefusal\("openrouter", status, openRouterDetail \|\| detail \|\| safe, model\)/, "the sheet path must use it with the model and the real cause");
   const testRoute = fs.readFileSync(path.join(root, "app", "api", "provider", "test", "route.ts"), "utf8");
   assert.match(testRoute, /providerResponseError\(response, input\.provider, apiKey, input\.model\)/, "the test route must pass the model so a free-tier cap is named");
 });
@@ -180,4 +182,79 @@ test("the connection test sends a picture, so a blind model cannot pass it", asy
   const bytes = Buffer.from(match[1], "base64");
   assert.deepEqual([...bytes.subarray(0, 8)], [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], "the embedded image must be a real PNG");
   assert.ok(bytes.length > 200, "a real PNG, not a placeholder");
+});
+
+test("the operator's exact 429: 'Provider returned error' on a brand-new free model is NOT a daily cap", async () => {
+  // Reported verbatim: "من تا حالا ازش استفاده نکردم" — a first request on a :free model,
+  // answered with the surface text "Provider returned error". The real sentence was inside
+  // error.metadata.raw: "<model>:free is temporarily rate-limited upstream". Our message
+  // claimed the daily quota was finished, which is a different cause and the wrong advice.
+  const { openRouterErrorDetail, openRouterLimitSource, providerHttpRefusal } = await import("../lib/server/providers");
+  const body = {
+    error: {
+      message: "Provider returned error",
+      code: 429,
+      metadata: {
+        raw: "google/gemma-4-31b-it:free is temporarily rate-limited upstream. Please retry shortly, or add your own key.",
+        provider_name: "Google AI Studio",
+        limit_source: "upstream_provider_shared_pool",
+      },
+    },
+  };
+  const detail = openRouterErrorDetail(body);
+  assert.match(detail, /rate-limited upstream/, "the real cause must be extracted from metadata.raw");
+  assert.match(detail, /Google AI Studio/, "the upstream host must be named");
+  assert.equal(openRouterLimitSource(detail), "upstream");
+
+  const error = providerHttpRefusal("openrouter", 429, detail, "google/gemma-4-31b-it:free");
+  assert.equal(error.reason, "upstream-busy");
+  assert.match(error.message, /سهمیهٔ حساب شما دست‌نخورده/, "it must say the operator's quota is fine");
+  assert.match(error.message, /مدل دیگری انتخاب کنید/, "the action that helps: switch model");
+  assert.doesNotMatch(error.message, /سهمیهٔ روزانهٔ مدل‌های رایگان حساب شما تمام شده/, "never claim a daily cap on an upstream refusal");
+  assert.doesNotMatch(error.message, /تا فردا صبر/, "waiting is the wrong advice here");
+});
+
+test("each limit names itself, and an unlabelled one claims nothing", async () => {
+  const { openRouterLimitSource, providerHttpRefusal } = await import("../lib/server/providers");
+  const daily = providerHttpRefusal("openrouter", 429, "Rate limit exceeded: free-models-per-day", "x/y:free");
+  assert.equal(daily.reason, "free-daily-cap");
+  assert.match(daily.message, /۰۰:۰۰ UTC/, "the reset time must be concrete");
+  const minute = providerHttpRefusal("openrouter", 429, "Rate limit exceeded: free-models-per-minute", "x/y:free");
+  assert.equal(minute.reason, "free-minute-cap");
+  assert.equal(openRouterLimitSource("something happened, nobody said what"), "unknown");
+  const unknown = providerHttpRefusal("openrouter", 429, "something happened", "x/y:free");
+  assert.doesNotMatch(unknown.message, /تمام شده/, "with no cause stated, no cause is claimed");
+  assert.match(unknown.message, /لزوماً تمام نیست/);
+});
+
+test("free vision models are offered first, each from a different host", () => {
+  // A 429 on a free model is usually one upstream host being full, so a single hard-coded
+  // free model is the wrong default. The suggestions lead with free entries from distinct
+  // vendors and end with the router's own free slot.
+  const free = FALLBACK_MODEL_OPTIONS.openrouter.filter((id) => /:free$/.test(id));
+  assert.ok(free.length >= 3, `expected several free suggestions, got ${free.length}`);
+  const vendors = new Set(free.map((id) => id.split("/")[0]));
+  assert.ok(vendors.size >= 3, "free suggestions must not all come from one upstream vendor");
+  assert.equal(FALLBACK_MODEL_OPTIONS.openrouter.at(-1), "openrouter/free", "the router's free slot is the last resort");
+});
+
+test("the router's own free slot survives the vision filter", () => {
+  // It is not one model and declares no modalities; dropping it would remove the only
+  // suggestion that cannot be pinned to one saturated host.
+  const kept = filterGradingCandidates("openrouter", [{ id: "openrouter/free" }, { id: "openai/whisper-1" }]);
+  assert.deepEqual(kept, ["openrouter/free"]);
+});
+
+test("a free model's upstream 429 falls back to another free model, never a paid one", async () => {
+  // Proven end to end against a stand-in earlier; this pins the rule. The substitution must
+  // stay inside the free tier: choosing a paid model on the operator's behalf would spend
+  // money nobody authorised, which is the one thing that must never happen silently.
+  const { openRouterFallbacksFor, OPENROUTER_FREE_FALLBACKS } = await import("../lib/provider-catalog");
+  for (const id of OPENROUTER_FREE_FALLBACKS) {
+    assert.ok(/:free$/.test(id) || id === "openrouter/free", `${id} must be free`);
+  }
+  const next = openRouterFallbacksFor("google/gemma-3-27b-it:free");
+  assert.ok(next.length >= 1 && next.length <= 3, "a bounded number of attempts");
+  assert.ok(!next.includes("google/gemma-3-27b-it:free"), "never retry the model that just failed");
+  assert.ok(next.every((id) => id === "openrouter/free" || /:free$/.test(id)), "fallbacks stay free");
 });
