@@ -162,6 +162,20 @@ export function openRouterLimitSource(detail: string): "account-day" | "account-
  * spent nothing that they are "out of credit" is the same class of mistake as blaming a
  * valid key. 400 `User location is not supported` is a country block, not a bad request.
  */
+/**
+ * Is this Google's "we do not serve this server" HTML page?
+ *
+ * A blocked IP gets an HTML page that begins `Error 403 (Forbidden)!!1` and says the client
+ * "does not have permission to get URL … from this server". It is not a JSON API error, it
+ * names no key, and it is identical for every key — which is exactly the signature that
+ * separates an IP block from an auth failure.
+ */
+export function isGoogleHtmlRefusal(status: number, detail: string): boolean {
+  if (status !== 403 && status !== 401) return false;
+  const text = String(detail || "");
+  return /<html|<\/html|<!DOCTYPE html/i.test(text) || /does not have permission to get URL|That.s an error/i.test(text);
+}
+
 export function geminiRefusal(status: number, serviceDetail = ""): ProviderError {
   const detail = String(serviceDetail || "").replace(/\s+/g, " ").trim().slice(0, 260);
   const lower = detail.toLowerCase();
@@ -181,6 +195,25 @@ export function geminiRefusal(status: number, serviceDetail = ""): ProviderError
       `Google Gemini الان درخواست را نپذیرفت (${status}). ${when} کلید شما سالم است — سهمیهٔ رایگانِ حساب تمام شده، نه اعتبار خریداری‌شده.${freeTier ? " (سرویس خودش گفته «free tier».)" : ""}${detail ? ` پیام سرویس: ${detail}` : ""}`,
       429,
       "gemini-quota",
+    );
+  }
+  // Google answers a blocked *hosting* IP with an HTML error page, not JSON. None of its
+  // words mention a key, and no key can fix it: the same key works from another network.
+  // Reporting that as "invalid key" sends the operator to regenerate a key that is fine.
+  if (isGoogleHtmlRefusal(status, detail)) {
+    return new ProviderError(
+      "Google این سرور را از سمت خودش رد کرد (صفحهٔ HTML «client does not have permission»). " +
+        "این محدودیت IP است، نه کلید: گوگل محدودهٔ IP بسیاری از سرورهای اجاره‌ای را می‌بندد، و همان کلید از یک شبکهٔ دیگر جواب می‌دهد. " +
+        "تنها راه: درخواست از یک مسیر خروجی دیگر برود (NOMREH_GEMINI_BASE_URL → یک Worker رایگان؛ docs/gemini-relay-cloudflare-fa.md).",
+      400,
+      "ip-blocked",
+    );
+  }
+  if (isGoogleHtmlRefusal(status, detail)) {
+    return new ProviderError(
+      "Google این سرور را از سمت خودش رد کرد (صفحهٔ HTML، نه JSON). این محدودیت IP است، نه کلید — گوگل محدودهٔ IP بسیاری از سرورهای اجاره‌ای را می‌بندد و همان کلید از شبکهٔ دیگر جواب می‌دهد. راه: مسیر خروجی دیگر (NOMREH_GEMINI_BASE_URL → Worker رایگان).",
+      400,
+      "ip-blocked",
     );
   }
   if (status === 401 || status === 403) {

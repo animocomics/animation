@@ -312,3 +312,15 @@ test("one sheet's real token cost is stated, so a free tier can be planned", asy
   assert.equal(geminiSheetTokenEstimate(15), 15 * 1120 + 2500);
   assert.ok(geminiSheetTokenEstimate(15) > 15_000, "a sheet is tens of thousands of input tokens, not hundreds");
 });
+
+test("a blocked Google IP is not reported as a broken key", async () => {
+  const { geminiRefusal, isGoogleHtmlRefusal } = await import("../lib/server/providers");
+  const html = '<!DOCTYPE html><html><title>Error 403 (Forbidden)!!1</title><p>403. That&#39;s an error.</p><ins>Your client does not have permission to get URL /v1beta/models from this server.</ins></html>';
+  assert.equal(isGoogleHtmlRefusal(403, html), true, "the HTML page is the signature");
+  assert.equal(isGoogleHtmlRefusal(403, '{"error":{"message":"API key not valid"}}'), false, "JSON says nothing about an IP");
+  const blocked = geminiRefusal(403, html);
+  assert.equal(blocked.reason, "ip-blocked");
+  assert.match(blocked.message, /محدودیت IP است، نه کلید/, "the key must be cleared, not blamed");
+  // The same status with a JSON key error must still be an auth failure.
+  assert.equal(geminiRefusal(403, '{"error":{"message":"API key not valid. Please pass a valid API key."}}').reason, "auth");
+});
