@@ -7,7 +7,7 @@ import { AuthError, requireWorkspaceUser } from "@/lib/server/auth";
 import { claimPaidRequest, duplicateKey, releasePaidRequest } from "@/lib/server/duplicate-guard";
 import { failImportJob, finishImportJob, findRunningImportJobByPrefix, setImportStep, startImportJob } from "@/lib/server/import-jobs";
 import { readUserFile } from "@/lib/server/file-storage";
-import { prepareProviderFiles, splitLargeImages } from "@/lib/server/pdf-vision";
+import { enhancePhoto, prepareProviderFiles, splitLargeImages } from "@/lib/server/pdf-vision";
 import { getProviderConfig } from "@/lib/server/provider-config";
 import { providerByteLimit } from "@/lib/server/provider-traits";
 import { callProvider, ProviderError } from "@/lib/server/providers";
@@ -111,7 +111,12 @@ export async function POST(request: Request) {
       // Rasterise first (a PDF page becomes an image), then cut an oversized result
       // into bands. Doing it in this order means a photo and a scanned PDF page are
       // treated identically: both end up small enough for the model to keep the detail.
-      const converted = await splitLargeImages(await prepareProviderFiles([file], config.provider, { convertAllPdfs: true }), undefined, maxPartsPerSource);
+      // In order: a PDF page becomes an image, a photographed page is turned to clean
+      // grey (ink separated from paper), and only then is it cut into bands. Enhancing
+      // before splitting means each band is already legible, and a printed scan — which
+      // does not match the ink-on-paper signature — is left exactly as it arrived.
+      const prepared = await enhancePhoto((await prepareProviderFiles([file], config.provider, { convertAllPdfs: true }))[0]);
+      const converted = await splitLargeImages([prepared], undefined, maxPartsPerSource);
       for (const providerFile of converted) {
         providerFiles.push(providerFile);
         manifest.push({ file: providerFiles.length, sourceFile: sourceIndex + 1, name: providerFile.name, role: roleLabels[input.sources[sourceIndex].kind] });

@@ -164,6 +164,91 @@ export async function renderPdfToVisionFiles(file: VisionFile, availableSlots: n
  * Only images are touched, and only images that are genuinely oversized: a screenshot
  * or a scan that already fits the budget passes through untouched.
  */
+/**
+ * Makes a phone photo of a page easier to read before anyone tries to read it.
+ *
+ * The operator's notebook photo has three problems that cost accuracy before the model
+ * is even involved: the paper is blue-tinted, the ink is a similar dark blue, and the
+ * lighting darkens one side. Turned to grey and stretched, the same photo reads plainly
+ * where it was guesswork — the strokes separate from the paper instead of blending into
+ * it.
+ *
+ * The rule is deliberately narrow. A photographed page is recognised by its ink being
+ * *less red* than its paper, which is what a blue or black pen on paper looks like.
+ * A printed scan, a photocopy, or a coloured form does not match that signature and is
+ * passed through untouched: enhancing it would only add artefacts.
+ */
+export function looksLikeInkOnPaper(samples: { red: number; green: number; blue: number }[]): boolean {
+  if (samples.length < 100) return false;
+  let bluishInk = 0;
+  let paperish = 0;
+  for (const sample of samples) {
+    const paperLevel = Math.max(sample.green, sample.blue);
+    if (paperLevel - sample.red > 35) bluishInk += 1;
+    if (paperLevel > 190) paperish += 1;
+  }
+  // Enough light paper to be a page, and enough blue-dark ink to be handwriting on it.
+  return paperish / samples.length > 0.35 && bluishInk / samples.length > 0.01;
+}
+
+export async function enhancePhoto(file: VisionFile): Promise<VisionFile> {
+  if (!/^image\/(jpeg|png|webp)$/.test(file.type)) return file;
+  let canvasModule: typeof import("@napi-rs/canvas") | undefined;
+  try {
+    canvasModule = await import("@napi-rs/canvas");
+    const buffer = Buffer.from(file.data, "base64");
+    const image = await canvasModule.loadImage(buffer);
+    // Sampling every 17th pixel is enough to tell ink-on-paper from anything else, and
+    // avoids a second full-resolution pass over a nine-megapixel photo.
+    const width = image.width;
+    const height = image.height;
+    const canvas = canvasModule.createCanvas(width, height);
+    const context = canvas.getContext("2d");
+    context.drawImage(image, 0, 0);
+    const { data } = context.getImageData(0, 0, width, height);
+    const samples: { red: number; green: number; blue: number }[] = [];
+    for (let index = 0; index < data.length; index += 4 * 17) {
+      samples.push({ red: data[index], green: data[index + 1], blue: data[index + 2] });
+    }
+    if (!looksLikeInkOnPaper(samples)) {
+      canvas.width = 1;
+      canvas.height = 1;
+      return file;
+    }
+    const out = new canvasModule.ImageData(width, height);
+    // Two separate mistakes are avoided here, both of which were measured on the
+    // operator's photo rather than guessed at:
+    //  - without a floor, paper texture and shadow become grey specks that look like
+    //    ink and cost the model attention;
+    //  - with too brutal a stretch, thin pen strokes go pale and break up.
+    // So everything below the floor is forced to clean white, and above it the stroke
+    // is ramped rather than crushed.
+    const INK_FLOOR = 0.32;
+    const INK_RANGE = 85;
+    for (let index = 0; index < data.length; index += 4) {
+      const red = data[index];
+      const paperLevel = Math.max(data[index + 1], data[index + 2]);
+      const inkness = (paperLevel - red) / INK_RANGE;
+      let value = 255;
+      if (inkness > INK_FLOOR) {
+        const strength = Math.min(1, (inkness - INK_FLOOR) / (1 - INK_FLOOR));
+        value = Math.round(255 * (1 - Math.pow(strength, 0.55)));
+      }
+      out.data[index] = value;
+      out.data[index + 1] = value;
+      out.data[index + 2] = value;
+      out.data[index + 3] = 255;
+    }
+    context.putImageData(out, 0, 0);
+    const jpeg = canvas.toBuffer("image/jpeg", jpegQuality());
+    canvas.width = 1;
+    canvas.height = 1;
+    return { name: file.name.replace(/\.(jpe?g|png|webp)$/i, "") + ".jpg", type: "image/jpeg", data: jpeg.toString("base64") };
+  } catch {
+    return file;
+  }
+}
+
 export async function splitLargeImages(files: VisionFile[], budgetPx?: number, maxParts = 6): Promise<VisionFile[]> {
   const output: VisionFile[] = [];
   for (const file of files) {
