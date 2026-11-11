@@ -216,24 +216,33 @@ export async function enhancePhoto(file: VisionFile): Promise<VisionFile> {
       return file;
     }
     const out = new canvasModule.ImageData(width, height);
-    // Two separate mistakes are avoided here, both of which were measured on the
-    // operator's photo rather than guessed at:
-    //  - without a floor, paper texture and shadow become grey specks that look like
-    //    ink and cost the model attention;
-    //  - with too brutal a stretch, thin pen strokes go pale and break up.
-    // So everything below the floor is forced to clean white, and above it the stroke
-    // is ramped rather than crushed.
-    const INK_FLOOR = 0.32;
-    const INK_RANGE = 85;
+    /**
+     * White balance, then a gentle curve. Deliberately NOT a threshold.
+     *
+     * Three variants were rendered on the operator's own photo and compared by eye:
+     *  A (threshold + strong ramp) removed the paper texture but thinned the pen
+     *    strokes until parts of two questions were barely there;
+     *  B (white balance only) kept every stroke but left the blue cast and the ruled
+     *    lines competing with the ink;
+     *  C (white balance + a soft S-curve centred above mid-grey) kept the strokes at
+     *    full weight and made the paper clean. C is what ships.
+     *
+     * The lesson is recorded here because "more contrast" is the intuitive fix and it is
+     * the one that loses handwriting: a stroke that is 2 px wide cannot survive being
+     * pushed to black and white.
+     */
     for (let index = 0; index < data.length; index += 4) {
       const red = data[index];
-      const paperLevel = Math.max(data[index + 1], data[index + 2]);
-      const inkness = (paperLevel - red) / INK_RANGE;
-      let value = 255;
-      if (inkness > INK_FLOOR) {
-        const strength = Math.min(1, (inkness - INK_FLOOR) / (1 - INK_FLOOR));
-        value = Math.round(255 * (1 - Math.pow(strength, 0.55)));
-      }
+      const green = data[index + 1];
+      const blue = data[index + 2];
+      // The paper is the brightest thing in a photo of a page; normalising to it removes
+      // the blue cast and the uneven lighting without touching the ink's weight.
+      const paper = Math.max(green, blue, 220);
+      const scale = 255 / paper;
+      const balanced = 0.299 * Math.min(255, red * scale) + 0.587 * Math.min(255, green * scale) + 0.114 * Math.min(255, blue * scale);
+      // A logistic curve: paper (above ~195) goes white, ink keeps its darkness, and the
+      // steepness is chosen so a faint stroke lands near 90 rather than vanishing.
+      const value = Math.round(255 / (1 + Math.exp(-(balanced - 150) / 45)));
       out.data[index] = value;
       out.data[index + 1] = value;
       out.data[index + 2] = value;
