@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { AuthError, requireWorkspaceUser } from "@/lib/server/auth";
-import { describeImportJob, getImportJob } from "@/lib/server/import-jobs";
+import { describeImportJob, findRunningImportJob, getImportJob } from "@/lib/server/import-jobs";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;

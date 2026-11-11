@@ -91,6 +91,28 @@ export function startImportJob(key: string, now = Date.now(), kind: ImportJob["k
   return { job, created: true };
 }
 
+/**
+ * The job already running for this work, if there is one.
+ *
+ * A teacher who loses the poll (a reload, a dead network, a phone that went to sleep)
+ * has no job id to resume with, and re-sending would buy the same reading twice. This
+ * lets the panel say "this is still running" and simply keep polling the work that has
+ * already been paid for.
+ */
+export function findRunningImportJob(key: string): ImportJob | undefined {
+  for (const job of jobs.values()) {
+    if (job.key === key && job.status === "working") return job;
+  }
+  return undefined;
+}
+
+export function findRunningImportJobByPrefix(prefix: string): ImportJob | undefined {
+  for (const job of jobs.values()) {
+    if (job.status === "working" && job.key.startsWith(prefix)) return job;
+  }
+  return undefined;
+}
+
 export function getImportJob(id: string): ImportJob | undefined {
   return jobs.get(id);
 }

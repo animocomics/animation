@@ -1,5 +1,6 @@
 import path from "path";
 import type { GradeApiRequest, ProviderId } from "../types";
+import { planImageParts } from "./image-parts";
 import { ProviderError } from "./providers";
 import { providerNeedsPdfRaster } from "./provider-traits";
 
@@ -149,6 +150,64 @@ export async function renderPdfToVisionFiles(file: VisionFile, availableSlots: n
   } finally {
     if (loadingTask) await loadingTask.destroy().catch(() => undefined);
   }
+}
+
+/**
+ * Cuts a large photo into overlapping bands before it is sent.
+ *
+ * A phone picture is 9 megapixels; the model's image budget is under one. Sending the
+ * photo whole does not fail — it silently shrinks the handwriting until the model is
+ * guessing. Splitting it keeps each band near the detail ceiling, and because the API
+ * bills per token of image rather than per request, the cost is a few thousand tokens,
+ * not a second page.
+ *
+ * Only images are touched, and only images that are genuinely oversized: a screenshot
+ * or a scan that already fits the budget passes through untouched.
+ */
+export async function splitLargeImages(files: VisionFile[], budgetPx?: number, maxParts = 6): Promise<VisionFile[]> {
+  const output: VisionFile[] = [];
+  for (const file of files) {
+    if (!/^image\/(jpeg|png|webp)$/.test(file.type)) {
+      output.push(file);
+      continue;
+    }
+    const buffer = Buffer.from(file.data, "base64");
+    let width = 0;
+    let height = 0;
+    let canvasModule: typeof import("@napi-rs/canvas") | undefined;
+    try {
+      canvasModule = await import("@napi-rs/canvas");
+      const image = await canvasModule.loadImage(buffer);
+      width = image.width;
+      height = image.height;
+      const parts = planImageParts(width, height, { budgetPx, maxParts });
+      if (parts.length === 1) {
+        output.push(file);
+        continue;
+      }
+      const baseName = file.name.replace(/\.(jpe?g|png|webp)$/i, "").slice(0, 200) || "برگه";
+      for (const part of parts) {
+        const canvas = canvasModule.createCanvas(width, part.height);
+        const context = canvas.getContext("2d");
+        context.fillStyle = "#ffffff";
+        context.fillRect(0, 0, width, part.height);
+        context.drawImage(image, 0, part.y0, width, part.height, 0, 0, width, part.height);
+        const jpeg = canvas.toBuffer("image/jpeg", jpegQuality());
+        output.push({
+          name: `${baseName} — بخش ${part.index} از ${part.total}.jpg`,
+          type: "image/jpeg",
+          data: jpeg.toString("base64"),
+        });
+        canvas.width = 1;
+        canvas.height = 1;
+      }
+    } catch {
+      // A photo that cannot be decoded is passed through unchanged: failing the whole
+      // import over an unusual image format would be worse than a lower-detail attempt.
+      output.push(file);
+    }
+  }
+  return output;
 }
 
 export async function prepareProviderFiles(files: GradeApiRequest["files"], provider: ProviderId, options: { convertAllPdfs?: boolean } = {}): Promise<GradeApiRequest["files"]> {

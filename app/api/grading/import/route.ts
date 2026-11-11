@@ -5,9 +5,9 @@ import type { AuthUser, GradeApiRequest, ProviderId } from "@/lib/types";
 import { applyImportedAnswerKey, buildAnswerKeyImportPrompt } from "@/lib/server/answer-key-import-schema";
 import { AuthError, requireWorkspaceUser } from "@/lib/server/auth";
 import { claimPaidRequest, duplicateKey, releasePaidRequest } from "@/lib/server/duplicate-guard";
-import { failImportJob, finishImportJob, setImportStep, startImportJob } from "@/lib/server/import-jobs";
+import { failImportJob, finishImportJob, findRunningImportJobByPrefix, setImportStep, startImportJob } from "@/lib/server/import-jobs";
 import { readUserFile } from "@/lib/server/file-storage";
-import { prepareProviderFiles } from "@/lib/server/pdf-vision";
+import { prepareProviderFiles, splitLargeImages } from "@/lib/server/pdf-vision";
 import { getProviderConfig } from "@/lib/server/provider-config";
 import { providerByteLimit } from "@/lib/server/provider-traits";
 import { callProvider, ProviderError } from "@/lib/server/providers";
@@ -32,6 +32,37 @@ const requestSchema = z.object({
     kind: z.enum(["questions", "answers", "combined"]),
   })).min(1).max(30),
 });
+
+/**
+ * "Did my reading survive?"
+ *
+ * A reload during a two-minute read used to leave the teacher with no way back to the
+ * work already paid for. This answers with the running job for a given exam, so the
+ * panel can resume polling instead of buying the same read twice.
+ */
+export async function GET(request: Request) {
+  try {
+    const user = await requireWorkspaceUser();
+    const examId = new URL(request.url).searchParams.get("examId") || "";
+    if (!examId) return NextResponse.json({ error: "شناسهٔ آزمون لازم است." }, { status: 400 });
+    const workspace = (await loadWorkspace(user.id)).data;
+    if (!workspace?.exams.some((exam) => exam.id === examId)) {
+      return NextResponse.json({ error: "این آزمون در فضای کاری شما پیدا نشد." }, { status: 403 });
+    }
+    // The id is what a reload loses; the exam is what it keeps. Matching on the key
+    // prefix finds the read that was already paid for instead of starting a new one.
+    const job = findRunningImportJobByPrefix(`questions-import:${user.id}:${examId}:`);
+    return NextResponse.json(
+      job
+        ? { jobId: job.id, status: "working", step: job.step, elapsedSeconds: Math.round((Date.now() - job.startedAt) / 1000) }
+        : { status: "idle" },
+      { headers: { "Cache-Control": "no-store" } },
+    );
+  } catch (error) {
+    const status = error instanceof AuthError ? error.status : 500;
+    return NextResponse.json({ error: error instanceof Error ? error.message : "وضعیت خواندن برگه معلوم نشد." }, { status });
+  }
+}
 
 export async function POST(request: Request) {
   let user: AuthUser | undefined;
@@ -72,14 +103,24 @@ export async function POST(request: Request) {
     // Convert each source separately so a five-page PDF and a separate key never lose their roles.
     const providerFiles: GradeApiRequest["files"] = [];
     const manifest: Array<{ file: number; sourceFile: number; name: string; role: string }> = [];
+    // Bands are cheap but not free, and the provider caps how many attachments one
+    // request may carry. So the six-band budget is shared across the sources instead of
+    // multiplied by them: six photos become six bands each, thirty photos become one.
+    const maxPartsPerSource = Math.max(1, Math.min(6, Math.floor(36 / Math.max(1, files.length))));
     for (const [sourceIndex, file] of files.entries()) {
-      const converted = await prepareProviderFiles([file], config.provider, { convertAllPdfs: true });
+      // Rasterise first (a PDF page becomes an image), then cut an oversized result
+      // into bands. Doing it in this order means a photo and a scanned PDF page are
+      // treated identically: both end up small enough for the model to keep the detail.
+      const converted = await splitLargeImages(await prepareProviderFiles([file], config.provider, { convertAllPdfs: true }), undefined, maxPartsPerSource);
       for (const providerFile of converted) {
         providerFiles.push(providerFile);
         manifest.push({ file: providerFiles.length, sourceFile: sourceIndex + 1, name: providerFile.name, role: roleLabels[input.sources[sourceIndex].kind] });
       }
     }
-    if (providerFiles.length > 30) return NextResponse.json({ error: "تعداد صفحات و فایل‌های سؤال و کلید برای یک درخواست بیش از ۳۰ است؛ آن را به دسته‌های کوچک‌تر تقسیم کنید." }, { status: 413 });
+    // A large photo is now split into several bands, so the ceiling counts what the
+    // model actually receives. It is higher than before for the same reason: bands are
+    // small, and refusing a single 9 MP photo of six questions would defeat the point.
+    if (providerFiles.length > 40) return NextResponse.json({ error: "تعداد صفحات، بخش‌ها و فایل‌های سؤال و کلید برای یک درخواست بیش از ۴۰ است؛ آن را به دسته‌های کوچک‌تر تقسیم کنید." }, { status: 413 });
     const preparedBytes = providerFiles.reduce((sum, file) => sum + Math.floor(file.data.length * 0.75), 0);
     if (preparedBytes > byteLimit) {
       return NextResponse.json({ error: "حجم تصاویر صفحات پس از آماده‌سازی برای مدل زیاد است؛ تعداد صفحات را کمتر یا PDF را به دسته‌های کوچک‌تر تقسیم کنید." }, { status: 413 });
@@ -98,7 +139,7 @@ export async function POST(request: Request) {
     // it starts the work and answers immediately. The browser then polls a request that
     // takes microseconds, which no proxy will ever time out, and a cut poll costs
     // nothing because the job is not attached to the connection.
-    const jobKey = duplicateKey(["question-import", user.id, input.examId, config.provider, config.model, ...input.sources.map((source) => source.storedId).sort()]);
+    const jobKey = `questions-import:${user.id}:${input.examId}:${duplicateKey([config.provider, config.model, ...input.sources.map((source) => source.storedId).sort()])}`;
     const started = startImportJob(jobKey);
     if (!started.created) {
       // Same exam, same pages, same model, still running: hand back the job in flight
