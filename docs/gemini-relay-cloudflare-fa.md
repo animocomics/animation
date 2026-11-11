@@ -237,3 +237,62 @@ VPS ارزان) که فقط همین یک دامنه را عبور دهد. ام�
 
 مهم: `ok` یعنی «کلید و مسیر سالم»، نه «سهمیه خالی است». تعداد دقیق سهمیهٔ باقی‌مانده فقط در
 کنسول AI Studio برای همان پروژه دیده می‌شود؛ گوگل آن را در API نمی‌دهد.
+
+---
+
+# گزینهٔ ۱ (بدون هیچ کد): Cloudflare AI Gateway
+
+اگر ساختن Worker برایت زیاد است، Cloudflare خودش یک دروازهٔ آماده برای Gemini دارد: یک
+sabکشن در داشبورد، و بعد فقط یک آدرس. هیچ کدی نوشته نمی‌شود.
+
+**آزمودهٔ خودت:** از این سرور، `www.google.com` جواب **۲۰۴** داد و
+`generativelanguage.googleapis.com` جواب ۴۰۳ با صفحهٔ HTML. یعنی شبکه باز است و
+**خودِ Google این IP سرور را بسته** — پس کلید و شبکه سالم‌اند و فقط باید درخواست از
+یک IP دیگر بیرون برود. کد زیر همین کار را می‌کند.
+
+### گام‌ها
+
+۱. در داشبورد Cloudflare: **AI → AI Gateway → Create Gateway**. یک نام بده، مثلاً `nomreh`.
+۲. در همان صفحه دو چیز را بردار:
+   - **Account ID** (بالای صفحه، یا در آدرس داشبورد)
+   - **نام gateway** (همان `nomreh`)
+۳. آدرس نهایی این شکل است (هیچ `/` اضافه در آخر):
+
+```
+https://gateway.ai.cloudflare.com/v1/<ACCOUNT_ID>/<GATEWAY_NAME>/google-ai-studio
+```
+
+۴. روی هاست، در `.env`:
+
+```
+NOMREH_GEMINI_BASE_URL=https://gateway.ai.cloudflare.com/v1/<ACCOUNT_ID>/<GATEWAY_NAME>/google-ai-studio
+```
+
+بعد `npm run restart:plesk`.
+
+> هیچ توکنی از Cloudflare لازم نیست: کلید Gemini خودت با هدر `x-goog-api-key` می‌رود و
+> Cloudflare فقط رد می‌کند. (اگر در تنظیمات gateway «Authenticated Gateway» را روشن کردی،
+> باید هدر `cf-aig-authorization` هم برود — آن حالت را روشن نکن.)
+
+### اول با یک خط تست کن (قبل از هر تغییری)
+
+`<ACCOUNT_ID>` و `<GATEWAY_NAME>` و `<GEMINI_KEY>` را جای‌گذاری کن و در همان کادر
+«Run Node.js commands» بزن. این یک درخواست متنی است، پس تقریباً صفر توکن است:
+
+```bash
+npm exec -- node -e "const https=require('https');const body=JSON.stringify({contents:[{role:'user',parts:[{text:'فقط OK بنویس'}]}]});const r=https.request('https://gateway.ai.cloudflare.com/v1/<ACCOUNT_ID>/<GATEWAY_NAME>/google-ai-studio/v1beta/models/gemini-2.5-flash:generateContent',{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':'<GEMINI_KEY>','Content-Length':Buffer.byteLength(body)}},res=>{let d='';res.on('data',c=>d+=c);res.on('end',()=>console.log('STATUS',res.statusCode,d.replace(/\s+/g,' ').slice(0,300)))});r.on('error',e=>console.log('FAILED',e.code||e.message));r.setTimeout(30000,()=>{console.log('TIMEOUT');r.destroy()});r.write(body);r.end()"
+```
+
+| خروجی | معنی |
+|---|---|
+| `STATUS 200` و داخلش `"text":"OK"` | **تمام شد.** همین آدرس را در `.env` بگذار و برگه را بخوان |
+| `STATUS 403` با HTML | Google همان IP را بست — یعنی هنوز از مسیر خودت می‌رود؛ آدرس را چک کن |
+| `STATUS 401/400` با JSON و `API key not valid` | آدرس درست است، کلید مشکل دارد |
+| `FAILED ENOTFOUND` | نام gateway/account غلط است |
+
+### دو نکتهٔ صادقانه
+
+- **فهرست مدل‌ها** ممکن است از این دروازه برنگردد. اگر پنل گفت «مدل‌ها را نتوانستم بگیرم»،
+  نام مدل را دستی بزن (`gemini-2.5-flash`). خواندن برگه از همین مسیر کار می‌کند.
+- این دروازه درخواست را از IP خودش می‌فرستد؛ ترافیک صفحه‌های تو از Cloudflare رد می‌شود.
+  همان چیزی که با Worker می‌شد، بدون کد.
