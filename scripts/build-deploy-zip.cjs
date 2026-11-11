@@ -58,6 +58,9 @@ const EXCLUDE_FRAGMENTS = [
   // Both copies are required and must NOT be de-duplicated:
   //   .next/static        -> Next's own server refuses to boot without it
   //   public/_next/static -> nginx serves the browser assets from here
+  // A dev server writes its turbopack cache here. It is not the production build, it is
+  // tens of megabytes, and shipping it tripled the archive once — so it never ships.
+  "/.next/dev/",
   "/public/_next/.static-staging-",
   "/public/_next/.static-backup-",
   "nomreh-deploy-b4847c0.zip",
